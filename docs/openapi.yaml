@@ -1,0 +1,1245 @@
+openapi: 3.0.3
+info:
+  title: NereidAI - Open Horizon Exchange API Backend Proxy
+  description: |
+    NereidAI is a BFF (Backend For Frontend) proxy for the Open Horizon Exchange REST API.
+
+    Features:
+    - Session-based Basic Auth (credentials never persisted in browser)
+    - Auto RSA-PSS SHA-256 deployment signing on service create/update
+    - Auto public key upload (`services/{id}/keys/default.public.key`)
+    - Body whitelist filtering (`serviceBody` / `patternBody` / `sanitizeBody`)
+    - Cross-org agbot merging, sub-endpoints (patterns / businesspols)
+    - `?org=` query param + `x-agbot-auth` header for cross-org access
+    - `X-Root-Auth` header for root-privileged node PATCH
+  version: 1.0.0
+  contact:
+    name: NereidAI
+servers:
+  - url: http://localhost:3001
+    description: Dev server
+  - url: /api
+    description: Via Vite proxy
+
+paths:
+  # =============================================================
+  # Auth
+  # =============================================================
+  /api/login:
+    post:
+      tags: [Auth]
+      summary: Login to Exchange
+      description: Validate credentials, create a session, return sessionId
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [baseURL, user, password]
+              properties:
+                baseURL:
+                  type: string
+                  format: uri
+                  example: http://192.168.123.175:3090
+                user:
+                  type: string
+                  example: myorg/admin
+                password:
+                  type: string
+                  example: lVMFFsxt2l00SZskUpguSXa7eRrIrT
+      responses:
+        '200':
+          description: Login success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessionId:
+                    type: string
+                    example: 58e8f92e82216c49abe89a8e661d66c2
+                  orgId:
+                    type: string
+                    example: myorg
+                  version:
+                    type: string
+                    example: 2.154.0
+        '401':
+          description: Exchange connection failed
+        '502':
+          description: Exchange unreachable
+
+  /api/logout:
+    post:
+      tags: [Auth]
+      summary: Logout
+      operationId: logout
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: Logout success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+
+  # =============================================================
+  # Status / Version / Org Type
+  # =============================================================
+  /api/status:
+    get:
+      tags: [System]
+      summary: Organization status summary
+      operationId: getStatus
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: Status summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nodes:
+                    type: integer
+                  users:
+                    type: integer
+                  services:
+                    type: integer
+                  agbots:
+                    type: integer
+
+  /api/version:
+    get:
+      tags: [System]
+      summary: Exchange version
+      operationId: getVersion
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: Version info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version:
+                    type: string
+
+  /api/org-type:
+    get:
+      tags: [System]
+      summary: Determine org type
+      description: Returns hubadmin / system / user
+      operationId: getOrgType
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: Org type
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  orgType:
+                    type: string
+                    enum: [hubadmin, system, user]
+
+  # =============================================================
+  # Organizations
+  # =============================================================
+  /api/organizations:
+    get:
+      tags: [Organizations]
+      summary: List all organizations
+      operationId: listOrganizations
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: Organization list (passthrough from Exchange)
+
+  /api/organizations/{orgid}:
+    put:
+      tags: [Organizations]
+      summary: Create/update organization
+      operationId: updateOrganization
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - name: orgid
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Operation result
+
+    delete:
+      tags: [Organizations]
+      summary: Delete organization
+      operationId: deleteOrganization
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - name: orgid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Operation result
+
+  # =============================================================
+  # Users
+  # =============================================================
+  /api/users:
+    get:
+      tags: [Users]
+      summary: List users in current org
+      operationId: listUsers
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: User list
+
+  /api/users/{username}:
+    get:
+      tags: [Users]
+      summary: Get user details
+      operationId: getUser
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - name: username
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User info
+
+    put:
+      tags: [Users]
+      summary: Create/update user
+      operationId: updateUser
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - name: username
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Operation result
+
+    delete:
+      tags: [Users]
+      summary: Delete user
+      operationId: deleteUser
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - name: username
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Operation result
+
+  /api/users/{username}/apikeys:
+    post:
+      tags: [Users]
+      summary: Create API key
+      operationId: createApiKey
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - name: username
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Operation result
+
+  /api/users/{username}/apikeys/{keyid}:
+    delete:
+      tags: [Users]
+      summary: Delete API key
+      operationId: deleteApiKey
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - name: username
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: keyid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Operation result
+
+  # =============================================================
+  # Nodes
+  # =============================================================
+  /api/nodes:
+    get:
+      tags: [Nodes]
+      summary: List nodes in current org
+      operationId: listNodes
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: Node list
+
+  /api/nodes/{id}:
+    patch:
+      tags: [Nodes]
+      summary: Update node (set pattern)
+      description: |
+        Supports `X-Root-Auth` header for root-privileged operations.
+        If `pattern` field does not contain `/`, `{orgId}/` prefix is prepended.
+      operationId: patchNode
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/RootAuth'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Node ID (org prefix is stripped automatically)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                pattern:
+                  type: string
+                  example: myorg/h-n
+                nodeType:
+                  type: string
+                softwareVersions:
+                  type: object
+                token:
+                  type: string
+                name:
+                  type: string
+      responses:
+        '200':
+          description: Operation result
+
+  /api/nodes/{id}/services:
+    get:
+      tags: [Nodes]
+      summary: Get services running on node
+      operationId: getNodeServices
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Node services list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  services:
+                    type: array
+                    items:
+                      type: object
+
+  /api/nodes/{id}/policy:
+    get:
+      tags: [Nodes]
+      summary: Get node policy
+      operationId: getNodePolicy
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Node policy
+
+    put:
+      tags: [Nodes]
+      summary: Update node policy
+      description: Automatically strips `lastUpdated` field
+      operationId: updateNodePolicy
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Operation result
+
+  # =============================================================
+  # Services
+  # =============================================================
+  /api/services:
+    get:
+      tags: [Services]
+      summary: List services
+      description: |
+        Supports `?org=` for cross-org queries.
+        Supports `x-agbot-auth` header for agbot-privileged access.
+      operationId: listServices
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/OrgQuery'
+        - $ref: '#/components/parameters/AgbotAuth'
+      responses:
+        '200':
+          description: Service list
+
+    post:
+      tags: [Services]
+      summary: Create service
+      description: |
+        Auto-signs deployment with RSA-PSS SHA-256 and uploads public key.
+        Strips `lastUpdated` / `owner` / `name` / `organization` fields.
+        `deployment` is auto-stringified if passed as an object.
+      operationId: createService
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceBody'
+      responses:
+        '201':
+          description: Created successfully
+
+  /api/services/{id}:
+    put:
+      tags: [Services]
+      summary: Update service
+      description: |
+        Always re-signs deployment and uploads a new public key when `deployment` is present.
+        Supports `?org=` for cross-org updates.
+      operationId: updateService
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/OrgQuery'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Service ID (without org prefix; org is passed via `?org=`)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceBody'
+      responses:
+        '200':
+          description: Updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: string
+                  msg:
+                    type: string
+
+    delete:
+      tags: [Services]
+      summary: Delete service
+      operationId: deleteService
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/OrgQuery'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Deleted successfully
+
+  # =============================================================
+  # Patterns
+  # =============================================================
+  /api/patterns:
+    get:
+      tags: [Patterns]
+      summary: List deployment patterns
+      description: Supports `?org=` and `x-agbot-auth`
+      operationId: listPatterns
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/OrgQuery'
+        - $ref: '#/components/parameters/AgbotAuth'
+      responses:
+        '200':
+          description: Pattern list
+
+    post:
+      tags: [Patterns]
+      summary: Create deployment pattern
+      description: |
+        Strips `name` field from body (used as URL path).
+        Uses `patternBody` whitelist (label, description, public, services, userInput, agreementProtocols, etc.).
+      operationId: createPattern
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  example: h-n
+                label:
+                  type: string
+                description:
+                  type: string
+                public:
+                  type: boolean
+                services:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/PService'
+                userInput:
+                  type: array
+                  items:
+                    type: object
+                agreementProtocols:
+                  type: array
+                  items:
+                    type: object
+      responses:
+        '200':
+          description: Create result
+
+  /api/patterns/{id}:
+    put:
+      tags: [Patterns]
+      summary: Update deployment pattern
+      description: Uses `patternBody` whitelist
+      operationId: updatePattern
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Update result
+
+    delete:
+      tags: [Patterns]
+      summary: Delete deployment pattern
+      operationId: deletePattern
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Delete result
+
+  # =============================================================
+  # Deployment Policies
+  # =============================================================
+  /api/policies:
+    get:
+      tags: [Deployment Policies]
+      summary: List deployment policies
+      description: Supports `?org=` and `x-agbot-auth`
+      operationId: listPolicies
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/OrgQuery'
+        - $ref: '#/components/parameters/AgbotAuth'
+      responses:
+        '200':
+          description: Policy list
+
+    post:
+      tags: [Deployment Policies]
+      summary: Create deployment policy
+      description: Strips `name` field, uses `sanitizeBody` filtering
+      operationId: createPolicy
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                label:
+                  type: string
+                description:
+                  type: string
+                businessPolicy:
+                  type: object
+      responses:
+        '200':
+          description: Create result
+
+  /api/policies/{id}:
+    delete:
+      tags: [Deployment Policies]
+      summary: Delete deployment policy
+      operationId: deletePolicy
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Delete result
+
+  # =============================================================
+  # Management Policies
+  # =============================================================
+  /api/mgmtpolicies:
+    get:
+      tags: [Management Policies]
+      summary: List management policies
+      operationId: listMgmtPolicies
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: Management policy list
+
+    post:
+      tags: [Management Policies]
+      summary: Create management policy
+      operationId: createMgmtPolicy
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+      responses:
+        '200':
+          description: Create result
+
+  /api/mgmtpolicies/{id}:
+    delete:
+      tags: [Management Policies]
+      summary: Delete management policy
+      operationId: deleteMgmtPolicy
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Delete result
+
+  # =============================================================
+  # Catalog
+  # =============================================================
+  /api/catalog-services:
+    get:
+      tags: [Catalog]
+      summary: List catalog services
+      operationId: listCatalogServices
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: Catalog service list
+
+  /api/catalog-patterns:
+    get:
+      tags: [Catalog]
+      summary: List catalog patterns
+      operationId: listCatalogPatterns
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: Catalog pattern list
+
+  # =============================================================
+  # Agbots
+  # =============================================================
+  /api/agbots/admin-login:
+    post:
+      tags: [Agbots]
+      summary: Validate agbot credentials
+      description: Validates agbot credentials and returns a Base64 auth string for subsequent use
+      operationId: agbotAdminLogin
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user, password]
+              properties:
+                user:
+                  type: string
+                  example: IBM/agbot
+                password:
+                  type: string
+                  example: 1D9bWrkOPspcQBVECaCL1ZQKJFjx6N
+      responses:
+        '200':
+          description: Auth success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  auth:
+                    type: string
+                    example: SUJNL2FnYm90OjFEOGJXcmtP
+
+  /api/agbots:
+    get:
+      tags: [Agbots]
+      summary: List agbots
+      description: |
+        Supports `?org=` and `x-agbot-auth`.
+        Automatically merges IBM org agbots into the result.
+      operationId: listAgbots
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/OrgQuery'
+        - $ref: '#/components/parameters/AgbotAuth'
+      responses:
+        '200':
+          description: Agbot list
+
+  /api/agbots/{id}:
+    put:
+      tags: [Agbots]
+      summary: Create/update agbot
+      description: Supports `?org=` and `x-agbot-auth`. `id` supports `org/name` format
+      operationId: updateAgbot
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/OrgQuery'
+        - $ref: '#/components/parameters/AgbotAuth'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Operation result
+
+    patch:
+      tags: [Agbots]
+      summary: Partial update agbot
+      operationId: patchAgbot
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/OrgQuery'
+        - $ref: '#/components/parameters/AgbotAuth'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Operation result
+
+    delete:
+      tags: [Agbots]
+      summary: Delete agbot
+      operationId: deleteAgbot
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/OrgQuery'
+        - $ref: '#/components/parameters/AgbotAuth'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Operation result
+
+  # =============================================================
+  # Agbot - Patterns
+  # =============================================================
+  /api/agbots/{id}/patterns:
+    get:
+      tags: [Agbot Patterns]
+      summary: List patterns bound to agbot
+      operationId: listAgbotPatterns
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/OrgQuery'
+        - $ref: '#/components/parameters/AgbotAuth'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Pattern list
+
+    post:
+      tags: [Agbot Patterns]
+      summary: Bind pattern to agbot
+      description: |
+        Auto-fills `nodeOrgid` (from body, then `patternOrgid`, then current org).
+      operationId: bindAgbotPattern
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/OrgQuery'
+        - $ref: '#/components/parameters/AgbotAuth'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [patternOrgid, pattern, nodeOrgid]
+              properties:
+                patternOrgid:
+                  type: string
+                  example: myorg
+                pattern:
+                  type: string
+                  example: h-n
+                nodeOrgid:
+                  type: string
+                  example: myorg
+      responses:
+        '200':
+          description: Bind success
+
+  /api/agbots/{id}/patterns/{patternId}:
+    delete:
+      tags: [Agbot Patterns]
+      summary: Unbind agbot pattern
+      operationId: unbindAgbotPattern
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/OrgQuery'
+        - $ref: '#/components/parameters/AgbotAuth'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: patternId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Full Exchange key (e.g. myorg_h-n_myorg)
+      responses:
+        '200':
+          description: Unbind success
+
+  # =============================================================
+  # Agbot - Business Policies
+  # =============================================================
+  /api/agbots/{id}/businesspols:
+    get:
+      tags: [Agbot Business Policies]
+      summary: List business policies bound to agbot
+      operationId: listAgbotBusinessPols
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/OrgQuery'
+        - $ref: '#/components/parameters/AgbotAuth'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Policy list
+
+    post:
+      tags: [Agbot Business Policies]
+      summary: Bind business policy to agbot
+      operationId: bindAgbotBusinessPol
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/OrgQuery'
+        - $ref: '#/components/parameters/AgbotAuth'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [businessPolOrgid, businessPol, nodeOrgid]
+              properties:
+                businessPolOrgid:
+                  type: string
+                  example: myorg
+                businessPol:
+                  type: string
+                  example: my-policy
+                nodeOrgid:
+                  type: string
+                  example: myorg
+      responses:
+        '200':
+          description: Bind success
+
+  /api/agbots/{id}/businesspols/{polId}:
+    delete:
+      tags: [Agbot Business Policies]
+      summary: Unbind agbot business policy
+      operationId: unbindAgbotBusinessPol
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/OrgQuery'
+        - $ref: '#/components/parameters/AgbotAuth'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: polId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Unbind success
+
+  # =============================================================
+  # HA Groups
+  # =============================================================
+  /api/hagroups:
+    get:
+      tags: [HA Groups]
+      summary: List HA Groups
+      operationId: listHaGroups
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: HA Groups list
+
+components:
+  parameters:
+    SessionId:
+      name: x-session-id
+      in: header
+      required: true
+      schema:
+        type: string
+      description: Session ID returned by login
+      example: 58e8f92e82216c49abe89a8e661d66c2
+
+    OrgQuery:
+      name: org
+      in: query
+      required: false
+      schema:
+        type: string
+      description: Target org ID (for cross-org queries)
+      example: myorg
+
+    AgbotAuth:
+      name: x-agbot-auth
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Agbot Base64 auth string (for cross-org resource access)
+      example: SUJNL2FnYm90OjFEOGJXcmtP
+
+    RootAuth:
+      name: x-root-auth
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Root user Base64 auth (for node PATCH and other root-privileged operations)
+
+  schemas:
+    ServiceDeploymentServices:
+      type: object
+      description: Deployment image definition (keyed by service name)
+      properties:
+        image:
+          type: string
+          example: hub.yiqisoft.cn/openvino/model_server:latest
+        ports:
+          type: array
+          items:
+            type: object
+            properties:
+              HostPort:
+                type: string
+                example: 28000:8000
+        privileged:
+          type: boolean
+        devices:
+          type: array
+          items:
+            type: string
+            example: /dev/dri:/dev/dri
+        command:
+          type: array
+          items:
+            type: string
+            example: --config_file
+        entrypoint:
+          type: array
+          items:
+            type: string
+        binds:
+          type: array
+          items:
+            type: string
+            example: /mnt/model-server:/models
+        environment:
+          type: object
+          additionalProperties:
+            type: string
+        user:
+          type: string
+        pid:
+          type: string
+        ipc:
+          type: string
+        maxMemoryMb:
+          type: integer
+        maxCpus:
+          type: string
+        ephemeralPorts:
+          type: array
+          items:
+            type: string
+        tmpfs:
+          type: object
+          additionalProperties:
+            type: string
+        cap_add:
+          type: array
+          items:
+            type: string
+        sysctls:
+          type: object
+          additionalProperties:
+            type: string
+        logDriver:
+          type: string
+        secrets:
+          type: array
+          items:
+            type: object
+            properties:
+              key:
+                type: string
+              cert:
+                type: string
+              seal:
+                type: object
+
+    ServiceBody:
+      type: object
+      required: [label, url, version, arch]
+      properties:
+        label:
+          type: string
+          example: my-service
+        description:
+          type: string
+        url:
+          type: string
+          example: myservice
+        version:
+          type: string
+          example: 1.0.0
+        arch:
+          type: string
+          example: amd64
+        sharable:
+          type: string
+          enum: [single, multiple]
+          default: multiple
+        public:
+          type: boolean
+          default: false
+        matchHardware:
+          type: object
+        requiredServices:
+          type: array
+          items:
+            type: object
+        userInput:
+          type: array
+          items:
+            type: object
+        deployment:
+          type: object
+          description: Deployment config (auto-stringified and signed)
+          properties:
+            services:
+              type: object
+              additionalProperties:
+                $ref: '#/components/schemas/ServiceDeploymentServices'
+        deploymentSignature:
+          type: string
+          description: Deployment signature (auto-generated if empty or starts with `ui-sig-*`)
+        imageStore:
+          type: string
+        documentation:
+          type: string
+        clusterDeployment:
+          type: object
+        clusterDeploymentSignature:
+          type: string
+
+    PService:
+      type: object
+      description: Service reference within a pattern
+      properties:
+        serviceOrgID:
+          type: string
+          example: myorg
+        serviceArch:
+          type: string
+          example: amd64
+        serviceVersions:
+          type: array
+          items:
+            type: object
+            properties:
+              version:
+                type: string
+                example: 1.0.0
+              priority:
+                type: object
+                properties:
+                  priority_value:
+                    type: integer
+                  retries:
+                    type: integer
+              upgradePolicy:
+                type: string
+                enum: [null, immediate, never, conservative]
+        nodeHealth:
+          type: object
+        dataVerify:
+          type: string

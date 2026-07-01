@@ -1,0 +1,32 @@
+version: "3"
+
+services:
+
+  myorg-agbot:
+    image: ghcr.io/open-horizon/amd64_agbot:latest
+    container_name: myorg-agbot
+    restart: always
+    ports:
+      - "0.0.0.0:3112:8080"
+      - "0.0.0.0:3113:8083"
+    networks:
+      - horizonnet
+    volumes:
+      - /etc/horizon/myorg-agbot.json:/etc/horizon/anax.json.tmpl:ro
+      - /etc/horizon/keys:/home/agbotuser/keys:ro
+      - myorg-agbot-msgkey:/var/horizon/msgKey
+    environment:
+      - ANAX_LOG_LEVEL=3
+      - HZN_VAR_BASE=/var/horizon
+    depends_on:
+      - exchange-api
+      - css-api
+      - postgres
+      - bao
+
+volumes:
+  myorg-agbot-msgkey:
+
+networks:
+  horizonnet:
+    external: true

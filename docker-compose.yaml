@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      target: backend
+      dockerfile: Dockerfile
+    container_name: nereid-backend
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+    ports:
+      - "3001:3001"
+    networks:
+      - nereid-network
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  frontend:
+    build:
+      context: .
+      target: frontend
+      dockerfile: Dockerfile
+    container_name: nereid-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - nereid-network
+
+networks:
+  nereid-network:
+    driver: bridge

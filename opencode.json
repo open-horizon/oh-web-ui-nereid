@@ -1,0 +1,39 @@
+{
+    "$schema": "https://opencode.ai/config.json",
+    "provider": {
+        "vllm-provider": {
+            "npm": "@ai-sdk/openai-compatible",
+            "name": "vLLM Local Gemma",
+            "options": {
+                "baseURL": "http://192.168.123.57:8000/v1",
+                "apiKey": "bac"
+            },
+            "models": {
+                "google/gemma-4-26B-A4B-it": {
+                    "name": "Gemma-4-26B-A4B-it",
+                    "limit": {
+                        "context": 65536,
+                        "output": 8192
+                    }
+                }
+            }
+        },
+        "ollama-provider": {
+            "npm": "@ai-sdk/openai-compatible",
+            "name": "Ollama Local",
+            "options": {
+                "baseURL": "http://192.168.123.174:11434/v1",
+                "apiKey": "bac"
+            },
+            "models": {
+                "qwen3-coder:30b": {
+                    "name": "Qwen3-coder-30B",
+                    "limit": {
+                        "context": 65536,
+                        "output": 8192
+                    }
+                }
+            }
+        }
+    }
+}
