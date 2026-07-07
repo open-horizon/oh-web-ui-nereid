@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { usePolling } from '../hooks/usePolling';
 import { Table, Button, Space, Typography, message, Modal, Tag, Form, Input, Alert, Select, Checkbox } from 'antd';
 import { ReloadOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, SearchOutlined, ImportOutlined, EditOutlined } from '@ant-design/icons';
 import { PatternAPI, ExchangePattern } from '../api/patterns';
@@ -6,6 +7,7 @@ import { ServiceAPI, ExchangeService } from '../api/services';
 import { OrgAPI } from '../api/organizations';
 import { getConfig } from '../api/config';
 import { useT } from '../i18n/context';
+import { useScreenSize } from '../hooks/useIsMobile';
 
 const { Text } = Typography;
 const { TextArea } = Input;
@@ -38,6 +40,8 @@ export default function Patterns() {
   const sessionOrg = getConfig().orgId || '';
   const [pageOrg, setPageOrg] = useState<string>(sessionOrg);
   const [allOrgs, setAllOrgs] = useState<string[]>([]);
+  const [search, setSearch] = useState('');
+  const screenSize = useScreenSize();
 
   const [services, setServices] = useState<Record<string, ExchangeService>>({});
   const [serviceSearch, setServiceSearch] = useState('');
@@ -68,6 +72,17 @@ export default function Patterns() {
   useEffect(() => {
     load();
   }, []);
+
+  usePolling(async () => {
+    try {
+      const res = await PatternAPI.list(pageOrg);
+      setData(res?.patterns ?? {});
+      if (getConfig().orgType === 'system') {
+        const orgRes = await OrgAPI.list();
+        setAllOrgs(Object.keys(orgRes?.orgs ?? {}));
+      }
+    } catch { /* auto-refresh: silent */ }
+  }, 30000);
 
   const handleDelete = (id: string) => {
     Modal.confirm({
@@ -150,19 +165,12 @@ export default function Patterns() {
     if (!editModelTarget) return;
     try {
       const values = await editForm.validateFields();
-      setCreating(true);
-      let servicesArr: any[];
-      if (editSelectedSvcIds.length > 0) {
-        servicesArr = buildServicesFromEdit();
-      } else {
-        try {
-          servicesArr = JSON.parse(values.servicesJSON);
-        } catch {
-          message.error(t('Dependency service JSON format error'));
-          setCreating(false);
-          return;
-        }
+      const servicesArr = editSelectedSvcIds.length > 0 ? buildServicesFromEdit() : [];
+      if (servicesArr.length === 0) {
+        message.error(t('At least one service must be selected for a pattern'));
+        return;
       }
+      setCreating(true);
       let userInputArr: any[] = [];
       if (values.userInputJSON?.trim()) {
         try {
@@ -234,6 +242,10 @@ export default function Patterns() {
   const handleCreate = async () => {
     try {
       const values = await form.validateFields();
+      if (selectedServices.length === 0) {
+        message.error(t('At least one service must be selected for a pattern'));
+        return;
+      }
       setCreating(true);
       const body: Record<string, any> = {
         label: values.label,
@@ -258,14 +270,14 @@ export default function Patterns() {
     }
   };
 
-  const columns = [
+  const allColumns = [
     {
       title: t('Name'), key: 'name', width: 180,
       render: (_: any, __: any, i: number) => Object.keys(data)[i],
     },
     { title: t('Label'), dataIndex: 'label', key: 'label', render: (v: string) => v || '-' },
     {
-      title: t('Constraints'), key: 'svcCount', width: 80,
+      title: t('Service Count'), key: 'svcCount', width: 80,
       render: (_: any, __: any, i: number) => {
         const p = data[Object.keys(data)[i]];
         return p?.services?.length ?? 0;
@@ -286,7 +298,19 @@ export default function Patterns() {
     },
   ];
 
-  const tableData = Object.keys(data).map((name, i) => ({ key: name, ...data[name], index: i }));
+  const columns = screenSize === 'mobile'
+    ? allColumns.filter((c) => ['name', 'action'].includes(c.key as string))
+    : allColumns;
+
+  const tableData = Object.keys(data)
+    .filter((name) => {
+      if (!search.trim()) return true;
+      const kw = search.trim().toLowerCase();
+      const p = data[name];
+      const hay = [name, p?.label, p?.description].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(kw);
+    })
+    .map((name, i) => ({ key: name, ...data[name], index: i }));
 
   return (
     <div>
@@ -315,12 +339,19 @@ export default function Patterns() {
           )}
         </div>
         <Space>
+          <Input
+            allowClear
+            placeholder={t('Search')}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ width: 200 }}
+          />
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('Create Pattern')}</Button>
           <Button icon={<ImportOutlined />} onClick={openImport}>{t('Import from JSON')}</Button>
           <Button icon={<ReloadOutlined />} onClick={() => load()}>{t('Refresh')}</Button>
         </Space>
       </div>
-      <Table columns={columns} dataSource={tableData} loading={loading} pagination={false} size="middle" />
+      <Table columns={columns} dataSource={tableData} loading={loading} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `${total} ${t('Patterns')}` }} size="middle" scroll={{ x: 'max-content' }} />
 
       <Modal
         title={t('Create Pattern')}

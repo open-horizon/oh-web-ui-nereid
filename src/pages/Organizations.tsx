@@ -3,6 +3,7 @@ import { Table, Button, Space, Typography, message, Modal, Form, Input } from 'a
 import { PlusOutlined, ReloadOutlined, DeleteOutlined, EyeOutlined } from '@ant-design/icons';
 import { OrgAPI, Organization } from '../api/organizations';
 import { useT } from '../i18n/context';
+import { useScreenSize } from '../hooks/useIsMobile';
 
 const { Text } = Typography;
 
@@ -14,7 +15,9 @@ export default function Organizations() {
   const [detailData, setDetailData] = useState<any>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [search, setSearch] = useState('');
   const [form] = Form.useForm();
+  const screenSize = useScreenSize();
   const load = async () => {
     setLoading(true);
     try {
@@ -70,7 +73,7 @@ export default function Organizations() {
     }
   };
 
-  const columns = [
+  const allColumns = [
     { title: t('Org ID'), dataIndex: 'id', key: 'id', render: (_: any, __: any, i: number) => Object.keys(data)[i] },
     { title: t('Label'), dataIndex: 'label', key: 'label', render: (v: string) => v || '-' },
     { title: t('Description'), dataIndex: 'description', key: 'description', render: (v: string) => v || '-' },
@@ -91,11 +94,19 @@ export default function Organizations() {
     },
   ];
 
-  const tableData = Object.keys(data).map((id, i) => ({
-    key: id,
-    id,
-    ...data[id],
-  }));
+  const columns = screenSize === 'mobile'
+    ? allColumns.filter((c) => ['id', 'action'].includes(c.key as string))
+    : allColumns;
+
+  const tableData = Object.keys(data)
+    .filter((name) => {
+      if (!search.trim()) return true;
+      const kw = search.trim().toLowerCase();
+      const o = data[name];
+      const hay = [name, o?.label, o?.description].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(kw);
+    })
+    .map((name, i) => ({ key: name, ...data[name], index: i }));
 
   return (
     <div>
@@ -105,6 +116,13 @@ export default function Organizations() {
           <br /><Text type="secondary">{t('Manage all organizations and their configuration')}</Text>
         </div>
         <Space>
+          <Input
+            allowClear
+            placeholder={t('Search')}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ width: 200 }}
+          />
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>{t('Create Organization')}</Button>
           <Button icon={<ReloadOutlined />} onClick={load}>{t('Refresh')}</Button>
         </Space>
@@ -113,8 +131,9 @@ export default function Organizations() {
         columns={columns}
         dataSource={tableData}
         loading={loading}
-        pagination={false}
+        pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `${total} ${t('Organization Management')}` }}
         size="middle"
+        scroll={{ x: 'max-content' }}
       />
       <Modal
         title={t('Org Details')}

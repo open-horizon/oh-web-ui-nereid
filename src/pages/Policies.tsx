@@ -1,10 +1,14 @@
 import { useEffect, useState } from 'react';
+import { usePolling } from '../hooks/usePolling';
 import { Table, Button, Space, Typography, message, Modal, Tag, Form, Input, Select, Upload } from 'antd';
 import { ReloadOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, ImportOutlined, EditOutlined } from '@ant-design/icons';
+
 import { DeploymentPolicyAPI, DeploymentPolicy } from '../api/policies';
+import { ServiceAPI, ExchangeService } from '../api/services';
 import { OrgAPI } from '../api/organizations';
 import { getConfig } from '../api/config';
 import { useT } from '../i18n/context';
+import { useScreenSize } from '../hooks/useIsMobile';
 
 const { Text } = Typography;
 const { TextArea } = Input;
@@ -24,6 +28,16 @@ export default function Policies() {
   const sessionOrg = getConfig().orgId || '';
   const [pageOrg, setPageOrg] = useState<string>(sessionOrg);
   const [allOrgs, setAllOrgs] = useState<string[]>([]);
+  const [services, setServices] = useState<Record<string, ExchangeService>>({});
+  const [selectedServiceId, setSelectedServiceId] = useState<string>('');
+  const [editOpen, setEditOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<string | null>(null);
+  const [editSelectedServiceId, setEditSelectedServiceId] = useState<string>('');
+  const [editing, setEditing] = useState(false);
+  const [editForm] = Form.useForm();
+  const [search, setSearch] = useState('');
+
+  const screenSize = useScreenSize();
 
   // Pre-built example policies that can be imported with one click for common scenarios
   const importExamples: Record<string, string> = {
@@ -116,6 +130,17 @@ export default function Policies() {
     load();
   }, []);
 
+  usePolling(async () => {
+    try {
+      const res = await DeploymentPolicyAPI.list(pageOrg);
+      setData(res?.businessPolicy ?? {});
+      if (getConfig().orgType === 'system') {
+        const orgRes = await OrgAPI.list();
+        setAllOrgs(Object.keys(orgRes?.orgs ?? {}));
+      }
+    } catch { /* auto-refresh: silent */ }
+  }, 30000);
+
   const handleDelete = (id: string) => {
     Modal.confirm({
       title: t('Confirm deletion of policy').replace('{0}', id),
@@ -144,7 +169,7 @@ export default function Policies() {
     });
   };
 
-  const columns = [
+  const allColumns = [
     {
       title: t('Name'), key: 'name', width: 180,
       render: (_: any, __: any, i: number) => Object.keys(data)[i],
@@ -168,6 +193,7 @@ export default function Policies() {
         return (
           <Space>
             <Button size="small" icon={<EyeOutlined />} onClick={() => showDetail(id)} />
+            <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(id)} />
             <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(id)} />
           </Space>
         );
@@ -175,21 +201,111 @@ export default function Policies() {
     },
   ];
 
-  const tableData = Object.keys(data).map((name, i) => ({ key: name, ...data[name], index: i }));
+  const columns = screenSize === 'mobile'
+    ? allColumns.filter((c) => ['name', 'action'].includes(c.key as string))
+    : allColumns;
+
+  const tableData = Object.keys(data)
+    .filter((name) => {
+      if (!search.trim()) return true;
+      const kw = search.trim().toLowerCase();
+      const p = data[name];
+      const hay = [name, p?.label, p?.description, p?.service].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(kw);
+    })
+    .map((name, i) => ({ key: name, ...data[name], index: i }));
+
+  const openCreate = async () => {
+    setCreateOpen(true);
+    setSelectedServiceId('');
+    form.resetFields();
+    try {
+      const svcRes = await ServiceAPI.list();
+      setServices(svcRes?.services ?? {});
+    } catch (err: any) {
+      message.error(err.message);
+    }
+  };
+
+  const openEdit = async (id: string) => {
+    setEditTarget(id);
+    const policy = data[id];
+    if (!policy) return;
+    setEditOpen(true);
+    editForm.resetFields();
+    // Pre-fill form with current values
+    editForm.setFieldsValue({
+      label: policy.label || '',
+      description: policy.description || '',
+      constraints: (policy.constraints || []).join('\n'),
+    });
+    // Find matching service
+    const svcName = policy.service?.name || '';
+    const svcMatch = Object.keys(services).find((s) => s.includes(svcName));
+    setEditSelectedServiceId(svcMatch || '');
+    // Ensure services list is loaded
+    try {
+      const svcRes = await ServiceAPI.list();
+      setServices(svcRes?.services ?? {});
+    } catch (err: any) {
+      message.error(err.message);
+    }
+  };
+
+  const handleEdit = async () => {
+    if (!editTarget) return;
+    try {
+      const values = await editForm.validateFields();
+      if (!editSelectedServiceId) {
+        message.error(t('Please select a service'));
+        return;
+      }
+      const svc = services[editSelectedServiceId];
+      setEditing(true);
+      const body: Record<string, any> = {
+        label: values.label,
+        description: values.description || '',
+        service: {
+          name: svc.url || editSelectedServiceId,
+          org: getConfig().orgId || '',
+          arch: svc.arch || 'amd64',
+          serviceVersions: [{ version: svc.version || '1.0.0', priority: {}, upgradePolicy: {} }],
+          nodeHealth: null,
+        },
+        constraints: values.constraints ? values.constraints.split('\n').filter(Boolean) : [],
+        userInput: [],
+        secretBinding: [],
+      };
+      await DeploymentPolicyAPI.update(editTarget, body);
+      message.success(t('Policy updated'));
+      setEditOpen(false);
+      editForm.resetFields();
+      load();
+    } catch (err: any) {
+      if (!err.message?.includes('validate')) message.error(err.message);
+    } finally {
+      setEditing(false);
+    }
+  };
 
   // Create policy with default service structure, constraints parsed from lines
   const handleCreate = async () => {
     try {
       const values = await form.validateFields();
+      if (!selectedServiceId) {
+        message.error(t('Please select a service'));
+        return;
+      }
+      const svc = services[selectedServiceId];
       setCreating(true);
       const body: Record<string, any> = {
         label: values.label,
         description: values.description || '',
         service: {
-          name: values.serviceName,
+          name: svc.url || selectedServiceId,
           org: getConfig().orgId || '',
-          arch: 'amd64',
-          serviceVersions: [{ version: '1.0.0', priority: {}, upgrade: {} }],
+          arch: svc.arch || 'amd64',
+          serviceVersions: [{ version: svc.version || '1.0.0', priority: {}, upgradePolicy: {} }],
           nodeHealth: { ping_interval: 60, parallel_health_check: true },
         },
         constraints: values.constraints ? values.constraints.split('\n').filter(Boolean) : [],
@@ -263,18 +379,25 @@ export default function Policies() {
           )}
         </div>
         <Space>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>{t('Create Policy')}</Button>
+          <Input
+            allowClear
+            placeholder={t('Search')}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ width: 200 }}
+          />
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('Create Policy')}</Button>
           <Button icon={<ImportOutlined />} onClick={() => { setImportOpen(true); importForm.resetFields(); }}>{t('Import from JSON')}</Button>
           <Button icon={<ReloadOutlined />} onClick={() => load()}>{t('Refresh')}</Button>
         </Space>
       </div>
-      <Table columns={columns} dataSource={tableData} loading={loading} pagination={false} size="middle" />
+      <Table columns={columns} dataSource={tableData} loading={loading} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `${total} ${t('Deployment Policies')}` }} size="middle" scroll={{ x: 'max-content' }} />
 
       <Modal
         title={t('Create Deployment Policy')}
         open={createOpen}
         onOk={handleCreate}
-        onCancel={() => { setCreateOpen(false); }}
+        onCancel={() => { setCreateOpen(false); setSelectedServiceId(''); }}
         confirmLoading={creating}
         width={500}
       >
@@ -288,8 +411,48 @@ export default function Policies() {
           <Form.Item name="description" label={t('Description')}>
             <TextArea rows={2} placeholder={t('Optional description')} />
           </Form.Item>
-          <Form.Item name="serviceName" label={t('Service Name')} rules={[{ required: true, message: t('Please enter service name') }]}>
-            <Input placeholder="my-service" />
+          <Form.Item label={t('Service')} rules={[{ required: true, message: t('Please select a service') }]}>
+            <Select
+              showSearch
+              value={selectedServiceId || undefined}
+              placeholder={t('Select a service')}
+              onChange={(val) => setSelectedServiceId(val)}
+              filterOption={(input, option) => (option?.label as string || '').toLowerCase().includes(input.toLowerCase())}
+              options={Object.entries(services).map(([id]) => ({ label: id, value: id }))}
+              style={{ width: '100%' }}
+            />
+          </Form.Item>
+          <Form.Item name="constraints" label={t('Constraints (one per line)')}>
+            <TextArea rows={3} placeholder={t('e.g. a == b')} />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={t('Edit Deployment Policy') + (editTarget ? ' - ' + editTarget : '')}
+        open={editOpen}
+        onOk={handleEdit}
+        onCancel={() => { setEditOpen(false); editForm.resetFields(); }}
+        confirmLoading={editing}
+        width={500}
+      >
+        <Form form={editForm} layout="vertical">
+          <Form.Item name="label" label={t('Label')} rules={[{ required: true, message: t('Please enter a label') }]}>
+            <Input placeholder={t('Policy display name')} />
+          </Form.Item>
+          <Form.Item name="description" label={t('Description')}>
+            <TextArea rows={2} placeholder={t('Optional description')} />
+          </Form.Item>
+          <Form.Item label={t('Service')} rules={[{ required: true, message: t('Please select a service') }]}>
+            <Select
+              showSearch
+              value={editSelectedServiceId || undefined}
+              placeholder={t('Select a service')}
+              onChange={(val) => setEditSelectedServiceId(val)}
+              filterOption={(input, option) => (option?.label as string || '').toLowerCase().includes(input.toLowerCase())}
+              options={Object.entries(services).map(([id]) => ({ label: id, value: id }))}
+              style={{ width: '100%' }}
+            />
           </Form.Item>
           <Form.Item name="constraints" label={t('Constraints (one per line)')}>
             <TextArea rows={3} placeholder={t('e.g. a == b')} />

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
+import { usePolling } from '../hooks/usePolling';
 import { useNavigate } from 'react-router-dom';
-import { Row, Col, Card, Statistic, Spin, Typography, Space, Tag } from 'antd';
+import { Row, Col, Card, Statistic, Spin, Typography, List, Tag, Descriptions } from 'antd';
 import {
   HddOutlined,
   LaptopOutlined,
@@ -11,12 +12,39 @@ import {
   ApartmentOutlined,
   BookOutlined,
   SafetyOutlined,
+  CloudServerOutlined,
+  HeartOutlined,
 } from '@ant-design/icons';
-import { OrgAPI, OrgStatusResponse } from '../api/organizations';
+import { OrgAPI, OrgStatusResponse, DashboardAPI, DashboardResponse } from '../api/organizations';
 import { getConfig } from '../api/config';
 import { useT } from '../i18n/context';
 
 const { Text } = Typography;
+
+function fmtUptime(ms: number) {
+  const s = Math.floor(ms / 1000);
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const parts: string[] = [];
+  if (d > 0) parts.push(`${d}d`);
+  if (h > 0) parts.push(`${h}h`);
+  if (m > 0) parts.push(`${m}m`);
+  return parts.join(' ') || '<1m';
+}
+
+function timeAgo(iso?: string) {
+  if (!iso) return '-';
+  const diff = Date.now() - new Date(iso).getTime();
+  if (diff < 0) return '-';
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
 
 export default function Dashboard() {
   const { t } = useT();
@@ -24,16 +52,23 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [version, setVersion] = useState('');
   const [status, setStatus] = useState<OrgStatusResponse | null>(null);
+  const [dash, setDash] = useState<DashboardResponse | null>(null);
   const config = getConfig();
+
+  const load = async () => {
+    const vRes = await fetch('/api/version', { headers: { 'X-Session-Id': config.sessionId } });
+    const vData = await vRes.json();
+    setVersion(vData?.version || '');
+    const s = await OrgAPI.status();
+    setStatus(s);
+    const d = await DashboardAPI.get();
+    setDash(d);
+  };
 
   useEffect(() => {
     (async () => {
       try {
-        const vRes = await fetch('/api/version', { headers: { 'X-Session-Id': config.sessionId } });
-        const vData = await vRes.json();
-        setVersion(vData?.version || '');
-        const s = await OrgAPI.status();
-        setStatus(s);
+        await load();
       } catch (err: any) {
         console.error(err);
       } finally {
@@ -42,6 +77,12 @@ export default function Dashboard() {
     })();
   }, []);
 
+  usePolling(async () => {
+    try {
+      await load();
+    } catch { /* auto-refresh: silent */ }
+  }, 30000);
+
   if (loading) {
     return (
       <div style={{ textAlign: 'center', paddingTop: 120 }}>
@@ -49,6 +90,16 @@ export default function Dashboard() {
       </div>
     );
   }
+
+  const stats: { title: string; value: number | string; icon: React.ReactNode; key: string }[] = [
+    { title: t('Edge Nodes'), value: status?.nodes ?? '-', icon: <LaptopOutlined />, key: 'nodes' },
+    { title: t('Services'), value: status?.services ?? '-', icon: <AppstoreOutlined />, key: 'services' },
+    { title: t('Deployment Patterns'), value: status?.patterns ?? '-', icon: <ApartmentOutlined />, key: 'patterns' },
+    { title: t('Deployment Policies'), value: status?.policies ?? '-', icon: <SafetyOutlined />, key: 'policies' },
+    { title: t('Management Policies'), value: status?.mgmtPolicies ?? '-', icon: <BookOutlined />, key: 'mgmt' },
+    { title: t('Agreement Bots'), value: status?.agbots ?? '-', icon: <RobotOutlined />, key: 'agbots' },
+    { title: t('Users'), value: status?.users ?? '-', icon: <TeamOutlined />, key: 'users' },
+  ];
 
   return (
     <div>
@@ -59,104 +110,65 @@ export default function Dashboard() {
         <br />
         <Text type="secondary">{t('Overview of org').replace('{0}', config.orgId)}</Text>
       </div>
+
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={12} lg={6}>
           <Card>
             <Statistic title={t('Exchange Version')} value={version || '-'} prefix={<HddOutlined />} />
           </Card>
         </Col>
-        {config.orgType !== 'system' && (
-          <Col xs={24} sm={12} lg={6}>
+        {stats.map((st) => (
+          <Col xs={24} sm={12} lg={6} key={st.key}>
             <Card>
-              <Statistic title={t('Edge Nodes')} value={status?.nodes ?? '-'} prefix={<LaptopOutlined />} />
+              <Statistic title={st.title} value={st.value} prefix={st.icon} />
             </Card>
           </Col>
-        )}
-        {config.orgType !== 'system' && (
-          <Col xs={24} sm={12} lg={6}>
-            <Card>
-              <Statistic title={t('Services')} value={status?.services ?? '-'} prefix={<AppstoreOutlined />} />
-            </Card>
-          </Col>
-        )}
-        {config.orgType === 'system' && (
-          <Col xs={24} sm={12} lg={6}>
-            <Card>
-              <Statistic title={t('Agreement Bots')} value={status?.agbots ?? 0} prefix={<RobotOutlined />} />
-            </Card>
-          </Col>
-        )}
-        <Col xs={24} sm={12} lg={6}>
-          <Card>
-            <Statistic title={t('Users')} value={status?.users ?? '-'} prefix={<TeamOutlined />} />
-          </Card>
-        </Col>
+        ))}
       </Row>
-      <Row gutter={16} style={{ marginTop: 24 }}>
-        <Col xs={24} lg={12}>
-          <Card title={t('Quick Actions')}>
-            <ButtonGroup navigate={navigate} />
+
+      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+        <Col xs={24} lg={10}>
+          <Card title={t('System Info')}>
+            <Descriptions column={1} size="small" bordered>
+              <Descriptions.Item label={t('Organization')}>{dash?.orgId || config.orgId}</Descriptions.Item>
+              <Descriptions.Item label={t('Online Nodes')}>
+                <Tag color="green" icon={<HeartOutlined />}>{dash?.onlineNodes ?? 0}</Tag> / {status?.nodes ?? 0}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('Server Start Time')}>
+                {dash?.serverStartedAt ? new Date(dash.serverStartedAt).toLocaleString() : '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('Server Uptime')}>
+                <Tag icon={<CloudServerOutlined />}>{dash ? fmtUptime(dash.serverUptimeMs) : '-'}</Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label={t('BFF Version')}>Nereid v1.0</Descriptions.Item>
+            </Descriptions>
           </Card>
         </Col>
-        <Col xs={24} lg={12}>
-          <Card title={t('Connection Info')}>
-            <div style={{ lineHeight: 2 }}>
-              <div>
-                <Text strong>{t('Version')}: </Text>
-                <Text>{version}</Text>
-              </div>
-              <div>
-                <Text strong>{t('Organization')}: </Text>
-                <Text>{config.orgId || '-'}</Text>
-              </div>
-            </div>
+        <Col xs={24} lg={14}>
+          <Card title={t('Recent Node Activity')}>
+            <List
+              size="small"
+              dataSource={dash?.recentNodes ?? []}
+              locale={{ emptyText: t('No data') }}
+              renderItem={(n) => (
+                <List.Item
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => navigate('/nodes')}
+                  actions={[
+                    n.pattern ? <Tag color="blue" key="p">{n.pattern}</Tag> : <Tag key="p">{t('Policy')}</Tag>,
+                    <Tag color="green" key="r">{n.registered}</Tag>,
+                  ]}
+                >
+                  <List.Item.Meta
+                    title={n.id}
+                    description={`${t('Last Heartbeat')}: ${timeAgo(n.lastHeartbeat)}`}
+                  />
+                </List.Item>
+              )}
+            />
           </Card>
         </Col>
       </Row>
     </div>
-  );
-}
-
-function ButtonGroup({ navigate }: { navigate: (path: string) => void }) {
-  const { t } = useT();
-  const itemsByRole: Record<string, { href: string; label: string; icon: React.ReactNode }[]> = {
-    hubadmin: [
-      { href: '/organizations', label: t('Manage Organizations'), icon: <BuildOutlined /> },
-      { href: '/users', label: t('Manage Users'), icon: <TeamOutlined /> },
-      { href: '/catalog', label: t('Browse Catalog'), icon: <BookOutlined /> },
-    ],
-    system: [
-      { href: '/organizations', label: t('Manage Organizations'), icon: <BuildOutlined /> },
-      { href: '/users', label: t('Manage Users'), icon: <TeamOutlined /> },
-      { href: '/agbots', label: t('Manage Agbots'), icon: <RobotOutlined /> },
-      { href: '/catalog', label: t('Browse Catalog'), icon: <BookOutlined /> },
-    ],
-    user: [
-      { href: '/users', label: t('Manage Users'), icon: <TeamOutlined /> },
-      { href: '/nodes', label: t('View Edge Nodes'), icon: <LaptopOutlined /> },
-      { href: '/services', label: t('Browse Services'), icon: <AppstoreOutlined /> },
-      { href: '/patterns', label: t('Deployment Patterns'), icon: <ApartmentOutlined /> },
-    ],
-  };
-  const orgType = getConfig().orgType || 'user';
-  const items = itemsByRole[orgType] || itemsByRole.user;
-  return (
-    <Space direction="vertical" style={{ width: '100%' }}>
-      {items.map((item) => (
-        <div
-          key={item.href}
-          onClick={() => navigate(item.href)}
-          style={{
-            display: 'block',
-            padding: '8px 16px',
-            borderRadius: 6,
-            border: '1px solid #d9d9d9',
-            cursor: 'pointer',
-          }}
-        >
-          {item.icon} {item.label}
-        </div>
-      ))}
-    </Space>
   );
 }

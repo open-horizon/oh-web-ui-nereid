@@ -1,10 +1,12 @@
 import { useEffect, useState, useCallback } from 'react';
+import { usePolling } from '../hooks/usePolling';
 import { Table, Button, Space, Typography, message, Modal, Drawer, Descriptions, Tag, Form, Input, Select, Tabs, Collapse, Alert, Switch, Upload, Tooltip } from 'antd';
 import { ReloadOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, EditOutlined, DownloadOutlined, UploadOutlined, MinusCircleOutlined } from '@ant-design/icons';
 import { ServiceAPI, ExchangeService } from '../api/services';
 import { OrgAPI } from '../api/organizations';
 import { getConfig } from '../api/config';
 import { useT } from '../i18n/context';
+import { useScreenSize } from '../hooks/useIsMobile';
 
 const { Text, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -147,6 +149,8 @@ export default function Services() {
   const sessionOrg = getConfig().orgId || '';
   const [pageOrg, setPageOrg] = useState<string>(sessionOrg);
   const [allOrgs, setAllOrgs] = useState<string[]>([]);
+  const [search, setSearch] = useState('');
+  const screenSize = useScreenSize();
 
   // Load services list from Exchange; system org type also loads org list for cross-org browsing
   const load = useCallback(async (org?: string) => {
@@ -169,6 +173,17 @@ export default function Services() {
   useEffect(() => {
     load();
   }, [load]);
+
+  usePolling(async () => {
+    try {
+      const res = await ServiceAPI.list(pageOrg);
+      setData(res?.services ?? {});
+      if (getConfig().orgType === 'system') {
+        const orgRes = await OrgAPI.list();
+        setAllOrgs(Object.keys(orgRes?.orgs ?? {}));
+      }
+    } catch { /* auto-refresh: silent */ }
+  }, 30000);
 
   const handleDelete = (id: string) => {
     Modal.confirm({
@@ -483,7 +498,7 @@ export default function Services() {
   const [pickerSearch, setPickerSearch] = useState('');
 
   // Table columns: name derived from data keys, actions inline with icon buttons
-  const columns = [
+  const allColumns = [
     {
       title: t('Name'), key: 'name', width: 180,
       render: (_: any, __: any, i: number) => Object.keys(data)[i],
@@ -513,7 +528,20 @@ export default function Services() {
     },
   ];
 
-  const tableData = Object.keys(data).map((name, i) => ({ key: name, ...data[name], index: i }));
+  // On phones show only the essential columns to avoid horizontal scrolling
+  const columns = screenSize === 'mobile'
+    ? allColumns.filter((c) => ['name', 'version', 'arch', 'action'].includes(c.key as string))
+    : allColumns;
+
+  const tableData = Object.keys(data)
+    .filter((name) => {
+      if (!search.trim()) return true;
+      const kw = search.trim().toLowerCase();
+      const s = data[name];
+      const hay = [name, s?.name, s?.url, s?.arch, s?.version].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(kw);
+    })
+    .map((name, i) => ({ key: name, ...data[name], index: i }));
 
   return (
     <div>
@@ -542,12 +570,19 @@ export default function Services() {
           )}
         </div>
         <Space>
+          <Input
+            allowClear
+            placeholder={t('Search')}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ width: 200 }}
+          />
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('Create Service')}</Button>
           <Button icon={<UploadOutlined />} onClick={openImport}>{t('Import JSON')}</Button>
           <Button icon={<ReloadOutlined />} onClick={() => load()}>{t('Refresh')}</Button>
         </Space>
       </div>
-      <Table columns={columns} dataSource={tableData} loading={loading} pagination={false} size="middle" />
+      <Table columns={columns} dataSource={tableData} loading={loading} size="middle" scroll={{ x: 'max-content' }} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `${total} ${t('Services')}` }} />
 
       <Modal
         title={t('Import Service')}

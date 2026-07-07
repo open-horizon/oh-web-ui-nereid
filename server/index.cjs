@@ -6,6 +6,12 @@ const { generateKeyPair, signDeployment, genAndSign } = require('./sign-utils.cj
 const app = express();
 app.use(express.json());
 
+// Public health endpoint (no auth) used by the container healthcheck
+app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
+
+// BFF server start time, used to report uptime on the dashboard
+const SERVER_START = Date.now();
+
 const sessions = {};
 
 // Generate unique session ID for authentication tracking
@@ -66,6 +72,26 @@ function sanitizeBody(body) {
   delete b.organization; // Exchange rejects this field
   delete b.org;          // Exchange rejects this field
   return b;
+}
+
+// Parse Exchange service ID (url_version_arch) into its components.
+// Underscores in the url are escaped as __ (double underscore) by the Exchange.
+function parseServiceId(svcName) {
+  // Find positions of unescaped underscores (ignore underscores in __ pairs)
+  const positions = [];
+  for (let i = 0; i < svcName.length; i++) {
+    if (svcName[i] === '_' && (i === 0 || svcName[i - 1] !== '_')) {
+      positions.push(i);
+    }
+  }
+  if (positions.length < 2) return { url: '', version: '', arch: '' };
+  const last = positions[positions.length - 1];
+  const second = positions[positions.length - 2];
+  return {
+    url: svcName.substring(0, second).replace(/__/g, '_'),
+    version: svcName.substring(second + 1, last),
+    arch: svcName.substring(last + 1),
+  };
 }
 
 // Whitelist of allowed fields for service creation/update - prevents unknown field rejections
@@ -144,7 +170,7 @@ app.get('/api/status', async (req, res) => {
     const { status, data } = await exch(s, 'GET', `/orgs/${s.orgId}/status`);
     if (![200, 404].includes(status)) return res.status(status).json(data);
     const base = data && typeof data === 'object' ? data : {};
-    let serviceCount = 0, agbotCount = 0;
+    let serviceCount = 0, agbotCount = 0, patternCount = 0, policyCount = 0, mgmtPolicyCount = 0;
     try {
       const svcRes = await exch(s, 'GET', `/orgs/${s.orgId}/services`);
       if (svcRes.status === 200 && svcRes.data?.services) {
@@ -157,11 +183,97 @@ app.get('/api/status', async (req, res) => {
         agbotCount = Object.keys(abRes.data.agbots).length;
       }
     } catch {}
+    try {
+      const patRes = await exch(s, 'GET', `/orgs/${s.orgId}/patterns`);
+      if (patRes.status === 200 && patRes.data?.patterns) {
+        patternCount = Object.keys(patRes.data.patterns).length;
+      }
+    } catch {}
+    try {
+      const polRes = await exch(s, 'GET', `/orgs/${s.orgId}/business/policies`);
+      if (polRes.status === 200 && polRes.data?.businessPolicys) {
+        policyCount = Object.keys(polRes.data.businessPolicys).length;
+      }
+    } catch {}
+    try {
+      const mgRes = await exch(s, 'GET', `/orgs/${s.orgId}/managementpolicies`);
+      if (mgRes.status === 200 && mgRes.data?.managementPolicies) {
+        mgmtPolicyCount = Object.keys(mgRes.data.managementPolicies).length;
+      }
+    } catch {}
     res.json({
       nodes: base.numberOfNodes ?? 0,
       users: base.numberOfUsers ?? 0,
       services: serviceCount,
       agbots: agbotCount,
+      patterns: patternCount,
+      policies: policyCount,
+      mgmtPolicies: mgmtPolicyCount,
+    });
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+// Richer dashboard payload: counts + server uptime + node heartbeat stats + recent activity
+app.get('/api/dashboard', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: '未登录' });
+  try {
+    const { status, data } = await exch(s, 'GET', `/orgs/${s.orgId}/status`);
+    if (![200, 404].includes(status)) return res.status(status).json(data);
+    const base = data && typeof data === 'object' ? data : {};
+
+    let serviceCount = 0, agbotCount = 0, patternCount = 0, policyCount = 0, mgmtPolicyCount = 0;
+    let nodes = {}, nodeList = [];
+    try {
+      const nRes = await exch(s, 'GET', `/orgs/${s.orgId}/nodes`);
+      if (nRes.status === 200 && nRes.data?.nodes) {
+        nodes = nRes.data.nodes;
+        nodeList = Object.entries(nodes).map(([id, n]) => ({ id, lastHeartbeat: n.lastHeartbeat, pattern: n.pattern, registered: Array.isArray(n.registeredServices) ? n.registeredServices.length : 0 }));
+      }
+    } catch {}
+    try {
+      const svcRes = await exch(s, 'GET', `/orgs/${s.orgId}/services`);
+      if (svcRes.status === 200 && svcRes.data?.services) serviceCount = Object.keys(svcRes.data.services).length;
+    } catch {}
+    try {
+      const abRes = await exch(s, 'GET', `/orgs/${s.orgId}/agbots`);
+      if (abRes.status === 200 && abRes.data?.agbots) agbotCount = Object.keys(abRes.data.agbots).length;
+    } catch {}
+    try {
+      const patRes = await exch(s, 'GET', `/orgs/${s.orgId}/patterns`);
+      if (patRes.status === 200 && patRes.data?.patterns) patternCount = Object.keys(patRes.data.patterns).length;
+    } catch {}
+    try {
+      const polRes = await exch(s, 'GET', `/orgs/${s.orgId}/business/policies`);
+      if (polRes.status === 200 && polRes.data?.businessPolicys) policyCount = Object.keys(polRes.data.businessPolicys).length;
+    } catch {}
+    try {
+      const mgRes = await exch(s, 'GET', `/orgs/${s.orgId}/managementpolicies`);
+      if (mgRes.status === 200 && mgRes.data?.managementPolicies) mgmtPolicyCount = Object.keys(mgRes.data.managementPolicies).length;
+    } catch {}
+
+    const now = Date.now();
+    const online = nodeList.filter((n) => n.lastHeartbeat && now - new Date(n.lastHeartbeat).getTime() < 300000).length;
+    const recent = nodeList
+      .filter((n) => n.lastHeartbeat)
+      .sort((a, b) => new Date(b.lastHeartbeat).getTime() - new Date(a.lastHeartbeat).getTime())
+      .slice(0, 8)
+      .map((n) => ({ id: n.id, lastHeartbeat: n.lastHeartbeat, pattern: n.pattern, registered: n.registered }));
+
+    res.json({
+      orgId: s.orgId,
+      orgType: s.orgType,
+      nodes: base.numberOfNodes ?? 0,
+      users: base.numberOfUsers ?? 0,
+      services: serviceCount,
+      agbots: agbotCount,
+      patterns: patternCount,
+      policies: policyCount,
+      mgmtPolicies: mgmtPolicyCount,
+      onlineNodes: online,
+      serverUptimeMs: now - SERVER_START,
+      serverStartedAt: new Date(SERVER_START).toISOString(),
+      recentNodes: recent,
     });
   } catch (e) { res.status(502).json({ msg: e.message }); }
 });
@@ -408,6 +520,14 @@ app.put('/api/services/:id', async (req, res) => {
     const svcId = `${org}/${svcName}`;
     const body = serviceBody(req.body);
 
+    // Inject url/version/arch from the URL path to avoid Exchange validation mismatch.
+    // The Exchange derives these from the service ID in the PUT path and requires them to
+    // match the body fields. Take them from the path so they always agree.
+    const parsed = parseServiceId(svcName);
+    if (parsed.url) body.url = parsed.url;
+    if (parsed.version) body.version = parsed.version;
+    if (parsed.arch) body.arch = parsed.arch;
+
     if (body.deployment && typeof body.deployment !== 'string') {
       body.deployment = JSON.stringify(body.deployment);
     }
@@ -511,6 +631,17 @@ app.post('/api/policies', async (req, res) => {
     const { name, ...rest } = req.body;
     const body = sanitizeBody(rest);
     const { status, data } = await exch(s, 'POST', `/orgs/${s.orgId}/deployment/policies/${name}`, body);
+    res.status(status).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+app.put('/api/policies/:id', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: '未登录' });
+  try {
+    const polId = stripOrg(s.orgId, req.params.id);
+    const body = sanitizeBody(req.body);
+    const { status, data } = await exch(s, 'PUT', `/orgs/${s.orgId}/deployment/policies/${polId}`, body);
     res.status(status).json(data);
   } catch (e) { res.status(502).json({ msg: e.message }); }
 });

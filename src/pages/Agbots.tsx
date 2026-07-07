@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { usePolling } from '../hooks/usePolling';
 import { Table, Button, Space, Typography, message, Modal, Drawer, Descriptions, Tag, Form, Input, Select, Tabs, Tooltip } from 'antd';
 import { ReloadOutlined, DeleteOutlined, EyeOutlined, KeyOutlined, LinkOutlined } from '@ant-design/icons';
 import { AgbotAPI, ExchangeAgbot } from '../api/agbots';
@@ -7,6 +8,7 @@ import { DeploymentPolicyAPI, DeploymentPolicy } from '../api/policies';
 import { OrgAPI } from '../api/organizations';
 import { getConfig, setAgbotAuth } from '../api/config';
 import { useT } from '../i18n/context';
+import { useScreenSize } from '../hooks/useIsMobile';
 
 const { Text } = Typography;
 
@@ -34,8 +36,20 @@ export default function Agbots() {
   const [detailPatterns, setDetailPatterns] = useState<{key: string; patternOrgid: string; pattern: string}[]>([]);
   const [detailPols, setDetailPols] = useState<{key: string; businessPolOrgid: string; businessPol: string}[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [search, setSearch] = useState('');
+  const screenSize = useScreenSize();
 
   const rootAuthCreds = getConfig().rootAuth || '';
+
+  const tableData = data
+    .filter((a) => {
+      if (!search.trim()) return true;
+      const kw = search.trim().toLowerCase();
+      const hay = [a.id, a.token, a.msgEndPoint, a.name].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(kw);
+    })
+    .map((a, i) => ({ ...a, key: a.id, index: i }));
+
   const sessionOrg = getConfig().orgId || '';
   const orgType = getConfig().orgType;
 
@@ -167,6 +181,14 @@ export default function Agbots() {
     }
   }, [load]);
 
+  usePolling(async () => {
+    try {
+      const res = await AgbotAPI.list();
+      const agbotMap = res?.agbots ?? {};
+      setData(Object.keys(agbotMap).map((id) => ({ id, ...agbotMap[id] })));
+    } catch { /* auto-refresh: silent */ }
+  }, 30000);
+
   // Display agbot detail: patterns and policies are fetched via sub-endpoints since main response has empty arrays
   const showDetail = async (agbot: ExchangeAgbot) => {
     setSelectedAgbot(agbot);
@@ -234,7 +256,7 @@ export default function Agbots() {
     });
   };
 
-  const columns = [
+  const allColumns = [
     {
       title: t('Agbot ID'), key: 'id', width: 200,
       render: (_: any, record: ExchangeAgbot) => record.id,
@@ -272,6 +294,10 @@ export default function Agbots() {
     },
   ];
 
+  const columns = screenSize === 'mobile'
+    ? allColumns.filter((c) => ['id', 'action'].includes(c.key as string))
+    : allColumns;
+
   return (
     <div>
       <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -280,6 +306,13 @@ export default function Agbots() {
           <br /><Text type="secondary">{t('Manage pattern and policy associations for agbots')}</Text>
         </div>
         <Space>
+          <Input
+            allowClear
+            placeholder={t('Search')}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ width: 200 }}
+          />
           <Button
             type={agbotAuthToken ? 'default' : 'primary'}
             icon={<KeyOutlined />}
@@ -300,10 +333,11 @@ export default function Agbots() {
 
       <Table
         columns={columns}
-        dataSource={Array.isArray(data) ? data : []}
+        dataSource={tableData}
         loading={loading}
-        pagination={false}
+        pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `${total} ${t('Agreement Bots')}` }}
         size="middle"
+        scroll={{ x: 'max-content' }}
         rowKey="id"
       />
 

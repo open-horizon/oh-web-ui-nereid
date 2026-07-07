@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { usePolling } from '../hooks/usePolling';
 import { Row, Col, Card, Typography, message, Modal, Tabs, Spin } from 'antd';
 import { EyeOutlined } from '@ant-design/icons';
 import { CatalogAPI } from '../api/catalog';
@@ -27,6 +28,17 @@ export default function Catalog() {
       }
     })();
   }, []);
+
+  usePolling(async () => {
+    try {
+      const [s, p] = await Promise.all([
+        CatalogAPI.listServices(),
+        CatalogAPI.listPatterns(),
+      ]);
+      setServices(s?.catalogServices ?? {});
+      setPatterns(p?.catalogPatterns ?? {});
+    } catch { /* auto-refresh: silent */ }
+  }, 30000);
 
   const showDetail = (item: any) => {
     Modal.info({ maskClosable: true,

@@ -1,4 +1,4 @@
-import { get, post, del } from './client';
+import { get, post, put, del } from './client';
 
 export interface DeploymentPolicy {
   label?: string;
@@ -33,6 +33,9 @@ export const DeploymentPolicyAPI = {
   },
   create(name: string, data: Partial<DeploymentPolicy>) {
     return post('/policies', { name, ...data });
+  },
+  update(policyId: string, data: Partial<DeploymentPolicy>) {
+    return put(`/policies/${encodeURIComponent(policyId)}`, data);
   },
   delete(policyId: string) {
     return del(`/policies/${encodeURIComponent(policyId)}`);

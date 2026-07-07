@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Layout, Menu, Button, Tag, Typography, theme, Select } from 'antd';
+import { Layout, Menu, Button, Tag, Typography, theme, Select, Drawer } from 'antd';
+import { MenuOutlined } from '@ant-design/icons';
 import {
   DashboardOutlined,
   BuildOutlined,
@@ -54,9 +55,23 @@ export default function AppLayout() {
   const location = useLocation();
   const { token: themeToken } = theme.useToken();
   const [collapsed, setCollapsed] = useState(false);
+  const [mobileDrawer, setMobileDrawer] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const config = getConfig();
   const orgType = config.orgType;
   const { t, lang, setLang } = useT();
+
+  // Responsive: treat <768px as mobile, auto-collapse the sider
+  useEffect(() => {
+    const onResize = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      setCollapsed(mobile);
+    };
+    onResize();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   const adminMenuItems = [
     { key: '/dashboard', icon: <DashboardOutlined />, label: t('Dashboard') },
@@ -110,47 +125,53 @@ export default function AppLayout() {
     }
   }, [selectedKey, orgType]);
 
+  const renderMenu = (onClick?: () => void) => (
+    <Menu
+      theme="dark"
+      mode="inline"
+      selectedKeys={[selectedKey]}
+      items={menuItems}
+      onClick={({ key }) => { navigate(key); onClick?.(); }}
+      style={{ borderInlineEnd: 'none' }}
+    />
+  );
+
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Sider
-        collapsible
-        collapsed={collapsed}
-        onCollapse={setCollapsed}
-        theme="dark"
-        width={220}
-        style={{ borderRight: `1px solid ${themeToken.colorBorderSecondary}` }}
-      >
-        <div
-          style={{
-            height: 64,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 8,
-            borderBottom: `1px solid ${themeToken.colorBorderSecondary}`,
-          }}
-        >
-          <HddOutlined style={{ fontSize: 22, color: themeToken.colorPrimary }} />
-          {!collapsed && (
-            <Text strong style={{ color: '#fff', fontSize: 15 }}>
-              Nereid Exchange
-            </Text>
-          )}
-        </div>
-        <Menu
+      {!isMobile && (
+        <Sider
+          collapsible
+          collapsed={collapsed}
+          onCollapse={setCollapsed}
           theme="dark"
-          mode="inline"
-          selectedKeys={[selectedKey]}
-          items={menuItems}
-          onClick={({ key }) => navigate(key)}
-          style={{ borderInlineEnd: 'none' }}
-        />
-      </Sider>
+          width={220}
+          style={{ borderRight: `1px solid ${themeToken.colorBorderSecondary}` }}
+        >
+          <div
+            style={{
+              height: 64,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              borderBottom: `1px solid ${themeToken.colorBorderSecondary}`,
+            }}
+          >
+            <HddOutlined style={{ fontSize: 22, color: themeToken.colorPrimary }} />
+            {!collapsed && (
+              <Text strong style={{ color: '#fff', fontSize: 15 }}>
+                Nereid Exchange
+              </Text>
+            )}
+          </div>
+          {renderMenu()}
+        </Sider>
+      )}
       <Layout>
         <Header
           style={{
             background: themeToken.colorBgContainer,
-            padding: '0 24px',
+            padding: '0 16px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
@@ -158,9 +179,19 @@ export default function AppLayout() {
             height: 64,
           }}
         >
-          <Text type="secondary">
-            <HddOutlined /> {config.orgId}
-          </Text>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {isMobile && (
+              <Button
+                type="text"
+                icon={<MenuOutlined />}
+                onClick={() => setMobileDrawer(true)}
+                aria-label="menu"
+              />
+            )}
+            <Text type="secondary">
+              <HddOutlined /> {config.orgId}
+            </Text>
+          </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
             <Select
               value={lang}
@@ -186,10 +217,32 @@ export default function AppLayout() {
             </Button>
           </div>
         </Header>
-        <Content style={{ margin: 24, overflow: 'auto' }}>
+        <Content style={{ margin: isMobile ? 12 : 24, overflow: 'auto', paddingRight: isMobile ? 0 : undefined }}>
           <Outlet />
         </Content>
       </Layout>
+      <Drawer
+        placement="left"
+        open={mobileDrawer}
+        onClose={() => setMobileDrawer(false)}
+        width={220}
+        styles={{ body: { padding: 0, background: '#001529' }, header: { display: 'none' }, wrapper: { background: '#001529' } }}
+      >
+        <div
+          style={{
+            height: 64,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            paddingLeft: 16,
+            borderBottom: `1px solid ${themeToken.colorBorderSecondary}`,
+          }}
+        >
+          <HddOutlined style={{ fontSize: 22, color: themeToken.colorPrimary }} />
+          <Text strong style={{ color: '#fff', fontSize: 15 }}>Nereid Exchange</Text>
+        </div>
+        {renderMenu(() => setMobileDrawer(false))}
+      </Drawer>
     </Layout>
   );
 }

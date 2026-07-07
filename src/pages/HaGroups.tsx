@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Table, Button, Space, Typography, message, Modal } from 'antd';
+import { Table, Button, Space, Typography, message, Modal, Input } from 'antd';
 import { ReloadOutlined, EyeOutlined } from '@ant-design/icons';
 import { HaGroupAPI, HaGroup } from '../api/hagroups';
 import { useT } from '../i18n/context';
+import { useScreenSize } from '../hooks/useIsMobile';
 
 const { Text } = Typography;
 
@@ -10,6 +11,8 @@ export default function HaGroups() {
   const { t } = useT();
   const [data, setData] = useState<Record<string, HaGroup>>({});
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const screenSize = useScreenSize();
   const load = async () => {
     setLoading(true);
     try {
@@ -39,7 +42,7 @@ export default function HaGroups() {
     });
   };
 
-  const columns = [
+  const allColumns = [
     {
       title: t('Name'), key: 'name', width: 200,
       render: (_: any, __: any, i: number) => Object.keys(data)[i],
@@ -66,7 +69,19 @@ export default function HaGroups() {
     },
   ];
 
-  const tableData = Object.keys(data).map((name, i) => ({ key: name, ...data[name], index: i }));
+  const columns = screenSize === 'mobile'
+    ? allColumns.filter((c) => ['name', 'action'].includes(c.key as string))
+    : allColumns;
+
+  const tableData = Object.keys(data)
+    .filter((name) => {
+      if (!search.trim()) return true;
+      const kw = search.trim().toLowerCase();
+      const g = data[name];
+      const hay = [name, g?.label, g?.description].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(kw);
+    })
+    .map((name, i) => ({ key: name, ...data[name], index: i }));
 
   return (
     <div>
@@ -75,9 +90,16 @@ export default function HaGroups() {
           <Text strong style={{ fontSize: 20 }}>{t('High Availability Groups (HA Groups)')}</Text>
           <br /><Text type="secondary">{t('HA Group Management')}</Text>
         </div>
-        <Button icon={<ReloadOutlined />} onClick={load}>{t('Refresh')}</Button>
+          <Input
+            allowClear
+            placeholder={t('Search')}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ width: 200 }}
+          />
+          <Button icon={<ReloadOutlined />} onClick={load}>{t('Refresh')}</Button>
       </div>
-      <Table columns={columns} dataSource={tableData} loading={loading} pagination={false} size="middle" />
+      <Table columns={columns} dataSource={tableData} loading={loading} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `${total} ${t('HA Groups')}` }} size="middle" scroll={{ x: 'max-content' }} />
     </div>
   );
 }

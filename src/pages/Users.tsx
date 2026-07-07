@@ -7,6 +7,7 @@ import {
 } from '@ant-design/icons';
 import { UserAPI, ExchangeUser } from '../api/users';
 import { useT } from '../i18n/context';
+import { useScreenSize } from '../hooks/useIsMobile';
 
 const { Text } = Typography;
 
@@ -21,7 +22,9 @@ export default function Users() {
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [search, setSearch] = useState('');
   const [form] = Form.useForm();
+  const screenSize = useScreenSize();
   const load = async () => {
     setLoading(true);
     try {
@@ -87,7 +90,7 @@ export default function Users() {
     });
   };
 
-  const columns = [
+  const allColumns = [
     {
       title: t('Username'), key: 'name', width: 200,
       render: (_: any, __: any, i: number) => Object.keys(data)[i],
@@ -111,8 +114,19 @@ export default function Users() {
     },
   ];
 
-  const tableData = Object.keys(data).map((name, i) => ({
-  }));
+  const columns = screenSize === 'mobile'
+    ? allColumns.filter((c) => ['name', 'action'].includes(c.key as string))
+    : allColumns;
+
+  const tableData = Object.keys(data)
+    .filter((name) => {
+      if (!search.trim()) return true;
+      const kw = search.trim().toLowerCase();
+      const u = data[name];
+      const hay = [name, u?.email, u?.admin].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(kw);
+    })
+    .map((name, i) => ({ key: name, ...data[name], index: i }));
 
   return (
     <div>
@@ -122,11 +136,18 @@ export default function Users() {
           <br /><Text type="secondary">{t('User Management')}</Text>
         </div>
         <Space>
+          <Input
+            allowClear
+            placeholder={t('Search')}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ width: 200 }}
+          />
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>{t('Create User')}</Button>
           <Button icon={<ReloadOutlined />} onClick={load}>{t('Refresh')}</Button>
         </Space>
       </div>
-      <Table columns={columns} dataSource={tableData} loading={loading} pagination={false} size="middle" />
+      <Table columns={columns} dataSource={tableData} loading={loading} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `${total} ${t('Users')}` }} size="middle" scroll={{ x: 'max-content' }} />
 
       <Modal
         title={t('Create User')}
