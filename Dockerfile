@@ -13,6 +13,9 @@ COPY package*.json ./
 RUN npm ci
 COPY tsconfig.json tsconfig.node.json vite.config.ts index.html ./
 COPY src ./src
+# Fix rollup missing native module on arm64 (npm optionalDependencies bug)
+RUN if [ "$TARGETARCH" = "arm64" ]; then npm install @rollup/rollup-linux-arm64-musl --save=false; fi \
+ && if [ "$TARGETARCH" = "amd64" ]; then npm install @rollup/rollup-linux-x64-musl --save=false; fi
 RUN npx vite build
 
 # ---- Backend Runtime (Express BFF) ----
