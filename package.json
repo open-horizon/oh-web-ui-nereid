@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@ant-design/icons": "^5.5.0",
+    "@ant-design/icons": "^6.3.2",
     "antd": "^6.5.0",
     "express": "^5.2.1",
     "ioredis": "^5.11.1",
