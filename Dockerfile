@@ -1,21 +1,33 @@
 # ==========================================
-# Production Multi-stage Dockerfile for NereidAI
+# Production multi-stage Dockerfile for NereidAI
+# All dependencies are installed and the frontend is built
+# INSIDE the container. Nothing (node_modules/dist) is copied
+# from the local checkout, so this works in CI (GitHub Actions)
+# where those directories do not exist.
 # ==========================================
 
-# ---- Backend Runtime ----
-FROM node:20-alpine AS backend
+# ---- Frontend build stage ----
+FROM node:20-alpine AS frontend-build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
+COPY tsconfig.json tsconfig.node.json vite.config.ts ./
+COPY src ./src
+RUN npm run build
+
+# ---- Backend Runtime (Express BFF) ----
+FROM node:20-alpine AS backend
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --omit=dev
 COPY server/ ./server/
 EXPOSE 3001
 CMD ["node", "server/index.cjs"]
 
-# ---- Frontend Runtime ----
+# ---- Frontend Runtime (Nginx + built dist) ----
 FROM nginx:alpine AS frontend
 WORKDIR /usr/share/nginx/html
-# Copy dist locally (built by CI before Docker)
-COPY dist ./
+COPY --from=frontend-build /app/dist ./
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 # Generate a self-signed TLS certificate if none is mounted, then start nginx.
 # For production, mount real certificates at /etc/nginx/ssl instead.
