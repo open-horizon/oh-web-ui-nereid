@@ -13,6 +13,25 @@ and air-gapped environments.
 
 The Nginx front end terminates TLS and reverse-proxies `/api` to the backend.
 
+## 1.1 Prerequisites (local build / development)
+
+- **Node.js >= 20** (the project uses TypeScript 7 and Vite 5, which require
+  Node 20+). Older Node (e.g. 18) will emit `EBADENGINE` warnings and may fail
+  to install or build.
+  - Recommended: install via [nvm](https://github.com/nvm-sh/nvm):
+    ```bash
+    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+    nvm install 20
+    nvm alias default 20
+    ```
+- **Docker >= 20.10** and **Docker Compose v2** (for container deployment).
+- **Redis** (provided automatically as the `redis` service in Compose; not
+  required for local `npm run dev:backend` unless session persistence is needed).
+- **Network access** to the Open Horizon Exchange API endpoint.
+
+> Note: The Docker images are built `FROM node:20-alpine`, so the runtime
+> environment is independent of the local Node version used for builds.
+
 ## 2. Required Environment (backend)
 
 | Variable | Default | Description |
