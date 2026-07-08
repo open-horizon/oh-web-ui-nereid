@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { usePolling } from '../hooks/usePolling';
 import { Table, Button, Space, Typography, message, Modal, Tag, Badge, Select, Alert, Drawer, Descriptions, List, Input, Switch } from 'antd';
-import { ReloadOutlined, EyeOutlined, NodeIndexOutlined, CheckCircleOutlined, CloseCircleOutlined, MinusCircleOutlined, KeyOutlined, EditOutlined } from '@ant-design/icons';
+import { SearchOutlined, ReloadOutlined, EyeOutlined, NodeIndexOutlined, CheckCircleOutlined, CloseCircleOutlined, MinusCircleOutlined, KeyOutlined, EditOutlined } from '@ant-design/icons';
 import { NodeAPI, ExchangeNode, NodeServiceStatus, NodePolicy } from '../api/nodes';
 import { PatternAPI, ExchangePattern } from '../api/patterns';
 import { getConfig, setRootAuth } from '../api/config';
@@ -11,7 +11,7 @@ import { useScreenSize } from '../hooks/useIsMobile';
 const { Text } = Typography;
 
 export default function Nodes() {
-  const { t } = useT();
+  const { t, fmtTime } = useT();
   const [data, setData] = useState<Record<string, ExchangeNode>>({});
   const [loading, setLoading] = useState(true);
 
@@ -278,9 +278,8 @@ export default function Nodes() {
   const allColumns = [
     {
       title: t('Node ID'), key: 'nodeId', width: 200,
-      render: (_: any, __: any, i: number) => {
-        const id = Object.keys(data)[i];
-        return <Text style={{ fontSize: 12 }}>{id}</Text>;
+      render: (_: any, record: any) => {
+        return <Text style={{ fontSize: 12 }}>{record.key}</Text>;
       },
     },
     { title: t('Name'), dataIndex: 'name', key: 'name', render: (v: string) => v || '-' },
@@ -288,27 +287,24 @@ export default function Nodes() {
     { title: t('Arch'), dataIndex: 'arch', key: 'arch', width: 90 },
     {
       title: t('CPU'), key: 'cpu', width: 70,
-      render: (_: any, __: any, i: number) => {
-        const id = Object.keys(data)[i];
-        const p = policies[id]?.properties?.find((p: any) => p.name === 'openhorizon.cpu');
+      render: (_: any, record: any) => {
+        const p = policies[record.key]?.properties?.find((p: any) => p.name === 'openhorizon.cpu');
         return p ? String(p.value) : '-';
       },
     },
     {
       title: t('Memory'), key: 'memory', width: 80,
-      render: (_: any, __: any, i: number) => {
-        const id = Object.keys(data)[i];
-        const p = policies[id]?.properties?.find((p: any) => p.name === 'openhorizon.memory');
+      render: (_: any, record: any) => {
+        const p = policies[record.key]?.properties?.find((p: any) => p.name === 'openhorizon.memory');
         return p ? fmtMemory(Number(p.value)) : '-';
       },
     },
     {
       title: t('GPU'), key: 'gpu', width: 220,
-      render: (_: any, __: any, i: number) => {
-        const id = Object.keys(data)[i];
-        const vendor = policies[id]?.properties?.find((p: any) => p.name === 'gpu.vendor');
-        const type = policies[id]?.properties?.find((p: any) => p.name === 'gpu.type');
-        const count = policies[id]?.properties?.find((p: any) => p.name === 'gpu.count');
+      render: (_: any, record: any) => {
+        const vendor = policies[record.key]?.properties?.find((p: any) => p.name === 'gpu.vendor');
+        const type = policies[record.key]?.properties?.find((p: any) => p.name === 'gpu.type');
+        const count = policies[record.key]?.properties?.find((p: any) => p.name === 'gpu.count');
         if (!count || Number(count.value) === 0 || vendor?.value === 'virtual' || vendor?.value === 'none') return <Tag>{t('None')}</Tag>;
         const parts: string[] = [];
         if (vendor) parts.push(String(vendor.value));
@@ -319,18 +315,16 @@ export default function Nodes() {
     },
     {
       title: t('Deployment'), key: 'deploy', width: 160,
-      render: (_: any, __: any, i: number) => {
-        const node = data[Object.keys(data)[i]];
-        return node?.pattern
-          ? <Tag color="blue">{t('Pattern: ')}{node.pattern}</Tag>
+      render: (_: any, record: any) => {
+        return record?.pattern
+          ? <Tag color="blue">{t('Pattern: ')}{record.pattern}</Tag>
           : <Tag>{t('Policy')}</Tag>;
       },
     },
     {
       title: t('Deployed Services'), key: 'services', width: 130,
-      render: (_: any, __: any, i: number) => {
-        const node = data[Object.keys(data)[i]];
-        const rs = node?.registeredServices;
+      render: (_: any, record: any) => {
+        const rs = record?.registeredServices;
         const count = Array.isArray(rs) ? rs.length : 0;
         return count > 0
           ? <Tag color="green">{count}</Tag>
@@ -339,8 +333,8 @@ export default function Nodes() {
     },
     {
       title: t('Allow Privileged'), key: 'allowPrivileged', width: 160,
-      render: (_: any, __: any, i: number) => {
-        const id = Object.keys(data)[i];
+      render: (_: any, record: any) => {
+        const id = record.key;
         const policy = policies[id];
         const polLoading = policiesLoading[id];
         const properties = policy?.properties || [];
@@ -358,17 +352,20 @@ export default function Nodes() {
       },
     },
     {
+      title: t('Last Heartbeat'), key: 'lastHeartbeat', width: 180,
+      render: (_: any, record: any) => fmtTime(record?.lastHeartbeat),
+    },
+    {
       title: t('Status'), key: 'status', width: 80,
-      render: (_: any, __: any, i: number) => {
-        const node = data[Object.keys(data)[i]];
-        const alive = isAlive(node?.lastHeartbeat);
+      render: (_: any, record: any) => {
+        const alive = isAlive(record?.lastHeartbeat);
         return <Badge status={alive ? 'success' : 'error'} text={alive ? t('Online') : t('Offline')} />;
       },
     },
     {
       title: t('Actions'), key: 'action', width: 140,
-      render: (_: any, __: any, i: number) => {
-        const id = Object.keys(data)[i];
+      render: (_: any, record: any) => {
+        const id = record.key;
         return (
           <Space>
             <Button size="small" icon={<NodeIndexOutlined />} onClick={() => openSetPattern(id)}>{t('Set Pattern')}</Button>
@@ -380,11 +377,19 @@ export default function Nodes() {
   ];
 
   // On phones show only the essential columns to avoid horizontal scrolling
-  const columns = screenSize === 'mobile'
+  const columns = screenSize !== 'desktop'
     ? allColumns.filter((c) => ['nodeId', 'status', 'services', 'action'].includes(c.key as string))
     : allColumns;
 
   const tableData = Object.keys(data)
+    .sort((a, b) => {
+      const ta = data[a]?.lastHeartbeat;
+      const tb = data[b]?.lastHeartbeat;
+      if (!ta && !tb) return 0;
+      if (!ta) return 1;
+      if (!tb) return -1;
+      return tb.localeCompare(ta);
+    })
     .filter((name) => {
       if (!search.trim()) return true;
       const kw = search.trim().toLowerCase();
@@ -399,22 +404,22 @@ export default function Nodes() {
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
+      <div style={{ marginBottom: 16 }}>
         <div>
           <Text strong style={{ fontSize: 20 }}>{t('Edge Nodes')}</Text>
           <br /><Text type="secondary">{t('Edge Node Management')}</Text>
         </div>
-        <Space>
+        <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <Input
             allowClear
             placeholder={t('Search')}
-            prefix={<ReloadOutlined style={{ opacity: 0.4 }} />}
+            prefix={<SearchOutlined style={{ opacity: 0.4 }} />}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             style={{ width: 220 }}
           />
           <Button icon={<ReloadOutlined />} onClick={load}>{t('Refresh')}</Button>
-        </Space>
+        </div>
       </div>
       <Table
         columns={columns}
@@ -517,7 +522,7 @@ export default function Nodes() {
               <Badge status={isAlive(drawerNode.lastHeartbeat) ? 'success' : 'error'}
                 text={isAlive(drawerNode.lastHeartbeat) ? t('Online') : t('Offline')} />
             </Descriptions.Item>
-            <Descriptions.Item label={t('Last Heartbeat')}>{drawerNode.lastHeartbeat || '-'}</Descriptions.Item>
+            <Descriptions.Item label={t('Last Heartbeat')}>{fmtTime(drawerNode.lastHeartbeat)}</Descriptions.Item>
           </Descriptions>
         )}
         <Text strong style={{ fontSize: 16 }}>{t('Registered Services')}</Text>

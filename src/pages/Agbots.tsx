@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { usePolling } from '../hooks/usePolling';
 import { Table, Button, Space, Typography, message, Modal, Drawer, Descriptions, Tag, Form, Input, Select, Tabs, Tooltip } from 'antd';
-import { ReloadOutlined, DeleteOutlined, EyeOutlined, KeyOutlined, LinkOutlined } from '@ant-design/icons';
+import { SearchOutlined, ReloadOutlined, DeleteOutlined, EyeOutlined, KeyOutlined, LinkOutlined } from '@ant-design/icons';
 import { AgbotAPI, ExchangeAgbot } from '../api/agbots';
 import { PatternAPI, ExchangePattern } from '../api/patterns';
 import { DeploymentPolicyAPI, DeploymentPolicy } from '../api/policies';
@@ -13,7 +13,7 @@ import { useScreenSize } from '../hooks/useIsMobile';
 const { Text } = Typography;
 
 export default function Agbots() {
-  const { t } = useT();
+  const { t, fmtTime } = useT();
   const [data, setData] = useState<ExchangeAgbot[]>([]);
   const [loading, setLoading] = useState(true);
   const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
@@ -41,7 +41,15 @@ export default function Agbots() {
 
   const rootAuthCreds = getConfig().rootAuth || '';
 
-  const tableData = data
+  const tableData = [...data]
+    .sort((a, b) => {
+      const ta = a.lastUpdated;
+      const tb = b.lastUpdated;
+      if (!ta && !tb) return 0;
+      if (!ta) return 1;
+      if (!tb) return -1;
+      return tb.localeCompare(ta);
+    })
     .filter((a) => {
       if (!search.trim()) return true;
       const kw = search.trim().toLowerCase();
@@ -271,7 +279,7 @@ export default function Agbots() {
     },
     {
       title: t('Last Heartbeat'), dataIndex: 'lastHeartbeat', key: 'lastHeartbeat', width: 180,
-      render: (v: string) => v ? new Date(v).toLocaleString() : '-',
+      render: (v: string) => fmtTime(v),
     },
     {
       title: t('Actions'), key: 'action', width: 180,
@@ -294,21 +302,22 @@ export default function Agbots() {
     },
   ];
 
-  const columns = screenSize === 'mobile'
+  const columns = screenSize !== 'desktop'
     ? allColumns.filter((c) => ['id', 'action'].includes(c.key as string))
     : allColumns;
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+      <div style={{ marginBottom: 16 }}>
         <div>
           <Text strong style={{ fontSize: 20 }}>{t('Agbot (Agreement Bot)')}</Text>
           <br /><Text type="secondary">{t('Manage pattern and policy associations for agbots')}</Text>
         </div>
-        <Space>
+        <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <Input
             allowClear
             placeholder={t('Search')}
+            prefix={<SearchOutlined />}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             style={{ width: 200 }}
@@ -322,7 +331,7 @@ export default function Agbots() {
             {agbotAuthToken ? t('Clear') : t('Authorize')}
           </Button>
           <Button icon={<ReloadOutlined />} onClick={load}>{t('Refresh')}</Button>
-        </Space>
+        </div>
       </div>
 
       {agbotAuthToken && (
@@ -410,7 +419,7 @@ export default function Agbots() {
                 <Descriptions column={1} size="small" bordered>
                   <Descriptions.Item label={t('ID')}>{selectedAgbot.id}</Descriptions.Item>
                   <Descriptions.Item label={t('Last Heartbeat')}>
-                    {selectedAgbot.lastHeartbeat ? new Date(selectedAgbot.lastHeartbeat).toLocaleString() : '-'}
+                    {fmtTime(selectedAgbot.lastHeartbeat)}
                   </Descriptions.Item>
                   <Descriptions.Item label={t('Public Key')}>
                     <Text ellipsis style={{ maxWidth: 400 }}>{selectedAgbot.publicKey || '-'}</Text>

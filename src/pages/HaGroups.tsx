@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Table, Button, Space, Typography, message, Modal, Input } from 'antd';
-import { ReloadOutlined, EyeOutlined } from '@ant-design/icons';
+import { SearchOutlined, ReloadOutlined, EyeOutlined } from '@ant-design/icons';
 import { HaGroupAPI, HaGroup } from '../api/hagroups';
 import { useT } from '../i18n/context';
 import { useScreenSize } from '../hooks/useIsMobile';
@@ -8,7 +8,7 @@ import { useScreenSize } from '../hooks/useIsMobile';
 const { Text } = Typography;
 
 export default function HaGroups() {
-  const { t } = useT();
+  const { t, fmtTime } = useT();
   const [data, setData] = useState<Record<string, HaGroup>>({});
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -45,21 +45,25 @@ export default function HaGroups() {
   const allColumns = [
     {
       title: t('Name'), key: 'name', width: 200,
-      render: (_: any, __: any, i: number) => Object.keys(data)[i],
+      render: (_: any, record: any) => record.key,
     },
     { title: t('Description'), dataIndex: 'description', key: 'description', render: (v: string) => v || '-' },
     {
       title: t('Member Count'), key: 'members', width: 120,
-      render: (_: any, __: any, i: number) => data[Object.keys(data)[i]]?.members?.length ?? 0,
+      render: (_: any, record: any) => record?.members?.length ?? 0,
     },
     {
       title: t('Network Config'), key: 'network', width: 120,
-      render: (_: any, __: any, i: number) => data[Object.keys(data)[i]]?.network?.type || '-',
+      render: (_: any, record: any) => record?.network?.type || '-',
+    },
+    {
+      title: t('Last Updated'), key: 'lastUpdated', width: 180,
+      render: (_: any, record: any) => fmtTime(record?.lastUpdated),
     },
     {
       title: t('Actions'), key: 'action', width: 80,
-      render: (_: any, __: any, i: number) => {
-        const id = Object.keys(data)[i];
+      render: (_: any, record: any) => {
+        const id = record.key;
         return (
           <Space>
             <Button size="small" icon={<EyeOutlined />} onClick={() => showDetail(id)} />
@@ -69,11 +73,19 @@ export default function HaGroups() {
     },
   ];
 
-  const columns = screenSize === 'mobile'
+  const columns = screenSize !== 'desktop'
     ? allColumns.filter((c) => ['name', 'action'].includes(c.key as string))
     : allColumns;
 
   const tableData = Object.keys(data)
+    .sort((a, b) => {
+      const ta = data[a]?.lastUpdated;
+      const tb = data[b]?.lastUpdated;
+      if (!ta && !tb) return 0;
+      if (!ta) return 1;
+      if (!tb) return -1;
+      return tb.localeCompare(ta);
+    })
     .filter((name) => {
       if (!search.trim()) return true;
       const kw = search.trim().toLowerCase();
@@ -85,19 +97,22 @@ export default function HaGroups() {
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
+      <div style={{ marginBottom: 16 }}>
         <div>
           <Text strong style={{ fontSize: 20 }}>{t('High Availability Groups (HA Groups)')}</Text>
           <br /><Text type="secondary">{t('HA Group Management')}</Text>
         </div>
+        <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <Input
             allowClear
             placeholder={t('Search')}
+            prefix={<SearchOutlined />}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             style={{ width: 200 }}
           />
           <Button icon={<ReloadOutlined />} onClick={load}>{t('Refresh')}</Button>
+        </div>
       </div>
       <Table columns={columns} dataSource={tableData} loading={loading} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `${total} ${t('HA Groups')}` }} size="middle" scroll={{ x: 'max-content' }} />
     </div>

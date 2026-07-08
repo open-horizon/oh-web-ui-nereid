@@ -6,9 +6,10 @@ interface I18nCtx {
   lang: Lang;
   setLang: (l: Lang) => void;
   t: (en: string) => string;
+  fmtTime: (iso?: string) => string;
 }
 
-const Ctx = createContext<I18nCtx>({ lang: 'en', setLang: () => {}, t: (s: string) => s });
+const Ctx = createContext<I18nCtx>({ lang: 'en', setLang: () => {}, t: (s: string) => s, fmtTime: () => '-' });
 
 function detectLang(): Lang {
   const stored = localStorage.getItem('lang') as Lang | null;
@@ -28,7 +29,16 @@ export function LanguageProvider({ children, dict }: { children: ReactNode; dict
     if (lang === 'zh' && dict[en]) return dict[en];
     return en;
   }, [lang, dict]);
-  return <Ctx.Provider value={{ lang, setLang: setLangWithStorage, t }}>{children}</Ctx.Provider>;
+  const fmtTime = useCallback((iso?: string) => {
+    if (!iso) return '-';
+    const d = new Date(iso);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    if (lang === 'en') {
+      return `${pad(d.getMonth() + 1)}/${pad(d.getDate())}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }, [lang]);
+  return <Ctx.Provider value={{ lang, setLang: setLangWithStorage, t, fmtTime }}>{children}</Ctx.Provider>;
 }
 
 export function useT() {

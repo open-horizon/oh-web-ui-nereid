@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Table, Button, Space, Typography, message, Modal, Form, Input } from 'antd';
-import { PlusOutlined, ReloadOutlined, DeleteOutlined, EyeOutlined } from '@ant-design/icons';
+import { SearchOutlined, PlusOutlined, ReloadOutlined, DeleteOutlined, EyeOutlined } from '@ant-design/icons';
 import { OrgAPI, Organization } from '../api/organizations';
 import { useT } from '../i18n/context';
 import { useScreenSize } from '../hooks/useIsMobile';
@@ -8,7 +8,7 @@ import { useScreenSize } from '../hooks/useIsMobile';
 const { Text } = Typography;
 
 export default function Organizations() {
-  const { t } = useT();
+  const { t, fmtTime } = useT();
   const [data, setData] = useState<Record<string, Organization>>({});
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
@@ -74,16 +74,16 @@ export default function Organizations() {
   };
 
   const allColumns = [
-    { title: t('Org ID'), dataIndex: 'id', key: 'id', render: (_: any, __: any, i: number) => Object.keys(data)[i] },
+    { title: t('Org ID'), dataIndex: 'id', key: 'id', render: (_: any, record: any) => record.key },
     { title: t('Label'), dataIndex: 'label', key: 'label', render: (v: string) => v || '-' },
     { title: t('Description'), dataIndex: 'description', key: 'description', render: (v: string) => v || '-' },
-    { title: t('Last Updated'), dataIndex: 'lastUpdated', key: 'lastUpdated', render: (v: string) => v ? new Date(v).toLocaleString() : '-' },
+    { title: t('Last Updated'), dataIndex: 'lastUpdated', key: 'lastUpdated', render: (v: string) => fmtTime(v) },
     {
       title: t('Actions'),
       key: 'action',
       width: 140,
-      render: (_: any, __: any, i: number) => {
-        const id = Object.keys(data)[i];
+      render: (_: any, record: any) => {
+        const id = record.key;
         return (
           <Space>
             <Button size="small" icon={<EyeOutlined />} onClick={() => showDetail(id)} />
@@ -94,11 +94,19 @@ export default function Organizations() {
     },
   ];
 
-  const columns = screenSize === 'mobile'
+  const columns = screenSize !== 'desktop'
     ? allColumns.filter((c) => ['id', 'action'].includes(c.key as string))
     : allColumns;
 
   const tableData = Object.keys(data)
+    .sort((a, b) => {
+      const ta = data[a]?.lastUpdated;
+      const tb = data[b]?.lastUpdated;
+      if (!ta && !tb) return 0;
+      if (!ta) return 1;
+      if (!tb) return -1;
+      return tb.localeCompare(ta);
+    })
     .filter((name) => {
       if (!search.trim()) return true;
       const kw = search.trim().toLowerCase();
@@ -110,22 +118,23 @@ export default function Organizations() {
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ marginBottom: 16 }}>
         <div>
           <Text strong style={{ fontSize: 20 }}>{t('Organization')}</Text>
           <br /><Text type="secondary">{t('Manage all organizations and their configuration')}</Text>
         </div>
-        <Space>
+        <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <Input
             allowClear
             placeholder={t('Search')}
+            prefix={<SearchOutlined />}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             style={{ width: 200 }}
           />
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>{t('Create Organization')}</Button>
           <Button icon={<ReloadOutlined />} onClick={load}>{t('Refresh')}</Button>
-        </Space>
+        </div>
       </div>
       <Table
         columns={columns}

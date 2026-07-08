@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { usePolling } from '../hooks/usePolling';
 import { Table, Button, Space, Typography, message, Modal, Form, Input, Select, Tag, Alert, Switch } from 'antd';
-import { ReloadOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, ImportOutlined } from '@ant-design/icons';
+import { SearchOutlined, ReloadOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, ImportOutlined } from '@ant-design/icons';
 import { MgmtPolicyAPI, MgmtPolicy } from '../api/policies';
 import { ServiceAPI, ExchangeService } from '../api/services';
 import { getConfig } from '../api/config';
@@ -24,7 +24,7 @@ function detectVars(str: string) {
 }
 
 export default function MgmtPolicies() {
-  const { t } = useT();
+  const { t, fmtTime } = useT();
   const [data, setData] = useState<Record<string, MgmtPolicy>>({});
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
@@ -194,29 +194,29 @@ export default function MgmtPolicies() {
   const allColumns = [
     {
       title: t('Name'), key: 'name', width: 180,
-      render: (_: any, __: any, i: number) => Object.keys(data)[i],
+      render: (_: any, record: any) => record.key,
     },
     { title: t('Label'), dataIndex: 'label', key: 'label', render: (v: string) => v || '-' },
     {
       title: t('Type'), key: 'type', width: 140,
-      render: (_: any, __: any, i: number) => {
-        const p = data[Object.keys(data)[i]];
-        if (p?.pattern) return <Tag color="blue">{t('Pattern Type')}</Tag>;
-        if (p?.businessPolicy) return <Tag color="green">{t('Business Policy Type')}</Tag>;
+      render: (_: any, record: any) => {
+        if (record?.pattern) return <Tag color="blue">{t('Pattern Type')}</Tag>;
+        if (record?.businessPolicy) return <Tag color="green">{t('Business Policy Type')}</Tag>;
         return <Tag>{t('Service Type')}</Tag>;
       },
     },
     {
       title: t('Constraints'), key: 'constraints', width: 80,
-      render: (_: any, __: any, i: number) => {
-        const p = data[Object.keys(data)[i]];
-        return p?.constraints?.length ?? 0;
-      },
+      render: (_: any, record: any) => record?.constraints?.length ?? 0,
+    },
+    {
+      title: t('Last Updated'), key: 'lastUpdated', width: 180,
+      render: (_: any, record: any) => fmtTime(record?.lastUpdated),
     },
     {
       title: t('Actions'), key: 'action', width: 140,
-      render: (_: any, __: any, i: number) => {
-        const id = Object.keys(data)[i];
+      render: (_: any, record: any) => {
+        const id = record.key;
         return (
           <Space>
             <Button size="small" icon={<EyeOutlined />} onClick={() => showDetail(id)} />
@@ -227,11 +227,19 @@ export default function MgmtPolicies() {
     },
   ];
 
-  const columns = screenSize === 'mobile'
+  const columns = screenSize !== 'desktop'
     ? allColumns.filter((c) => ['name', 'action'].includes(c.key as string))
     : allColumns;
 
   const tableData = Object.keys(data)
+    .sort((a, b) => {
+      const ta = data[a]?.lastUpdated;
+      const tb = data[b]?.lastUpdated;
+      if (!ta && !tb) return 0;
+      if (!ta) return 1;
+      if (!tb) return -1;
+      return tb.localeCompare(ta);
+    })
     .filter((name) => {
       if (!search.trim()) return true;
       const kw = search.trim().toLowerCase();
@@ -243,23 +251,24 @@ export default function MgmtPolicies() {
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+      <div style={{ marginBottom: 16 }}>
         <div>
           <Text strong style={{ fontSize: 20 }}>{t('Management Policy')}</Text>
           <br /><Text type="secondary">{t('Define automatic service deployment pattern (Pattern / Business Policy / Service)')}</Text>
         </div>
-        <Space>
+        <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <Input
             allowClear
             placeholder={t('Search')}
+            prefix={<SearchOutlined />}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             style={{ width: 200 }}
           />
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('Create Management Policy')}</Button>
-          <Button icon={<ImportOutlined />} onClick={() => setImportOpen(true)}>{t('Import from JSON')}</Button>
+          <Button icon={<ImportOutlined />} onClick={() => setImportOpen(true)}>{t('Import')}</Button>
           <Button icon={<ReloadOutlined />} onClick={load}>{t('Refresh')}</Button>
-        </Space>
+        </div>
       </div>
       <Table columns={columns} dataSource={tableData} loading={loading} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `${total} ${t('Management Policies')}` }} size="middle" scroll={{ x: 'max-content' }} />
 
@@ -351,7 +360,7 @@ export default function MgmtPolicies() {
       </Modal>
 
       <Modal
-        title={t('Import management policy from JSON')}
+        title={t('Import')}
         open={importOpen}
         onOk={handleImport}
         onCancel={() => { setImportOpen(false); importForm.resetFields(); }}

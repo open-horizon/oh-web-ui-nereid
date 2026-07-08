@@ -25,7 +25,7 @@ function detectVars(str: string) {
 }
 
 export default function Patterns() {
-  const { t } = useT();
+  const { t, fmtTime } = useT();
   const [data, setData] = useState<Record<string, ExchangePattern>>({});
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
@@ -273,20 +273,21 @@ export default function Patterns() {
   const allColumns = [
     {
       title: t('Name'), key: 'name', width: 180,
-      render: (_: any, __: any, i: number) => Object.keys(data)[i],
+      render: (_: any, record: any) => record.key,
     },
     { title: t('Label'), dataIndex: 'label', key: 'label', render: (v: string) => v || '-' },
     {
       title: t('Service Count'), key: 'svcCount', width: 80,
-      render: (_: any, __: any, i: number) => {
-        const p = data[Object.keys(data)[i]];
-        return p?.services?.length ?? 0;
-      },
+      render: (_: any, record: any) => record?.services?.length ?? 0,
+    },
+    {
+      title: t('Last Updated'), key: 'lastUpdated', width: 180,
+      render: (_: any, record: any) => fmtTime(record?.lastUpdated),
     },
     {
       title: t('Actions'), key: 'action', width: 180,
-      render: (_: any, __: any, i: number) => {
-        const id = Object.keys(data)[i];
+      render: (_: any, record: any) => {
+        const id = record.key;
         return (
           <Space>
             <Button size="small" icon={<EyeOutlined />} onClick={() => showDetail(id)} />
@@ -298,11 +299,19 @@ export default function Patterns() {
     },
   ];
 
-  const columns = screenSize === 'mobile'
+  const columns = screenSize !== 'desktop'
     ? allColumns.filter((c) => ['name', 'action'].includes(c.key as string))
     : allColumns;
 
   const tableData = Object.keys(data)
+    .sort((a, b) => {
+      const ta = data[a]?.lastUpdated;
+      const tb = data[b]?.lastUpdated;
+      if (!ta && !tb) return 0;
+      if (!ta) return 1;
+      if (!tb) return -1;
+      return tb.localeCompare(ta);
+    })
     .filter((name) => {
       if (!search.trim()) return true;
       const kw = search.trim().toLowerCase();
@@ -314,7 +323,7 @@ export default function Patterns() {
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+      <div style={{ marginBottom: 16 }}>
         <div>
           <Text strong style={{ fontSize: 20 }}>{t('Pattern (Deployment Patterns)')}</Text>
           <br /><Text type="secondary">{t('Define service deployment topology and version strategy')}</Text>
@@ -338,18 +347,19 @@ export default function Patterns() {
           </div>
           )}
         </div>
-        <Space>
+        <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <Input
             allowClear
             placeholder={t('Search')}
+            prefix={<SearchOutlined />}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             style={{ width: 200 }}
           />
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('Create Pattern')}</Button>
-          <Button icon={<ImportOutlined />} onClick={openImport}>{t('Import from JSON')}</Button>
+          <Button icon={<ImportOutlined />} onClick={openImport}>{t('Import')}</Button>
           <Button icon={<ReloadOutlined />} onClick={() => load()}>{t('Refresh')}</Button>
-        </Space>
+        </div>
       </div>
       <Table columns={columns} dataSource={tableData} loading={loading} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `${total} ${t('Patterns')}` }} size="middle" scroll={{ x: 'max-content' }} />
 
@@ -397,7 +407,7 @@ export default function Patterns() {
       </Modal>
 
       <Modal
-        title={t('Import pattern from JSON')}
+        title={t('Import')}
         open={importOpen}
         onOk={handleImport}
         onCancel={() => { setImportOpen(false); importForm.resetFields(); }}

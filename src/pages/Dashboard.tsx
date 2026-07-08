@@ -33,21 +33,8 @@ function fmtUptime(ms: number) {
   return parts.join(' ') || '<1m';
 }
 
-function timeAgo(iso?: string) {
-  if (!iso) return '-';
-  const diff = Date.now() - new Date(iso).getTime();
-  if (diff < 0) return '-';
-  const s = Math.floor(diff / 1000);
-  if (s < 60) return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return `${Math.floor(h / 24)}d ago`;
-}
-
 export default function Dashboard() {
-  const { t } = useT();
+  const { t, fmtTime } = useT();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [version, setVersion] = useState('');
@@ -135,7 +122,7 @@ export default function Dashboard() {
                 <Tag color="green" icon={<HeartOutlined />}>{dash?.onlineNodes ?? 0}</Tag> / {status?.nodes ?? 0}
               </Descriptions.Item>
               <Descriptions.Item label={t('Server Start Time')}>
-                {dash?.serverStartedAt ? new Date(dash.serverStartedAt).toLocaleString() : '-'}
+                {fmtTime(dash?.serverStartedAt)}
               </Descriptions.Item>
               <Descriptions.Item label={t('Server Uptime')}>
                 <Tag icon={<CloudServerOutlined />}>{dash ? fmtUptime(dash.serverUptimeMs) : '-'}</Tag>
@@ -161,7 +148,7 @@ export default function Dashboard() {
                 >
                   <List.Item.Meta
                     title={n.id}
-                    description={`${t('Last Heartbeat')}: ${timeAgo(n.lastHeartbeat)}`}
+                    description={`${t('Last Heartbeat')}: ${fmtTime(n.lastHeartbeat)}`}
                   />
                 </List.Item>
               )}

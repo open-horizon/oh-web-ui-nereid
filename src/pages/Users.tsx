@@ -3,7 +3,7 @@ import {
   Table, Button, Space, Typography, message, Modal, Tag, Form, Input, Switch, Divider,
 } from 'antd';
 import {
-  ReloadOutlined, DeleteOutlined, PlusOutlined, KeyOutlined,
+  SearchOutlined, ReloadOutlined, DeleteOutlined, PlusOutlined, KeyOutlined,
 } from '@ant-design/icons';
 import { UserAPI, ExchangeUser } from '../api/users';
 import { useT } from '../i18n/context';
@@ -93,7 +93,7 @@ export default function Users() {
   const allColumns = [
     {
       title: t('Username'), key: 'name', width: 200,
-      render: (_: any, __: any, i: number) => Object.keys(data)[i],
+      render: (_: any, record: any) => record.key,
     },
     {
       title: t('Admin'), dataIndex: 'admin', key: 'admin', width: 100,
@@ -102,8 +102,8 @@ export default function Users() {
     { title: t('Email'), dataIndex: 'email', key: 'email', render: (v: string) => v || '-' },
     {
       title: t('Actions'), key: 'action', width: 160,
-      render: (_: any, __: any, i: number) => {
-        const name = Object.keys(data)[i];
+      render: (_: any, record: any) => {
+        const name = record.key;
         return (
           <Space>
             <Button size="small" icon={<KeyOutlined />} onClick={() => showApiKeys(name)} />
@@ -114,11 +114,19 @@ export default function Users() {
     },
   ];
 
-  const columns = screenSize === 'mobile'
+  const columns = screenSize !== 'desktop'
     ? allColumns.filter((c) => ['name', 'action'].includes(c.key as string))
     : allColumns;
 
   const tableData = Object.keys(data)
+    .sort((a, b) => {
+      const ta = data[a]?.lastUpdated;
+      const tb = data[b]?.lastUpdated;
+      if (!ta && !tb) return 0;
+      if (!ta) return 1;
+      if (!tb) return -1;
+      return tb.localeCompare(ta);
+    })
     .filter((name) => {
       if (!search.trim()) return true;
       const kw = search.trim().toLowerCase();
@@ -130,22 +138,23 @@ export default function Users() {
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
+      <div style={{ marginBottom: 16 }}>
         <div>
           <Text strong style={{ fontSize: 20 }}>{t('User')}</Text>
           <br /><Text type="secondary">{t('User Management')}</Text>
         </div>
-        <Space>
+        <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <Input
             allowClear
             placeholder={t('Search')}
+            prefix={<SearchOutlined />}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             style={{ width: 200 }}
           />
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>{t('Create User')}</Button>
           <Button icon={<ReloadOutlined />} onClick={load}>{t('Refresh')}</Button>
-        </Space>
+        </div>
       </div>
       <Table columns={columns} dataSource={tableData} loading={loading} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `${total} ${t('Users')}` }} size="middle" scroll={{ x: 'max-content' }} />
 

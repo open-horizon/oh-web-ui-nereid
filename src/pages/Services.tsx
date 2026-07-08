@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { usePolling } from '../hooks/usePolling';
 import { Table, Button, Space, Typography, message, Modal, Drawer, Descriptions, Tag, Form, Input, Select, Tabs, Collapse, Alert, Switch, Upload, Tooltip } from 'antd';
-import { ReloadOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, EditOutlined, DownloadOutlined, UploadOutlined, MinusCircleOutlined } from '@ant-design/icons';
+import { SearchOutlined, ReloadOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, EditOutlined, DownloadOutlined, ImportOutlined, MinusCircleOutlined } from '@ant-design/icons';
 import { ServiceAPI, ExchangeService } from '../api/services';
 import { OrgAPI } from '../api/organizations';
 import { getConfig } from '../api/config';
@@ -128,7 +128,7 @@ const notifFormItemLayout = {
 };
 
 export default function Services() {
-  const { t } = useT();
+  const { t, fmtTime } = useT();
   const [data, setData] = useState<Record<string, ExchangeService>>({});
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
@@ -501,15 +501,19 @@ export default function Services() {
   const allColumns = [
     {
       title: t('Name'), key: 'name', width: 180,
-      render: (_: any, __: any, i: number) => Object.keys(data)[i],
+      render: (_: any, record: any) => record.key,
     },
     { title: t('Version'), dataIndex: 'version', key: 'version', width: 100 },
     { title: t('Architecture'), dataIndex: 'arch', key: 'arch', width: 80 },
     { title: t('URL'), dataIndex: 'url', key: 'url', render: (v: string) => v || '-' },
     {
+      title: t('Last Updated'), key: 'lastUpdated', width: 180,
+      render: (_: any, record: any) => fmtTime(record?.lastUpdated),
+    },
+    {
       title: t('Actions'), key: 'action', width: 180,
-      render: (_: any, __: any, i: number) => {
-        const id = Object.keys(data)[i];
+      render: (_: any, record: any) => {
+        const id = record.key;
         return (
           <Space>
             <Tooltip title={t('View')}>
@@ -529,11 +533,19 @@ export default function Services() {
   ];
 
   // On phones show only the essential columns to avoid horizontal scrolling
-  const columns = screenSize === 'mobile'
+  const columns = screenSize !== 'desktop'
     ? allColumns.filter((c) => ['name', 'version', 'arch', 'action'].includes(c.key as string))
     : allColumns;
 
   const tableData = Object.keys(data)
+    .sort((a, b) => {
+      const ta = data[a]?.lastUpdated;
+      const tb = data[b]?.lastUpdated;
+      if (!ta && !tb) return 0;
+      if (!ta) return 1;
+      if (!tb) return -1;
+      return tb.localeCompare(ta);
+    })
     .filter((name) => {
       if (!search.trim()) return true;
       const kw = search.trim().toLowerCase();
@@ -545,7 +557,7 @@ export default function Services() {
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+      <div style={{ marginBottom: 16 }}>
         <div>
           <Text strong style={{ fontSize: 20 }}>{t('Service')} (Services)</Text>
           <br /><Text type="secondary">{t('Manage service definitions, deployment configuration, and version strategy')}</Text>
@@ -569,23 +581,24 @@ export default function Services() {
           </div>
           )}
         </div>
-        <Space>
+        <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <Input
             allowClear
             placeholder={t('Search')}
+            prefix={<SearchOutlined />}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             style={{ width: 200 }}
           />
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('Create Service')}</Button>
-          <Button icon={<UploadOutlined />} onClick={openImport}>{t('Import JSON')}</Button>
+          <Button icon={<ImportOutlined />} onClick={openImport}>{t('Import')}</Button>
           <Button icon={<ReloadOutlined />} onClick={() => load()}>{t('Refresh')}</Button>
-        </Space>
+        </div>
       </div>
       <Table columns={columns} dataSource={tableData} loading={loading} size="middle" scroll={{ x: 'max-content' }} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `${total} ${t('Services')}` }} />
 
       <Modal
-        title={t('Import Service')}
+        title={t('Import')}
         open={importOpen}
         onOk={handleImport}
         onCancel={() => { setImportOpen(false); importForm.resetFields(); }}
