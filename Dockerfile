@@ -20,5 +20,10 @@ CMD ["node", "server/index.cjs"]
 FROM nginx:alpine AS frontend
 COPY dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
-EXPOSE 80
-CMD ["nginx", "-g", "daemon off;"]
+# Generate a self-signed TLS certificate if none is mounted, then start nginx.
+# For production, mount real certificates at /etc/nginx/ssl instead.
+RUN apk add --no-cache openssl && mkdir -p /etc/nginx/ssl
+COPY docker/nginx-entrypoint.sh /usr/local/bin/nginx-entrypoint.sh
+RUN chmod +x /usr/local/bin/nginx-entrypoint.sh
+EXPOSE 80 443
+ENTRYPOINT ["/usr/local/bin/nginx-entrypoint.sh"]

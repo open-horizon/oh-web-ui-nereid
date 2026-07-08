@@ -1,9 +1,14 @@
+// Copyright (C) 2026 YIQISOFT
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { useEffect, useState } from 'react';
 import { Table, Button, Space, Typography, message, Modal, Form, Input } from 'antd';
 import { SearchOutlined, PlusOutlined, ReloadOutlined, DeleteOutlined, EyeOutlined } from '@ant-design/icons';
 import { OrgAPI, Organization } from '../api/organizations';
 import { useT } from '../i18n/context';
 import { useScreenSize } from '../hooks/useIsMobile';
+import HelpButton from '../components/HelpButton';
 
 const { Text } = Typography;
 
@@ -121,6 +126,7 @@ export default function Organizations() {
       <div style={{ marginBottom: 16 }}>
         <div>
           <Text strong style={{ fontSize: 20 }}>{t('Organization')}</Text>
+          <HelpButton module="organizations" />
           <br /><Text type="secondary">{t('Manage all organizations and their configuration')}</Text>
         </div>
         <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -140,7 +146,7 @@ export default function Organizations() {
         columns={columns}
         dataSource={tableData}
         loading={loading}
-        pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `${total} ${t('Organization Management')}` }}
+        pagination={{ pageSize: 10, showSizeChanger: true, showQuickJumper: true, showLessItems: false, showTotal: (total) => `${total} ${t('Organization Management')}` }}
         size="middle"
         scroll={{ x: 'max-content' }}
       />

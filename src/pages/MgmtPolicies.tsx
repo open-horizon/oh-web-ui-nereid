@@ -1,12 +1,17 @@
+// Copyright (C) 2026 YIQISOFT
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { useEffect, useState } from 'react';
 import { usePolling } from '../hooks/usePolling';
-import { Table, Button, Space, Typography, message, Modal, Form, Input, Select, Tag, Alert, Switch } from 'antd';
-import { SearchOutlined, ReloadOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, ImportOutlined } from '@ant-design/icons';
+import { Table, Button, Space, Typography, message, Modal, Form, Input, Select, Tag, Alert, Switch, Drawer, Tabs } from 'antd';
+import { SearchOutlined, ReloadOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, ImportOutlined, EditOutlined, DownloadOutlined } from '@ant-design/icons';
 import { MgmtPolicyAPI, MgmtPolicy } from '../api/policies';
 import { ServiceAPI, ExchangeService } from '../api/services';
 import { getConfig } from '../api/config';
 import { useT } from '../i18n/context';
 import { useScreenSize } from '../hooks/useIsMobile';
+import HelpButton from '../components/HelpButton';
 
 const { Text } = Typography;
 const { TextArea } = Input;
@@ -29,13 +34,18 @@ export default function MgmtPolicies() {
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editingId, setEditingId] = useState('');
   const [creating, setCreating] = useState(false);
   const [form] = Form.useForm();
+  const [editForm] = Form.useForm();
   const [importForm] = Form.useForm();
   const [services, setServices] = useState<Record<string, ExchangeService>>({});
   const [serviceSearch, setServiceSearch] = useState('');
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
   const [search, setSearch] = useState('');
+  const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
+  const [detailMgmtId, setDetailMgmtId] = useState('');
   const screenSize = useScreenSize();
 
   const load = async () => {
@@ -76,17 +86,22 @@ export default function MgmtPolicies() {
     });
   };
 
+  // Trigger browser download of management policy definition as JSON file
+  const exportMgmt = (id: string) => {
+    const p = data[id];
+    if (!p) return;
+    const blob = new Blob([JSON.stringify(p, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${id}.managementpolicy.definition.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const showDetail = (id: string) => {
-    Modal.info({ maskClosable: true,
-      title: t('Management Policy') + ' - ' + id,
-      width: 700,
-      content: (
-        <pre style={{ background: '#f5f5f5', padding: 16, borderRadius: 6, overflow: 'auto', maxHeight: 500 }}>
-          {JSON.stringify(data[id], null, 2)}
-        </pre>
-      ),
-      footer: null,
-    });
+    setDetailMgmtId(id);
+    setDetailDrawerOpen(true);
   };
 
   const openCreate = async () => {
@@ -130,15 +145,17 @@ export default function MgmtPolicies() {
       } else if (values.patternType === 'businessPolicy') {
         body.businessPolicy = values.businessPolicyId || '';
       } else {
-        body.service = {
-          name: values.serviceName,
-          org: getConfig().orgId || '',
-          arch: 'amd64',
-          serviceVersions: [
-            { version: '1.0.0', priority: {}, upgrade: {} },
-          ],
-          nodeHealth: { ping_interval: 60, parallel_health_check: true },
-        };
+        // Service-targeted management policy uses properties/constraints (no `service` field in Exchange API)
+        body.properties = [
+          { name: 'openhorizon.service.name', value: values.serviceName },
+          { name: 'openhorizon.service.org', value: getConfig().orgId || '' },
+          { name: 'openhorizon.service.arch', value: 'amd64' },
+          { name: 'openhorizon.service.version', value: '1.0.0' },
+        ];
+        body.constraints = [
+          ...vconstraints,
+          `openhorizon.service.name == ${values.serviceName}`,
+        ];
       }
       if (selectedServices.length > 0) {
         body.dataServices = selectedServices.map((svcId) => ({
@@ -152,6 +169,66 @@ export default function MgmtPolicies() {
       message.success(t('Management policy created successfully'));
       setCreateOpen(false);
       form.resetFields();
+      load();
+    } catch (err: any) {
+      if (!err.message?.includes('validate')) message.error(err.message);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const openEdit = (id: string) => {
+    setEditingId(id);
+    editForm.setFieldsValue(data[id]);
+    setEditOpen(true);
+  };
+
+  const handleEdit = async () => {
+    try {
+      const values = await editForm.validateFields();
+      setCreating(true);
+      const vconstraints: string[] = [];
+      if (values.constraints) {
+        const lines = values.constraints.split('\n').filter(Boolean);
+        for (const line of lines) {
+          vconstraints.push(line.replace(/\$\{?(\w+)\}?/g, (m: string) => {
+            const v = m.startsWith('$') ? m : '$' + m;
+            return v;
+          }));
+        }
+      }
+      const body: Record<string, any> = {
+        label: values.label,
+        description: values.description || '',
+        constraints: vconstraints,
+        enabled: true,
+      };
+      if (values.patternType === 'pattern') {
+        body.pattern = values.patternId || '';
+      } else if (values.patternType === 'businessPolicy') {
+        body.businessPolicy = values.businessPolicyId || '';
+      } else {
+        body.service = {
+          name: values.serviceName,
+          org: getConfig().orgId || '',
+          arch: 'amd64',
+          serviceVersions: [{ version: '1.0.0', priority: {}, upgrade: {} }],
+          nodeHealth: { ping_interval: 60, parallel_health_check: true },
+        };
+      }
+      if (selectedServices.length > 0) {
+        body.dataServices = selectedServices.map((svcId) => ({
+          serviceUrl: services[svcId].url || '',
+          serviceOrgid: getConfig().orgId || '',
+          serviceArch: services[svcId].arch || 'amd64',
+          serviceVersions: [{ version: services[svcId].version || '1.0.0', priority: {}, upgrade: {} }],
+        }));
+      }
+      await MgmtPolicyAPI.update(editingId, body);
+      message.success(t('Management policy updated successfully'));
+      setEditOpen(false);
+      editForm.resetFields();
+      setSelectedServices([]);
       load();
     } catch (err: any) {
       if (!err.message?.includes('validate')) message.error(err.message);
@@ -220,6 +297,8 @@ export default function MgmtPolicies() {
         return (
           <Space>
             <Button size="small" icon={<EyeOutlined />} onClick={() => showDetail(id)} />
+            <Button size="small" icon={<DownloadOutlined />} onClick={() => exportMgmt(id)} />
+            <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(id)} />
             <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(id)} />
           </Space>
         );
@@ -254,6 +333,7 @@ export default function MgmtPolicies() {
       <div style={{ marginBottom: 16 }}>
         <div>
           <Text strong style={{ fontSize: 20 }}>{t('Management Policy')}</Text>
+          <HelpButton module="mgmtpolicies" />
           <br /><Text type="secondary">{t('Define automatic service deployment pattern (Pattern / Business Policy / Service)')}</Text>
         </div>
         <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -270,7 +350,21 @@ export default function MgmtPolicies() {
           <Button icon={<ReloadOutlined />} onClick={load}>{t('Refresh')}</Button>
         </div>
       </div>
-      <Table columns={columns} dataSource={tableData} loading={loading} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `${total} ${t('Management Policies')}` }} size="middle" scroll={{ x: 'max-content' }} />
+      <Table columns={columns} dataSource={tableData} loading={loading} pagination={{ pageSize: 10, showSizeChanger: true, showQuickJumper: true, showLessItems: false, showTotal: (total) => `${total} ${t('Management Policies')}` }} size="middle" scroll={{ x: 'max-content' }} />
+
+      <Drawer
+        title={t('Management Policy Detail - ') + detailMgmtId}
+        open={detailDrawerOpen}
+        onClose={() => setDetailDrawerOpen(false)}
+        width={640}
+        extra={<Button icon={<DownloadOutlined />} onClick={() => detailMgmtId && exportMgmt(detailMgmtId)}>{t('Export JSON')}</Button>}
+      >
+        {detailMgmtId && data[detailMgmtId] ? (
+          <pre style={{ background: '#f5f5f5', padding: 16, borderRadius: 6, overflow: 'auto', maxHeight: 500 }}>
+            {JSON.stringify(data[detailMgmtId], null, 2)}
+          </pre>
+        ) : <Text type="secondary">{t('No data')}</Text>}
+      </Drawer>
 
       <Modal
         title={t('Create Management Policy')}
@@ -357,6 +451,27 @@ export default function MgmtPolicies() {
             </div>
           ))}
         </div>
+      </Modal>
+
+      <Modal
+        title={t('Edit Management Policy')}
+        open={editOpen}
+        onOk={handleEdit}
+        onCancel={() => { setEditOpen(false); editForm.resetFields(); setSelectedServices([]); }}
+        confirmLoading={creating}
+        width={640}
+      >
+        <Form form={editForm} layout="vertical">
+          <Form.Item name="label" label={t('Label')} rules={[{ required: true, message: t('Please enter a label') }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="description" label={t('Description')}>
+            <TextArea rows={2} />
+          </Form.Item>
+          <Form.Item name="constraints" label={t('Constraints (one per line, supports variables like ${var})')}>
+            <TextArea rows={3} />
+          </Form.Item>
+        </Form>
       </Modal>
 
       <Modal

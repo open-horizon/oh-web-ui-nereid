@@ -4,22 +4,41 @@ info:
   description: |
     NereidAI is a BFF (Backend For Frontend) proxy for the Open Horizon Exchange REST API.
 
-    Features:
-    - Session-based Basic Auth (credentials never persisted in browser)
-    - Auto RSA-PSS SHA-256 deployment signing on service create/update
-    - Auto public key upload (`services/{id}/keys/default.public.key`)
-    - Body whitelist filtering (`serviceBody` / `patternBody` / `sanitizeBody`)
-    - Cross-org agbot merging, sub-endpoints (patterns / businesspols)
-    - `?org=` query param + `x-agbot-auth` header for cross-org access
-    - `X-Root-Auth` header for root-privileged node PATCH
-  version: 1.0.0
+    Security model (production-grade):
+    - Exchange credentials are NEVER stored in the browser and NEVER persisted in plaintext.
+    - On login, credentials are verified, encrypted with AES-256-GCM (server-side master key),
+      and stored in Redis with a 30-minute idle TTL.
+    - The browser holds only an opaque session id in an `HttpOnly; Secure; SameSite=Strict`
+      cookie (`nereid_sid`). It is inaccessible to JavaScript and not sent cross-site.
+    - All read/write endpoints require the session cookie. Cross-org access uses the optional
+      `x-agbot-auth` / `x-root-auth` headers.
+    - Auto RSA-PSS SHA-256 deployment signing on service create/update, with auto public key upload.
+    - Strict body whitelist filtering (`serviceBody` / `patternBody` / `sanitizeBody`).
+  version: 1.1.0
   contact:
     name: NereidAI
+
 servers:
   - url: http://localhost:3001
-    description: Dev server
+    description: Dev server (backend)
   - url: /api
-    description: Via Vite proxy
+    description: Via Nginx reverse proxy (HTTPS in production)
+
+tags:
+  - name: Auth
+  - name: System
+  - name: Organizations
+  - name: Users
+  - name: Nodes
+  - name: Services
+  - name: Patterns
+  - name: Deployment Policies
+  - name: Management Policies
+  - name: Catalog
+  - name: Agbots
+  - name: Agbot Patterns
+  - name: Agbot Business Policies
+  - name: HA Groups
 
 paths:
   # =============================================================
@@ -29,7 +48,10 @@ paths:
     post:
       tags: [Auth]
       summary: Login to Exchange
-      description: Validate credentials, create a session, return sessionId
+      description: |
+        Validates Exchange credentials, encrypts and stores them server-side (Redis/AES-256-GCM),
+        and issues an `HttpOnly; Secure; SameSite=Strict` session cookie (`nereid_sid`).
+        No session id is returned in the JSON body.
       operationId: login
       requestBody:
         required: true
@@ -42,30 +64,34 @@ paths:
                 baseURL:
                   type: string
                   format: uri
-                  example: http://192.168.123.175:3090
+                  example: http://192.168.123.133:3090
                 user:
                   type: string
                   example: myorg/admin
                 password:
                   type: string
-                  example: lVMFFsxt2l00SZskUpguSXa7eRrIrT
+                  example: WmgHbLbxWjxQifijLxMpIUNhZaPjgf
       responses:
         '200':
-          description: Login success
+          description: Login success (sets nereid_sid cookie)
+          headers:
+            Set-Cookie:
+              description: HttpOnly; Secure; SameSite=Strict session cookie
+              schema:
+                type: string
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  sessionId:
-                    type: string
-                    example: 58e8f92e82216c49abe89a8e661d66c2
                   orgId:
                     type: string
                     example: myorg
                   version:
                     type: string
                     example: 2.154.0
+        '400':
+          description: Missing parameters
         '401':
           description: Exchange connection failed
         '502':
@@ -75,12 +101,13 @@ paths:
     post:
       tags: [Auth]
       summary: Logout
+      description: Destroys the server-side session and clears the session cookie.
       operationId: logout
-      parameters:
-        - $ref: '#/components/parameters/SessionId'
+      security:
+        - SessionCookie: []
       responses:
         '200':
-          description: Logout success
+          description: Logout success (clears nereid_sid cookie)
           content:
             application/json:
               schema:
@@ -90,6 +117,31 @@ paths:
                     type: boolean
                     example: true
 
+  /api/me:
+    get:
+      tags: [Auth]
+      summary: Current session info
+      description: Returns the authenticated user's org and Exchange version. Used by the SPA to restore session on page refresh.
+      operationId: me
+      security:
+        - SessionCookie: []
+      responses:
+        '200':
+          description: Session context
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  orgId:
+                    type: string
+                    example: myorg
+                  version:
+                    type: string
+                    example: 2.154.0
+        '401':
+          description: Not authenticated
+
   # =============================================================
   # Status / Version / Org Type
   # =============================================================
@@ -98,8 +150,8 @@ paths:
       tags: [System]
       summary: Organization status summary
       operationId: getStatus
-      parameters:
-        - $ref: '#/components/parameters/SessionId'
+      security:
+        - SessionCookie: []
       responses:
         '200':
           description: Status summary
@@ -122,8 +174,8 @@ paths:
       tags: [System]
       summary: Exchange version
       operationId: getVersion
-      parameters:
-        - $ref: '#/components/parameters/SessionId'
+      security:
+        - SessionCookie: []
       responses:
         '200':
           description: Version info
@@ -141,8 +193,8 @@ paths:
       summary: Determine org type
       description: Returns hubadmin / system / user
       operationId: getOrgType
-      parameters:
-        - $ref: '#/components/parameters/SessionId'
+      security:
+        - SessionCookie: []
       responses:
         '200':
           description: Org type
@@ -155,6 +207,60 @@ paths:
                     type: string
                     enum: [hubadmin, system, user]
 
+  /api/health:
+    get:
+      tags: [System]
+      summary: Health check (no auth)
+      operationId: health
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /api/audit:
+    get:
+      tags: [System]
+      summary: Read system / audit logs
+      operationId: getAudit
+      security:
+        - SessionCookie: []
+      parameters:
+        - name: source
+          in: query
+          schema:
+            type: string
+            enum: [system, audit]
+          description: Which log to read
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Case-insensitive substring filter across all fields
+        - name: limit
+          in: query
+          schema:
+            type: integer
+          description: Max entries to return (capped server-side)
+      responses:
+        '200':
+          description: Log entries (newest first)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      type: object
+
   # =============================================================
   # Organizations
   # =============================================================
@@ -163,8 +269,8 @@ paths:
       tags: [Organizations]
       summary: List all organizations
       operationId: listOrganizations
-      parameters:
-        - $ref: '#/components/parameters/SessionId'
+      security:
+        - SessionCookie: []
       responses:
         '200':
           description: Organization list (passthrough from Exchange)
@@ -174,8 +280,9 @@ paths:
       tags: [Organizations]
       summary: Create/update organization
       operationId: updateOrganization
+      security:
+        - SessionCookie: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
         - name: orgid
           in: path
           required: true
@@ -189,13 +296,13 @@ paths:
       responses:
         '200':
           description: Operation result
-
     delete:
       tags: [Organizations]
       summary: Delete organization
       operationId: deleteOrganization
+      security:
+        - SessionCookie: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
         - name: orgid
           in: path
           required: true
@@ -213,8 +320,8 @@ paths:
       tags: [Users]
       summary: List users in current org
       operationId: listUsers
-      parameters:
-        - $ref: '#/components/parameters/SessionId'
+      security:
+        - SessionCookie: []
       responses:
         '200':
           description: User list
@@ -224,8 +331,9 @@ paths:
       tags: [Users]
       summary: Get user details
       operationId: getUser
+      security:
+        - SessionCookie: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
         - name: username
           in: path
           required: true
@@ -234,13 +342,13 @@ paths:
       responses:
         '200':
           description: User info
-
     put:
       tags: [Users]
       summary: Create/update user
       operationId: updateUser
+      security:
+        - SessionCookie: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
         - name: username
           in: path
           required: true
@@ -254,13 +362,13 @@ paths:
       responses:
         '200':
           description: Operation result
-
     delete:
       tags: [Users]
       summary: Delete user
       operationId: deleteUser
+      security:
+        - SessionCookie: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
         - name: username
           in: path
           required: true
@@ -275,8 +383,9 @@ paths:
       tags: [Users]
       summary: Create API key
       operationId: createApiKey
+      security:
+        - SessionCookie: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
         - name: username
           in: path
           required: true
@@ -296,8 +405,9 @@ paths:
       tags: [Users]
       summary: Delete API key
       operationId: deleteApiKey
+      security:
+        - SessionCookie: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
         - name: username
           in: path
           required: true
@@ -320,8 +430,8 @@ paths:
       tags: [Nodes]
       summary: List nodes in current org
       operationId: listNodes
-      parameters:
-        - $ref: '#/components/parameters/SessionId'
+      security:
+        - SessionCookie: []
       responses:
         '200':
           description: Node list
@@ -331,12 +441,13 @@ paths:
       tags: [Nodes]
       summary: Update node (set pattern)
       description: |
-        Supports `X-Root-Auth` header for root-privileged operations.
+        Supports `x-root-auth` header for root-privileged operations.
         If `pattern` field does not contain `/`, `{orgId}/` prefix is prepended.
       operationId: patchNode
+      security:
+        - SessionCookie: []
+        - RootAuth: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
-        - $ref: '#/components/parameters/RootAuth'
         - name: id
           in: path
           required: true
@@ -369,8 +480,9 @@ paths:
       tags: [Nodes]
       summary: Get services running on node
       operationId: getNodeServices
+      security:
+        - SessionCookie: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
         - name: id
           in: path
           required: true
@@ -394,8 +506,9 @@ paths:
       tags: [Nodes]
       summary: Get node policy
       operationId: getNodePolicy
+      security:
+        - SessionCookie: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
         - name: id
           in: path
           required: true
@@ -404,14 +517,14 @@ paths:
       responses:
         '200':
           description: Node policy
-
     put:
       tags: [Nodes]
       summary: Update node policy
       description: Automatically strips `lastUpdated` field
       operationId: updateNodePolicy
+      security:
+        - SessionCookie: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
         - name: id
           in: path
           required: true
@@ -433,18 +546,16 @@ paths:
     get:
       tags: [Services]
       summary: List services
-      description: |
-        Supports `?org=` for cross-org queries.
-        Supports `x-agbot-auth` header for agbot-privileged access.
+      description: Supports `?org=` for cross-org queries and `x-agbot-auth` header.
       operationId: listServices
+      security:
+        - SessionCookie: []
+        - AgbotAuth: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
         - $ref: '#/components/parameters/OrgQuery'
-        - $ref: '#/components/parameters/AgbotAuth'
       responses:
         '200':
           description: Service list
-
     post:
       tags: [Services]
       summary: Create service
@@ -453,8 +564,8 @@ paths:
         Strips `lastUpdated` / `owner` / `name` / `organization` fields.
         `deployment` is auto-stringified if passed as an object.
       operationId: createService
-      parameters:
-        - $ref: '#/components/parameters/SessionId'
+      security:
+        - SessionCookie: []
       requestBody:
         required: true
         content:
@@ -473,8 +584,10 @@ paths:
         Always re-signs deployment and uploads a new public key when `deployment` is present.
         Supports `?org=` for cross-org updates.
       operationId: updateService
+      security:
+        - SessionCookie: []
+        - AgbotAuth: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
         - $ref: '#/components/parameters/OrgQuery'
         - name: id
           in: path
@@ -500,13 +613,14 @@ paths:
                     type: string
                   msg:
                     type: string
-
     delete:
       tags: [Services]
       summary: Delete service
       operationId: deleteService
+      security:
+        - SessionCookie: []
+        - AgbotAuth: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
         - $ref: '#/components/parameters/OrgQuery'
         - name: id
           in: path
@@ -526,14 +640,14 @@ paths:
       summary: List deployment patterns
       description: Supports `?org=` and `x-agbot-auth`
       operationId: listPatterns
+      security:
+        - SessionCookie: []
+        - AgbotAuth: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
         - $ref: '#/components/parameters/OrgQuery'
-        - $ref: '#/components/parameters/AgbotAuth'
       responses:
         '200':
           description: Pattern list
-
     post:
       tags: [Patterns]
       summary: Create deployment pattern
@@ -541,8 +655,8 @@ paths:
         Strips `name` field from body (used as URL path).
         Uses `patternBody` whitelist (label, description, public, services, userInput, agreementProtocols, etc.).
       operationId: createPattern
-      parameters:
-        - $ref: '#/components/parameters/SessionId'
+      security:
+        - SessionCookie: []
       requestBody:
         required: true
         content:
@@ -582,8 +696,9 @@ paths:
       summary: Update deployment pattern
       description: Uses `patternBody` whitelist
       operationId: updatePattern
+      security:
+        - SessionCookie: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
         - name: id
           in: path
           required: true
@@ -598,13 +713,13 @@ paths:
       responses:
         '200':
           description: Update result
-
     delete:
       tags: [Patterns]
       summary: Delete deployment pattern
       operationId: deletePattern
+      security:
+        - SessionCookie: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
         - name: id
           in: path
           required: true
@@ -623,21 +738,21 @@ paths:
       summary: List deployment policies
       description: Supports `?org=` and `x-agbot-auth`
       operationId: listPolicies
+      security:
+        - SessionCookie: []
+        - AgbotAuth: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
         - $ref: '#/components/parameters/OrgQuery'
-        - $ref: '#/components/parameters/AgbotAuth'
       responses:
         '200':
           description: Policy list
-
     post:
       tags: [Deployment Policies]
       summary: Create deployment policy
       description: Strips `name` field, uses `sanitizeBody` filtering
       operationId: createPolicy
-      parameters:
-        - $ref: '#/components/parameters/SessionId'
+      security:
+        - SessionCookie: []
       requestBody:
         required: true
         content:
@@ -663,8 +778,9 @@ paths:
       tags: [Deployment Policies]
       summary: Delete deployment policy
       operationId: deletePolicy
+      security:
+        - SessionCookie: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
         - name: id
           in: path
           required: true
@@ -682,18 +798,21 @@ paths:
       tags: [Management Policies]
       summary: List management policies
       operationId: listMgmtPolicies
-      parameters:
-        - $ref: '#/components/parameters/SessionId'
+      security:
+        - SessionCookie: []
       responses:
         '200':
-          description: Management policy list
-
+          description: Management policy list (returns object keyed by name)
     post:
       tags: [Management Policies]
       summary: Create management policy
+      description: |
+        Body must follow the Exchange ManagementPolicy schema. A `service`-targeted policy
+        is expressed via `properties`/`constraints` (the `service` field is NOT accepted by Exchange).
+        Supported top-level target fields: `pattern`, `businessPolicy`, or `properties`+`constraints`.
       operationId: createMgmtPolicy
-      parameters:
-        - $ref: '#/components/parameters/SessionId'
+      security:
+        - SessionCookie: []
       requestBody:
         required: true
         content:
@@ -704,17 +823,63 @@ paths:
               properties:
                 name:
                   type: string
+                label:
+                  type: string
+                description:
+                  type: string
+                enabled:
+                  type: boolean
+                constraints:
+                  type: array
+                  items:
+                    type: string
+                properties:
+                  type: array
+                  items:
+                    type: object
+                pattern:
+                  type: string
+                businessPolicy:
+                  type: string
+                agentUpgradePolicy:
+                  type: object
+                startWindow:
+                  type: string
+                jsonFormats:
+                  type: object
       responses:
-        '200':
-          description: Create result
+        '201':
+          description: Created successfully
 
   /api/mgmtpolicies/{id}:
+    put:
+      tags: [Management Policies]
+      summary: Update management policy
+      operationId: updateMgmtPolicy
+      security:
+        - SessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Update result
     delete:
       tags: [Management Policies]
       summary: Delete management policy
       operationId: deleteMgmtPolicy
+      security:
+        - SessionCookie: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
         - name: id
           in: path
           required: true
@@ -732,8 +897,8 @@ paths:
       tags: [Catalog]
       summary: List catalog services
       operationId: listCatalogServices
-      parameters:
-        - $ref: '#/components/parameters/SessionId'
+      security:
+        - SessionCookie: []
       responses:
         '200':
           description: Catalog service list
@@ -743,8 +908,8 @@ paths:
       tags: [Catalog]
       summary: List catalog patterns
       operationId: listCatalogPatterns
-      parameters:
-        - $ref: '#/components/parameters/SessionId'
+      security:
+        - SessionCookie: []
       responses:
         '200':
           description: Catalog pattern list
@@ -758,8 +923,8 @@ paths:
       summary: Validate agbot credentials
       description: Validates agbot credentials and returns a Base64 auth string for subsequent use
       operationId: agbotAdminLogin
-      parameters:
-        - $ref: '#/components/parameters/SessionId'
+      security:
+        - SessionCookie: []
       requestBody:
         required: true
         content:
@@ -790,14 +955,13 @@ paths:
     get:
       tags: [Agbots]
       summary: List agbots
-      description: |
-        Supports `?org=` and `x-agbot-auth`.
-        Automatically merges IBM org agbots into the result.
+      description: Supports `?org=` and `x-agbot-auth`. Automatically merges IBM org agbots.
       operationId: listAgbots
+      security:
+        - SessionCookie: []
+        - AgbotAuth: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
         - $ref: '#/components/parameters/OrgQuery'
-        - $ref: '#/components/parameters/AgbotAuth'
       responses:
         '200':
           description: Agbot list
@@ -808,10 +972,11 @@ paths:
       summary: Create/update agbot
       description: Supports `?org=` and `x-agbot-auth`. `id` supports `org/name` format
       operationId: updateAgbot
+      security:
+        - SessionCookie: []
+        - AgbotAuth: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
         - $ref: '#/components/parameters/OrgQuery'
-        - $ref: '#/components/parameters/AgbotAuth'
         - name: id
           in: path
           required: true
@@ -825,15 +990,15 @@ paths:
       responses:
         '200':
           description: Operation result
-
     patch:
       tags: [Agbots]
       summary: Partial update agbot
       operationId: patchAgbot
+      security:
+        - SessionCookie: []
+        - AgbotAuth: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
         - $ref: '#/components/parameters/OrgQuery'
-        - $ref: '#/components/parameters/AgbotAuth'
         - name: id
           in: path
           required: true
@@ -847,15 +1012,15 @@ paths:
       responses:
         '200':
           description: Operation result
-
     delete:
       tags: [Agbots]
       summary: Delete agbot
       operationId: deleteAgbot
+      security:
+        - SessionCookie: []
+        - AgbotAuth: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
         - $ref: '#/components/parameters/OrgQuery'
-        - $ref: '#/components/parameters/AgbotAuth'
         - name: id
           in: path
           required: true
@@ -865,18 +1030,16 @@ paths:
         '200':
           description: Operation result
 
-  # =============================================================
-  # Agbot - Patterns
-  # =============================================================
   /api/agbots/{id}/patterns:
     get:
       tags: [Agbot Patterns]
       summary: List patterns bound to agbot
       operationId: listAgbotPatterns
+      security:
+        - SessionCookie: []
+        - AgbotAuth: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
         - $ref: '#/components/parameters/OrgQuery'
-        - $ref: '#/components/parameters/AgbotAuth'
         - name: id
           in: path
           required: true
@@ -885,17 +1048,16 @@ paths:
       responses:
         '200':
           description: Pattern list
-
     post:
       tags: [Agbot Patterns]
       summary: Bind pattern to agbot
-      description: |
-        Auto-fills `nodeOrgid` (from body, then `patternOrgid`, then current org).
+      description: Auto-fills `nodeOrgid` (from body, then `patternOrgid`, then current org).
       operationId: bindAgbotPattern
+      security:
+        - SessionCookie: []
+        - AgbotAuth: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
         - $ref: '#/components/parameters/OrgQuery'
-        - $ref: '#/components/parameters/AgbotAuth'
         - name: id
           in: path
           required: true
@@ -927,10 +1089,11 @@ paths:
       tags: [Agbot Patterns]
       summary: Unbind agbot pattern
       operationId: unbindAgbotPattern
+      security:
+        - SessionCookie: []
+        - AgbotAuth: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
         - $ref: '#/components/parameters/OrgQuery'
-        - $ref: '#/components/parameters/AgbotAuth'
         - name: id
           in: path
           required: true
@@ -946,18 +1109,16 @@ paths:
         '200':
           description: Unbind success
 
-  # =============================================================
-  # Agbot - Business Policies
-  # =============================================================
   /api/agbots/{id}/businesspols:
     get:
       tags: [Agbot Business Policies]
       summary: List business policies bound to agbot
       operationId: listAgbotBusinessPols
+      security:
+        - SessionCookie: []
+        - AgbotAuth: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
         - $ref: '#/components/parameters/OrgQuery'
-        - $ref: '#/components/parameters/AgbotAuth'
         - name: id
           in: path
           required: true
@@ -966,15 +1127,15 @@ paths:
       responses:
         '200':
           description: Policy list
-
     post:
       tags: [Agbot Business Policies]
       summary: Bind business policy to agbot
       operationId: bindAgbotBusinessPol
+      security:
+        - SessionCookie: []
+        - AgbotAuth: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
         - $ref: '#/components/parameters/OrgQuery'
-        - $ref: '#/components/parameters/AgbotAuth'
         - name: id
           in: path
           required: true
@@ -1006,10 +1167,11 @@ paths:
       tags: [Agbot Business Policies]
       summary: Unbind agbot business policy
       operationId: unbindAgbotBusinessPol
+      security:
+        - SessionCookie: []
+        - AgbotAuth: []
       parameters:
-        - $ref: '#/components/parameters/SessionId'
         - $ref: '#/components/parameters/OrgQuery'
-        - $ref: '#/components/parameters/AgbotAuth'
         - name: id
           in: path
           required: true
@@ -1025,30 +1187,161 @@ paths:
           description: Unbind success
 
   # =============================================================
-  # HA Groups
+  # HA Groups (node groups)
   # =============================================================
   /api/hagroups:
     get:
       tags: [HA Groups]
-      summary: List HA Groups
+      summary: List HA groups
+      description: Returns an object keyed by group name (converted from Exchange `nodeGroups` array).
       operationId: listHaGroups
-      parameters:
-        - $ref: '#/components/parameters/SessionId'
+      security:
+        - SessionCookie: []
       responses:
         '200':
-          description: HA Groups list
+          description: HA groups list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hagroups:
+                    type: object
+                    additionalProperties:
+                      $ref: '#/components/schemas/HaGroup'
+
+  /api/hagroups/{id}:
+    get:
+      tags: [HA Groups]
+      summary: Get a single HA group
+      operationId: getHaGroup
+      security:
+        - SessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: HA group detail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hagroup:
+                    $ref: '#/components/schemas/HaGroup'
+    post:
+      tags: [HA Groups]
+      summary: Create HA group
+      description: |
+        Uses HTTP POST (Exchange requires POST to create a node group).
+        Only `description` and optional `network` are accepted; `name` is taken from the path.
+      operationId: createHaGroup
+      security:
+        - SessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                description:
+                  type: string
+                network:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+      responses:
+        '201':
+          description: Created successfully
+    delete:
+      tags: [HA Groups]
+      summary: Delete HA group
+      operationId: deleteHaGroup
+      security:
+        - SessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Deleted successfully
+
+  /api/hagroups/{id}/nodes/{nodeId}:
+    put:
+      tags: [HA Groups]
+      summary: Add node to HA group
+      operationId: addHaGroupNode
+      security:
+        - SessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: nodeId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Node added
+    delete:
+      tags: [HA Groups]
+      summary: Remove node from HA group
+      operationId: removeHaGroupNode
+      security:
+        - SessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: nodeId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Node removed
 
 components:
-  parameters:
-    SessionId:
-      name: x-session-id
+  securitySchemes:
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: nereid_sid
+      description: HttpOnly; Secure; SameSite=Strict session cookie issued on login
+    AgbotAuth:
+      type: apiKey
       in: header
-      required: true
-      schema:
-        type: string
-      description: Session ID returned by login
-      example: 58e8f92e82216c49abe89a8e661d66c2
+      name: x-agbot-auth
+      description: Agbot Base64 auth string for cross-org resource access
+    RootAuth:
+      type: apiKey
+      in: header
+      name: x-root-auth
+      description: Root user Base64 auth for root-privileged node PATCH
 
+  parameters:
     OrgQuery:
       name: org
       in: query
@@ -1057,7 +1350,6 @@ components:
         type: string
       description: Target org ID (for cross-org queries)
       example: myorg
-
     AgbotAuth:
       name: x-agbot-auth
       in: header
@@ -1066,7 +1358,6 @@ components:
         type: string
       description: Agbot Base64 auth string (for cross-org resource access)
       example: SUJNL2FnYm90OjFEOGJXcmtP
-
     RootAuth:
       name: x-root-auth
       in: header
@@ -1243,3 +1534,22 @@ components:
           type: object
         dataVerify:
           type: string
+
+    HaGroup:
+      type: object
+      description: High Availability node group (Open Horizon node group)
+      properties:
+        name:
+          type: string
+          example: ha-group
+        description:
+          type: string
+        members:
+          type: array
+          items:
+            type: string
+        admin:
+          type: boolean
+        lastUpdated:
+          type: string
+          format: date-time

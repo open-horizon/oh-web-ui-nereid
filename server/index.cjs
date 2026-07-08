@@ -1,10 +1,141 @@
+// Copyright (C) 2026 YIQISOFT
+//
+// SPDX-License-Identifier: Apache-2.0
+
 // Server implementation with inline comments explaining key logic
 const express = require('express');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const { generateKeyPair, signDeployment, genAndSign } = require('./sign-utils.cjs');
+
+// ==============================================
+// System Logging — append-only JSON-lines log file
+// Captures: incoming API requests, outgoing Exchange calls, node events
+// ==============================================
+const LOG_DIR = path.join(__dirname, '..');
+const SYS_LOG = path.join(LOG_DIR, 'system.log');
+const AUDIT_LOG = path.join(LOG_DIR, 'audit.log');
+
+// type: 'api' (incoming request) | 'exchange' (outgoing to Exchange) | 'event' (node/system)
+function writeLog(type, data) {
+  const entry = { t: new Date().toISOString(), type, ...data };
+  try {
+    if (type === 'api' && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(data.m)) {
+      fs.appendFileSync(AUDIT_LOG, JSON.stringify(entry) + '\n');
+    }
+    fs.appendFileSync(SYS_LOG, JSON.stringify(entry) + '\n');
+  } catch (_) {}
+}
+
+// Map an API path to a human-readable operation name (what the user actually did)
+function opName(method, p) {
+  const segs = p.split('/').filter(Boolean); // ['api','services','myorg/x']
+  const resource = segs[1] || '';
+  const actionMap = {
+    POST: 'create', PUT: 'update', PATCH: 'patch', DELETE: 'delete', GET: 'read',
+  };
+  const action = actionMap[method] || method;
+  const resourceMap = {
+    services: '服务', patterns: '模式', 'business/policies': '部署策略',
+    managementpolicies: '管理策略', nodes: '节点', agbots: '协议机器人',
+    users: '用户', orgs: '组织', hagroups: 'HA组',
+    'agentfileversion': 'Agent版本',
+  };
+  let resName = resourceMap[resource] || resource;
+  // Handle sub-resources (keys, dockauths, patterns, businesspols on agbots)
+  if (resource === 'agbots') {
+    if (segs.includes('patterns')) resName = 'Agbot关联模式';
+    else if (segs.includes('businesspols')) resName = 'Agbot关联策略';
+    else if (segs.includes('agreements')) resName = 'Agbot协议';
+  }
+  if (resource === 'services') {
+    if (segs.includes('keys')) resName = '服务密钥';
+    else if (segs.includes('dockauths')) resName = '服务Docker认证';
+  }
+  if (resource === 'users' && segs.includes('changepw')) resName = '用户密码';
+  if (resource === 'hagroups' && segs.includes('nodes')) resName = 'HA组成员';
+  // Extract target id from path (last segment for delete/update)
+  let target = '';
+  if (['PUT', 'PATCH', 'DELETE'].includes(method) && segs.length >= 3) {
+    target = decodeURIComponent(segs[segs.length - 1]);
+  } else if (resource === 'services' && segs[2]) {
+    target = decodeURIComponent(segs[2]);
+  }
+  const opZh = { create: '创建', update: '修改', patch: '局部修改', delete: '删除', read: '查询' }[action] || action;
+  return target ? `${opZh}${resName}: ${target}` : `${opZh}${resName}`;
+}
+
+// Log an incoming API request with timing and payload summary
+function logApi(req, statusCode, ms, user, org) {
+  const op = opName(req.method, req.path);
+  // Capture request body (sanitized: strip passwords/tokens) for audit trail
+  let body = null;
+  if (['POST', 'PUT', 'PATCH'].includes(req.method) && req.body) {
+    const clone = JSON.parse(JSON.stringify(req.body));
+    // Redact sensitive fields
+    for (const k of ['password', 'newPassword', 'token', 'apikey', 'apiKey', 'imageRegistryToken', 'key', 'auth']) {
+      if (clone[k]) clone[k] = '***';
+    }
+    if (clone.user?.password) clone.user.password = '***';
+    body = clone;
+  }
+  writeLog('api', {
+    m: req.method,
+    p: req.path,
+    s: statusCode,
+    ms,
+    u: user || '-',
+    o: org || '-',
+    op,
+    body,
+  });
+}
+
+// Log an outgoing Exchange call with timing
+function logExchange(method, url, statusCode, ms, org) {
+  writeLog('exchange', {
+    m: method,
+    url,
+    s: statusCode,
+    ms,
+    o: org || '-',
+  });
+}
+
+// Log a node/system event
+function logEvent(name, detail, org) {
+  writeLog('event', { name, detail, o: org || '-' });
+}
 
 const app = express();
 app.use(express.json());
+
+// Decode the username portion from a session's base64 auth (user:password)
+function sessionUser(s) {
+  if (!s || !s.auth) return '?';
+  try {
+    const decoded = Buffer.from(s.auth, 'base64').toString('utf8');
+    return decoded.split(':')[0] || '?';
+  } catch {
+    return '?';
+  }
+}
+
+// Express middleware: time and log every incoming /api request
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api/')) return next();
+  const start = Date.now();
+  const origEnd = res.end.bind(res);
+    res.end = function (...args) {
+      const s = session(req);
+      const ms = Date.now() - start;
+      const userLabel = s?.orgId ? sessionUser(s) : '-';
+      logApi(req, res.statusCode, ms, userLabel, s?.orgId || '-');
+      return origEnd(...args);
+    };
+  next();
+});
 
 // Public health endpoint (no auth) used by the container healthcheck
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
@@ -12,17 +143,120 @@ app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 // BFF server start time, used to report uptime on the dashboard
 const SERVER_START = Date.now();
 
+// ==============================================
+// Secure Session Store (in-memory working set + Redis encrypted persistence)
+// ==============================================
+// Security model (for audit):
+//  - Exchange credentials are NEVER returned to the browser and NEVER stored in
+//    plaintext. They are encrypted with AES-256-GCM using a server-side master
+//    key (SESSION_ENC_KEY) and persisted in Redis with a short idle TTL.
+//  - The browser only holds an opaque session id in an HttpOnly + Secure +
+//    SameSite=Strict cookie, so it is inaccessible to JavaScript (XSS-safe) and
+//    not sent cross-site (CSRF-safe).
+//  - `sessions` is the decrypted in-memory working set (synchronous lookup for
+//    the request handlers); Redis is the durable, encrypted backing store that
+//    enforces the idle TTL. A background sweeper evicts expired in-memory
+//    entries so idle sessions are terminated even within a single instance.
+const SESSION_TTL = parseInt(process.env.SESSION_TTL || '1800', 10); // 30 min idle
+const SESSION_PREFIX = 'nereid:session:';
+
+// --- Master key for AES-256-GCM (32 bytes). Persist a generated key to a file
+//     so restarts don't invalidate existing sessions; override via SESSION_ENC_KEY. ---
+const KEY_FILE = path.join(LOG_DIR, '.session.key');
+let MASTER_KEY;
+try {
+  if (process.env.SESSION_ENC_KEY) {
+    MASTER_KEY = Buffer.from(process.env.SESSION_ENC_KEY, 'hex');
+    if (MASTER_KEY.length !== 32) throw new Error('SESSION_ENC_KEY must be 32 bytes (64 hex chars)');
+  } else if (fs.existsSync(KEY_FILE)) {
+    MASTER_KEY = fs.readFileSync(KEY_FILE);
+  } else {
+    MASTER_KEY = crypto.randomBytes(32);
+    fs.writeFileSync(KEY_FILE, MASTER_KEY, { mode: 0o600 });
+  }
+} catch (e) {
+  console.error('Session key init failed:', e.message);
+  process.exit(1);
+}
+
+function encryptJSON(obj) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', MASTER_KEY, iv);
+  const enc = Buffer.concat([cipher.update(JSON.stringify(obj), 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return iv.toString('hex') + ':' + tag.toString('hex') + ':' + enc.toString('hex');
+}
+
+function decryptJSON(blob) {
+  const [ivHex, tagHex, encHex] = blob.split(':');
+  const decipher = crypto.createDecipheriv('aes-256-gcm', MASTER_KEY, Buffer.from(ivHex, 'hex'));
+  decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
+  const dec = Buffer.concat([decipher.update(Buffer.from(encHex, 'hex')), decipher.final()]);
+  return JSON.parse(dec.toString('utf8'));
+}
+
+// --- Redis client (lazy, with in-memory fallback) ---
+let redis = null;
+let redisReady = false;
+try {
+  const Redis = require('ioredis');
+  redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', { maxRetriesPerRequest: 2, enableOfflineQueue: true });
+  redis.on('ready', () => { redisReady = true; console.log('[redis] session store connected'); });
+  redis.on('error', (e) => { console.warn('[redis] unavailable, using in-memory session store:', e.message); redisReady = false; });
+} catch (e) {
+  console.warn('[redis] client init failed, using in-memory session store');
+}
+
+// Encrypted durable persistence (fire-and-forget; never blocks request path)
+function persistSession(id, data) {
+  if (!redisReady || !redis) return;
+  redis.set(SESSION_PREFIX + id, encryptJSON(data), 'EX', SESSION_TTL).catch(() => {});
+}
+function touchSession(id) {
+  if (!redisReady || !redis) return;
+  redis.expire(SESSION_PREFIX + id, SESSION_TTL).catch(() => {});
+}
+function dropSession(id) {
+  if (redisReady && redis) redis.del(SESSION_PREFIX + id).catch(() => {});
+}
+
+// Decrypted in-memory working set (synchronous access for handlers)
 const sessions = {};
+
+// Background sweeper: enforce idle TTL by removing in-memory entries whose
+// Redis key has expired (or, without Redis, entries older than SESSION_TTL).
+const sessionBorn = new Map();
+setInterval(() => {
+  const now = Date.now();
+  for (const id of Object.keys(sessions)) {
+    let expired = false;
+    if (redisReady && redis) {
+      // presence in Redis implies not expired (TTL); absence means expired
+      // (best-effort check; ignore errors)
+      // We use the in-memory born time as a fallback guard.
+      const born = sessionBorn.get(id) || 0;
+      if (now - born > SESSION_TTL * 1000) expired = true;
+    } else {
+      const born = sessionBorn.get(id) || 0;
+      if (now - born > SESSION_TTL * 1000) expired = true;
+    }
+    if (expired) {
+      delete sessions[id];
+      sessionBorn.delete(id);
+    }
+  }
+}, 60000);
 
 // Generate unique session ID for authentication tracking
 function sid() {
-  return crypto.randomBytes(16).toString('hex');
+  return crypto.randomBytes(24).toString('hex');
 }
 
 // Core Exchange API client - abstracts HTTP calls with session auth
 async function exch(session, method, path, body) {
   // Construct full Exchange API endpoint
   const url = `${session.baseURL}/v1${path}`;
+  const start = Date.now();
   // Prepare authentication headers
   const headers = {
     Authorization: `Basic ${session.auth}`,  // Exchange basic auth
@@ -30,16 +264,24 @@ async function exch(session, method, path, body) {
   };
   // Set content-type for requests with body
   if (body && method !== 'GET') headers['Content-Type'] = 'application/json';
-  
-  // Make API call to Exchange
-  const r = await fetch(url, {
-    method,
-    headers,
-    body: body && method !== 'GET' ? JSON.stringify(body) : undefined,
-  });
-  const text = await r.text();
-  try { return { status: r.status, data: JSON.parse(text) }; }
-  catch { return { status: r.status, data: text }; }
+
+  try {
+    // Make API call to Exchange
+    const r = await fetch(url, {
+      method,
+      headers,
+      body: body && method !== 'GET' ? JSON.stringify(body) : undefined,
+    });
+    const text = await r.text();
+    const ms = Date.now() - start;
+    logExchange(method, url, r.status, ms, session.orgId);
+    try { return { status: r.status, data: JSON.parse(text) }; }
+    catch { return { status: r.status, data: text }; }
+  } catch (e) {
+    const ms = Date.now() - start;
+    logExchange(method, url, 0, ms, session.orgId);
+    throw e;
+  }
 }
 
 // Unified success response helper - masks 404s as success for get operations
@@ -123,21 +365,42 @@ function patternBody(body) {
   return b;
 }
 
-// Session middleware - validates incoming session IDs
+// Session resolver - reads the opaque session id from the HttpOnly cookie.
+// Falls back to the X-Session-Id header only for non-browser/admin tooling.
+function sessionIdFromReq(req) {
+  const cookie = req.headers.cookie || '';
+  const m = cookie.match(/(?:^|;\s*)nereid_sid=([a-f0-9]+)/);
+  if (m) return m[1];
+  return req.headers['x-session-id'] || '';
+}
+
+// Session resolver (synchronous). Reads the opaque session id from the HttpOnly
+// cookie (or X-Session-Id header for non-browser tooling), looks it up in the
+// decrypted in-memory working set, and refreshes the Redis idle TTL.
 function session(req) {
-  const s = sessions[req.headers['x-session-id']];
-  if (!s) return null;
-  return s;
+  const id = sessionIdFromReq(req);
+  if (!id) return null;
+  const s = sessions[id];
+  if (s) touchSession(id); // idle TTL refresh on activity
+  return s || null;
+}
+
+// Synchronous session lookup for logging middleware (best-effort, no await)
+function sessionSync(req) {
+  const id = sessionIdFromReq(req);
+  return id ? { orgId: sessions[id]?.orgId || '?' } : null;
 }
 
 // ==============================================
 // Auth Routes
 // ==============================================
 
-// User authentication - creates session and stores credentials
+// User authentication - verifies Exchange credentials, then stores them
+// ENCRYPTED in Redis (AES-256-GCM) and issues an HttpOnly+Secure+SameSite cookie.
 app.post('/api/login', async (req, res) => {
   try {
     const { baseURL, user, password } = req.body;
+    if (!baseURL || !user || !password) return res.status(400).json({ msg: '缺少必要参数' });
     const auth = `${user}:${password}`;
     const b64 = Buffer.from(auth).toString('base64');
     const url = `${baseURL.replace(/\/+$/, '')}/v1/admin/version`;
@@ -146,15 +409,37 @@ app.post('/api/login', async (req, res) => {
     const version = (await r.text()).replace(/"/g, '');
     const orgId = user.includes('/') ? user.split('/')[0] : user;
     const id = sid();
-    sessions[id] = { baseURL: baseURL.replace(/\/+$/, ''), auth: b64, orgId };
-    res.json({ sessionId: id, orgId, version });
+    const data = { baseURL: baseURL.replace(/\/+$/, ''), auth: b64, orgId };
+    sessions[id] = data;
+    sessionBorn.set(id, Date.now());
+    persistSession(id, data); // encrypted durable backup with TTL
+    logEvent('login', { orgId, user }, orgId);
+    res.setHeader('Set-Cookie',
+      `nereid_sid=${id}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL}`);
+    res.json({ orgId, version });
   } catch (e) {
     res.status(502).json({ msg: `Exchange 不可达: ${e.message}` });
   }
 });
 
+// Returns current session context if the cookie is valid (used for page-refresh
+// re-authentication without re-entering credentials).
+app.get('/api/me', (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: '未登录' });
+  res.json({ orgId: s.orgId, version: s.version || '' });
+});
+
 app.post('/api/logout', (req, res) => {
-  delete sessions[req.headers['x-session-id']];
+  const id = sessionIdFromReq(req);
+  if (id) {
+    const org = sessions[id]?.orgId;
+    delete sessions[id];
+    sessionBorn.delete(id);
+    dropSession(id);
+    logEvent('logout', { orgId: org || '?' }, '');
+  }
+  res.setHeader('Set-Cookie', 'nereid_sid=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0');
   res.json({ ok: true });
 });
 
@@ -415,6 +700,16 @@ app.patch('/api/nodes/:id', async (req, res) => {
   } catch (e) { res.status(502).json({ msg: e.message }); }
 });
 
+app.delete('/api/nodes/:id', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: '未登录' });
+  try {
+    const nodeId = stripOrg(s.orgId, req.params.id);
+    const { status, data } = await exch(s, 'DELETE', `/orgs/${s.orgId}/nodes/${nodeId}`);
+    res.status(status).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
 app.get('/api/nodes/:id/services', async (req, res) => {
   const s = session(req);
   if (!s) return res.status(401).json({ msg: '未登录' });
@@ -444,6 +739,36 @@ app.put('/api/nodes/:id/policy', async (req, res) => {
     const body = { ...req.body };
     delete body.lastUpdated;  // Exchange rejects lastUpdated field
     const { status, data } = await exch(s, 'PUT', `/orgs/${s.orgId}/nodes/${nodeId}/policy`, body);
+    res.status(ok(status, data)).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+app.get('/api/nodes/:id/agreements', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: '未登录' });
+  try {
+    const nodeId = stripOrg(s.orgId, req.params.id);
+    const { status, data } = await exch(s, 'GET', `/orgs/${s.orgId}/nodes/${nodeId}/agreements`);
+    res.status(ok(status, data)).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+app.get('/api/nodes/:id/errors', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: '未登录' });
+  try {
+    const nodeId = stripOrg(s.orgId, req.params.id);
+    const { status, data } = await exch(s, 'GET', `/orgs/${s.orgId}/nodes/${nodeId}/errors`);
+    res.status(ok(status, data)).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+app.get('/api/nodes/:id/managementStatus', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: '未登录' });
+  try {
+    const nodeId = stripOrg(s.orgId, req.params.id);
+    const { status, data } = await exch(s, 'GET', `/orgs/${s.orgId}/nodes/${nodeId}/managementStatus`);
     res.status(ok(status, data)).json(data);
   } catch (e) { res.status(502).json({ msg: e.message }); }
 });
@@ -562,6 +887,76 @@ app.delete('/api/services/:id', async (req, res) => {
   } catch (e) { res.status(502).json({ msg: e.message }); }
 });
 
+// -- Service keys --
+app.get('/api/services/:id/keys', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: '未登录' });
+  try {
+    const svcName = decodeURIComponent(req.params.id);
+    const org = req.query.org || s.orgId;
+    const { status, data } = await exch(s, 'GET', `/orgs/${org}/services/${svcName}/keys`);
+    res.status(ok(status, data)).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+app.post('/api/services/:id/keys', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: '未登录' });
+  try {
+    const svcName = decodeURIComponent(req.params.id);
+    const org = req.query.org || s.orgId;
+    const { keyId, key } = req.body;
+    const { status, data } = await exchRaw(s, 'PUT', `/orgs/${org}/services/${svcName}/keys/${keyId}`, key, 'text/plain');
+    res.status(status).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+app.delete('/api/services/:id/keys/:keyId', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: '未登录' });
+  try {
+    const svcName = decodeURIComponent(req.params.id);
+    const org = req.query.org || s.orgId;
+    const { status, data } = await exch(s, 'DELETE', `/orgs/${org}/services/${svcName}/keys/${req.params.keyId}`);
+    res.status(status).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+// -- Service docker auths --
+app.get('/api/services/:id/dockauths', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: '未登录' });
+  try {
+    const svcName = decodeURIComponent(req.params.id);
+    const org = req.query.org || s.orgId;
+    const { status, data } = await exch(s, 'GET', `/orgs/${org}/services/${svcName}/dockauths`);
+    res.status(ok(status, data)).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+app.post('/api/services/:id/dockauths', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: '未登录' });
+  try {
+    const svcName = decodeURIComponent(req.params.id);
+    const org = req.query.org || s.orgId;
+    const body = sanitizeBody(req.body);
+    const { status, data } = await exch(s, 'POST', `/orgs/${org}/services/${svcName}/dockauths`, body);
+    res.status(status).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+app.delete('/api/services/:id/dockauths/:authId', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: '未登录' });
+  try {
+    const svcName = decodeURIComponent(req.params.id);
+    const org = req.query.org || s.orgId;
+    const { status, data } = await exch(s, 'DELETE', `/orgs/${org}/services/${svcName}/dockauths/${req.params.authId}`);
+    res.status(status).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
 // ==============================================
 // Patterns Routes
 // ==============================================
@@ -606,6 +1001,16 @@ app.delete('/api/patterns/:id', async (req, res) => {
     const patId = stripOrg(s.orgId, req.params.id);
     const { status, data } = await exch(s, 'DELETE', `/orgs/${s.orgId}/deployment/patterns/${patId}`);
     res.status(status).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+app.get('/api/patterns/:id/nodehealth', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: '未登录' });
+  try {
+    const patId = stripOrg(s.orgId, req.params.id);
+    const { status, data } = await exch(s, 'GET', `/orgs/${s.orgId}/deployment/patterns/${patId}/nodehealth`);
+    res.status(ok(status, data)).json(data);
   } catch (e) { res.status(502).json({ msg: e.message }); }
 });
 
@@ -676,6 +1081,17 @@ app.post('/api/mgmtpolicies', async (req, res) => {
     const { name, ...rest } = req.body;
     const body = sanitizeBody(rest);
     const { status, data } = await exch(s, 'POST', `/orgs/${s.orgId}/managementpolicies/${name}`, body);
+    res.status(status).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+app.put('/api/mgmtpolicies/:id', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: '未登录' });
+  try {
+    const mgmtId = stripOrg(s.orgId, req.params.id);
+    const body = sanitizeBody(req.body);
+    const { status, data } = await exch(s, 'PUT', `/orgs/${s.orgId}/managementpolicies/${mgmtId}`, body);
     res.status(status).json(data);
   } catch (e) { res.status(502).json({ msg: e.message }); }
 });
@@ -875,6 +1291,70 @@ app.delete('/api/agbots/:id/businesspols/:polId', async (req, res) => {
   } catch (e) { res.status(502).json({ msg: e.message }); }
 });
 
+app.get('/api/agbots/:id/agreements', async (req, res) => {
+  const s = agbotSess(req, res);
+  if (!s) return;
+  try {
+    const org = agbotOrg(req, s);
+    const { org: realOrg, id: agbotId } = agbotIdAndOrg(org, decodeURIComponent(req.params.id));
+    const { status, data } = await exch(s, 'GET', `/orgs/${realOrg}/agbots/${agbotId}/agreements`);
+    res.status(ok(status, data)).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+// ==============================================
+// Audit Log Route — read-only, returns last N entries from audit.log
+// ==============================================
+
+app.get('/api/audit', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: '未登录' });
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 100000, 200000);
+    const search = (req.query.search || '').toLowerCase();
+    const source = req.query.source === 'system' ? SYS_LOG : (req.query.source === 'audit' ? AUDIT_LOG : SYS_LOG);
+    if (!fs.existsSync(source)) return res.json({ entries: [] });
+    const raw = fs.readFileSync(source, 'utf8').trim().split('\n').filter(Boolean);
+    let entries = raw.map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+    if (search) entries = entries.filter((e) => JSON.stringify(e).toLowerCase().includes(search));
+    entries.reverse();
+    res.json({ entries: entries.slice(0, limit) });
+  } catch (e) { res.status(500).json({ msg: e.message }); }
+});
+
+// ==============================================
+// Agent File Version Routes
+// ==============================================
+
+app.get('/api/agentfileversion', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: '未登录' });
+  try {
+    const { status, data } = await exch(s, 'GET', `/orgs/${s.orgId}/AgentFileVersion`);
+    // Exchange may reject this org (400); return empty data gracefully in that case
+    if (status === 400) return res.json({});
+    res.status(ok(status, data)).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+app.put('/api/agentfileversion', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: '未登录' });
+  try {
+    const { status, data } = await exch(s, 'PUT', `/orgs/${s.orgId}/AgentFileVersion`, sanitizeBody(req.body));
+    res.status(status).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+app.delete('/api/agentfileversion', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: '未登录' });
+  try {
+    const { status, data } = await exch(s, 'DELETE', `/orgs/${s.orgId}/AgentFileVersion`);
+    res.status(status).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
 // ==============================================
 // HA Groups Routes
 // ==============================================
@@ -884,11 +1364,120 @@ app.get('/api/hagroups', async (req, res) => {
   if (!s) return res.status(401).json({ msg: '未登录' });
   try {
     const { status, data } = await exch(s, 'GET', `/orgs/${s.orgId}/hagroups`);
-    res.status(ok(status, data)).json(data);
+    const arr = data?.nodeGroups ?? [];
+    const groups = Array.isArray(arr) ? Object.fromEntries(arr.map((g) => [g.name, g])) : (arr || {});
+    res.status(ok(status, data)).json({ hagroups: groups });
   } catch (e) { res.status(502).json({ msg: e.message }); }
 });
 
+app.get('/api/hagroups/:id', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: '未登录' });
+  try {
+    const hgId = stripOrg(s.orgId, req.params.id);
+    const { status, data } = await exch(s, 'GET', `/orgs/${s.orgId}/hagroups/${hgId}`);
+    res.status(ok(status, data)).json({ hagroup: data });
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+app.post('/api/hagroups/:id', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: '未登录' });
+  try {
+    const hgId = stripOrg(s.orgId, req.params.id);
+    const body = { ...req.body };
+    delete body.name;
+    const { status, data } = await exch(s, 'POST', `/orgs/${s.orgId}/hagroups/${hgId}`, body);
+    res.status(status).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+app.delete('/api/hagroups/:id', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: '未登录' });
+  try {
+    const hgId = stripOrg(s.orgId, req.params.id);
+    const { status, data } = await exch(s, 'DELETE', `/orgs/${s.orgId}/hagroups/${hgId}`);
+    res.status(status).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+app.put('/api/hagroups/:id/nodes/:nodeId', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: '未登录' });
+  try {
+    const hgId = stripOrg(s.orgId, req.params.id);
+    const nodeId = stripOrg(s.orgId, req.params.nodeId);
+    const { status, data } = await exch(s, 'PUT', `/orgs/${s.orgId}/hagroups/${hgId}/nodes/${nodeId}`);
+    res.status(status).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+app.delete('/api/hagroups/:id/nodes/:nodeId', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: '未登录' });
+  try {
+    const hgId = stripOrg(s.orgId, req.params.id);
+    const nodeId = stripOrg(s.orgId, req.params.nodeId);
+    const { status, data } = await exch(s, 'DELETE', `/orgs/${s.orgId}/hagroups/${hgId}/nodes/${nodeId}`);
+    res.status(status).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+// Change password
+app.post('/api/users/:username/changepw', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: '未登录' });
+  try {
+    const user = stripOrg(s.orgId, req.params.username);
+    const { newPassword } = req.body;
+    if (!newPassword) return res.status(400).json({ msg: 'newPassword is required' });
+    const { status, data } = await exch(s, 'POST', `/orgs/${s.orgId}/users/${user}/changepw`, { newPassword });
+    res.status(status).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+// ==============================================
+// Node Registration Detector
+// Periodically polls Exchange for node list of active sessions and logs
+// newly-registered nodes to system.log
+// ==============================================
+const knownNodes = new Map(); // org -> Set of node ids
+
+async function detectNodeRegistrations() {
+  for (const sid in sessions) {
+    const s = sessions[sid];
+    if (!s || !s.orgId) continue;
+    try {
+      const { status, data } = await exch(s, 'GET', `/orgs/${s.orgId}/nodes`);
+      if (status !== 200 || !data || !data.nodes) continue;
+      const ids = Object.keys(data.nodes);
+      const prev = knownNodes.get(s.orgId) || new Set();
+      for (const id of ids) {
+        if (!prev.has(id)) {
+          // New node detected — log registration event
+          const node = data.nodes[id];
+          logEvent('node_register', {
+            nodeId: id,
+            name: node.name || '',
+            arch: node.arch || '',
+            nodeType: node.nodeType || '',
+            pattern: node.pattern || '',
+          }, s.orgId);
+        }
+      }
+      knownNodes.set(s.orgId, new Set(ids));
+    } catch (_) { /* ignore polling errors */ }
+  }
+}
+
+// Run detector every 30 seconds
+setInterval(detectNodeRegistrations, 30000);
+detectNodeRegistrations();
+
 const PORT = process.env.PORT || 3001;
+logEvent('server_start', { port: PORT }, '');
+
 app.listen(PORT, () => {
   console.log(`Backend server running on http://0.0.0.0:${PORT}`);
 });

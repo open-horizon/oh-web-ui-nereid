@@ -1,9 +1,14 @@
+// Copyright (C) 2026 YIQISOFT
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { useEffect, useState } from 'react';
 import { usePolling } from '../hooks/usePolling';
 import { Row, Col, Card, Typography, message, Modal, Tabs, Spin } from 'antd';
 import { EyeOutlined } from '@ant-design/icons';
 import { CatalogAPI } from '../api/catalog';
 import { useT } from '../i18n/context';
+import HelpButton from '../components/HelpButton';
 
 const { Text } = Typography;
 
@@ -88,6 +93,7 @@ export default function Catalog() {
     <div>
       <div style={{ marginBottom: 24 }}>
         <Text strong style={{ fontSize: 20 }}>{t('Catalog (Catalog)')}</Text>
+        <HelpButton module="catalog" />
         <br /><Text type="secondary">{t('Browse available services and patterns from Hub and remote orgs')}</Text>
       </div>
       <Tabs items={tabItems} />

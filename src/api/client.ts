@@ -1,7 +1,13 @@
+// Copyright (C) 2026 YIQISOFT
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { getConfig } from './config';
 
-// Core HTTP request handler for all API calls
-// Automatically attaches session, agbot-auth, and root-auth headers from config
+// Core HTTP request handler for all API calls.
+// The session id is carried in an HttpOnly+Secure+SameSite cookie that the
+// browser sends automatically, so no session header is attached here.
+// Only the optional per-request privileged auth headers are added.
 async function request<T = any>(
   method: string,
   path: string,
@@ -10,7 +16,6 @@ async function request<T = any>(
   const url = `/api${path}`;
   const headers: Record<string, string> = { Accept: 'application/json' };
   const cfg = getConfig();
-  if (cfg.sessionId) headers['X-Session-Id'] = cfg.sessionId;
   if (cfg.agbotAuth) headers['X-Agbot-Auth'] = cfg.agbotAuth;
   if (cfg.rootAuth) headers['X-Root-Auth'] = cfg.rootAuth;
   if (body && !(body instanceof FormData)) {

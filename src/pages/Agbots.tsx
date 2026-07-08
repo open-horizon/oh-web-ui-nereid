@@ -1,6 +1,10 @@
+// Copyright (C) 2026 YIQISOFT
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { useEffect, useState, useCallback } from 'react';
 import { usePolling } from '../hooks/usePolling';
-import { Table, Button, Space, Typography, message, Modal, Drawer, Descriptions, Tag, Form, Input, Select, Tabs, Tooltip } from 'antd';
+import { Table, Button, Space, Typography, message, Modal, Drawer, Descriptions, Tag, Form, Input, Select, Tabs, Tooltip, List } from 'antd';
 import { SearchOutlined, ReloadOutlined, DeleteOutlined, EyeOutlined, KeyOutlined, LinkOutlined } from '@ant-design/icons';
 import { AgbotAPI, ExchangeAgbot } from '../api/agbots';
 import { PatternAPI, ExchangePattern } from '../api/patterns';
@@ -9,6 +13,7 @@ import { OrgAPI } from '../api/organizations';
 import { getConfig, setAgbotAuth } from '../api/config';
 import { useT } from '../i18n/context';
 import { useScreenSize } from '../hooks/useIsMobile';
+import HelpButton from '../components/HelpButton';
 
 const { Text } = Typography;
 
@@ -36,6 +41,8 @@ export default function Agbots() {
   const [detailPatterns, setDetailPatterns] = useState<{key: string; patternOrgid: string; pattern: string}[]>([]);
   const [detailPols, setDetailPols] = useState<{key: string; businessPolOrgid: string; businessPol: string}[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [agbotAgreements, setAgbotAgreements] = useState<any[]>([]);
+  const [agbotAgreementsLoading, setAgbotAgreementsLoading] = useState(false);
   const [search, setSearch] = useState('');
   const screenSize = useScreenSize();
 
@@ -204,6 +211,7 @@ export default function Agbots() {
     setDetailLoading(true);
     setDetailPatterns([]);
     setDetailPols([]);
+    setAgbotAgreements([]);
     const org = agbot.id.startsWith('IBM/') ? 'IBM' : sessionOrg;
     try {
       const patRes = await AgbotAPI.listPatterns(agbot.id, org);
@@ -214,6 +222,12 @@ export default function Agbots() {
       setDetailPols(Object.entries(polRes?.businessPols ?? {}).map(([k, v]: [string, any]) => ({ key: k, ...v })));
     } catch (_) {}
     setDetailLoading(false);
+    setAgbotAgreementsLoading(true);
+    try {
+      const agrRes = await AgbotAPI.listAgreements(agbot.id);
+      setAgbotAgreements(Object.values(agrRes?.agreements ?? {}));
+    } catch (_) {}
+    setAgbotAgreementsLoading(false);
   };
 
   const handleDelete = (agbotId: string) => {
@@ -311,6 +325,7 @@ export default function Agbots() {
       <div style={{ marginBottom: 16 }}>
         <div>
           <Text strong style={{ fontSize: 20 }}>{t('Agbot (Agreement Bot)')}</Text>
+          <HelpButton module="agbots" />
           <br /><Text type="secondary">{t('Manage pattern and policy associations for agbots')}</Text>
         </div>
         <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -344,7 +359,7 @@ export default function Agbots() {
         columns={columns}
         dataSource={tableData}
         loading={loading}
-        pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `${total} ${t('Agreement Bots')}` }}
+        pagination={{ pageSize: 10, showSizeChanger: true, showQuickJumper: true, showLessItems: false, showTotal: (total) => `${total} ${t('Agreement Bots')}` }}
         size="middle"
         scroll={{ x: 'max-content' }}
         rowKey="id"
@@ -410,6 +425,33 @@ export default function Agbots() {
                     ))
                   )}
                 </div>
+              ),
+            },
+            {
+              key: 'agreements',
+              label: t('Agreements'),
+              children: (
+                <List
+                  loading={agbotAgreementsLoading}
+                  dataSource={agbotAgreements}
+                  locale={{ emptyText: t('No agreements') }}
+                  renderItem={(ag: any, i: number) => (
+                    <List.Item>
+                      <List.Item.Meta
+                        title={<Text code>{ag.current_agreement_id || ag.id || `#${i + 1}`}</Text>}
+                        description={
+                          <div>
+                            <div>{t('State: ')}{ag.state || ag.agreement_state || '-'}</div>
+                            {ag.service_specifications?.map((s: any, j: number) => (
+                              <Tag key={j} style={{ marginTop: 4 }}>{s.service_url}@{s.service_version_range}</Tag>
+                            ))}
+                            <div>{t('Node: ')}{ag.node_id || ag.nodeOrgid ? `${ag.nodeOrgid}/${ag.node_id}` : '-'}</div>
+                          </div>
+                        }
+                      />
+                    </List.Item>
+                  )}
+                />
               ),
             },
             {

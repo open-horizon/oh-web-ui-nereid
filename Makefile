@@ -1,4 +1,4 @@
-.PHONY: help install build dev-backend dev-frontend docker-build docker-up docker-down docker-logs clean lint test
+.PHONY: help install build dev-backend dev-frontend docker-build docker-up docker-down docker-logs clean lint test images-export images-load
 
 # Default target
 help:
@@ -20,6 +20,10 @@ help:
 	@echo "  make clean         - Remove dist/, node_modules/, and build artifacts"
 	@echo "  make lint          - Run TypeScript type checking"
 	@echo "  make test          - Run tests (if configured)"
+	@echo ""
+	@echo "Offline / Air-Gapped:"
+	@echo "  make images-export - Build and export images to nereid-images.tar"
+	@echo "  make images-load   - Load images from nereid-images.tar"
 
 # ==========================================
 # Local Development
@@ -62,3 +66,12 @@ lint:
 
 test:
 	@echo "No test script configured. Add 'test' script to package.json to enable."
+
+# ==========================================
+# Offline / Air-Gapped image transfer
+# ==========================================
+images-export:
+	./scripts/export-images.sh latest nereid-images.tar
+
+images-load:
+	./scripts/load-images.sh nereid-images.tar

@@ -1,5 +1,12 @@
+// Copyright (C) 2026 YIQISOFT
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
 import { ConfigProvider, theme } from 'antd';
+import zhCN from 'antd/locale/zh_CN';
+import enUS from 'antd/locale/en_US';
 import AppLayout from './components/AppLayout';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -13,8 +20,11 @@ import MgmtPolicies from './pages/MgmtPolicies';
 import Agbots from './pages/Agbots';
 import Catalog from './pages/Catalog';
 import HaGroups from './pages/HaGroups';
-import { isAuthenticated } from './api/config';
-import { LanguageProvider } from './i18n/context';
+import AgentFileVersion from './pages/AgentFileVersion';
+import Help from './pages/Help';
+import AuditLog from './pages/AuditLog';
+import { isAuthenticated, saveSession, saveOrgType } from './api/config';
+import { LanguageProvider, useT } from './i18n/context';
 import dict from './i18n/zh';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -24,9 +34,33 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-export default function App() {
+// On app load, restore the session from the HttpOnly cookie (survives refresh)
+// by calling /api/me; if valid, repopulate in-memory UI state.
+function SessionBootstrap({ children }: { children: React.ReactNode }) {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    (async () => {
+      try {
+        const me = await fetch('/api/me');
+        if (me.ok) {
+          const data = await me.json();
+          saveSession(data.orgId, data.version);
+          const typeRes = await fetch('/api/org-type');
+          if (typeRes.ok) saveOrgType((await typeRes.json()).orgType);
+        }
+      } catch {}
+      setReady(true);
+    })();
+  }, []);
+  if (!ready) return null;
+  return <>{children}</>;
+}
+
+function Root() {
+  const { lang } = useT();
   return (
     <ConfigProvider
+      locale={lang === 'zh' ? zhCN : enUS}
       theme={{
         algorithm: theme.defaultAlgorithm,
         token: {
@@ -34,8 +68,7 @@ export default function App() {
         },
       }}
     >
-      <LanguageProvider dict={dict}>
-        <BrowserRouter>
+      <BrowserRouter>
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route
@@ -56,12 +89,24 @@ export default function App() {
               <Route path="/agbots" element={<Agbots />} />
               <Route path="/catalog" element={<Catalog />} />
               <Route path="/hagroups" element={<HaGroups />} />
+              <Route path="/agentfileversion" element={<AgentFileVersion />} />
+              <Route path="/help" element={<Help />} />
+              <Route path="/audit" element={<AuditLog />} />
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Route>
           </Routes>
         </BrowserRouter>
-      </LanguageProvider>
     </ConfigProvider>
+  );
+}
+
+export default function App() {
+  return (
+    <LanguageProvider dict={dict}>
+      <SessionBootstrap>
+        <Root />
+      </SessionBootstrap>
+    </LanguageProvider>
   );
 }

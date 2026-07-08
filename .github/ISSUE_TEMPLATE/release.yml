@@ -1,0 +1,17 @@
+name: Release
+description: Cut a new release of NereidAI
+title: "Release v"
+labels: [release]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version (e.g. 1.1.0)
+    validations:
+      required: true
+  - type: textarea
+    id: changelog
+    attributes:
+      label: Changelog summary
+    validations:
+      required: true

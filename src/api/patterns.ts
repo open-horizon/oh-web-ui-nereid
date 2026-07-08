@@ -1,3 +1,7 @@
+// Copyright (C) 2026 YIQISOFT
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { get, post, put, del } from './client';
 
 export interface ExchangePattern {
@@ -24,5 +28,8 @@ export const PatternAPI = {
   },
   delete(patternId: string) {
     return del(`/patterns/${encodeURIComponent(patternId)}`);
+  },
+  nodehealth(patternId: string) {
+    return get<{ nodeHealth: any[] }>(`/patterns/${encodeURIComponent(patternId)}/nodehealth`);
   },
 };

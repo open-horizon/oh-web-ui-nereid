@@ -1,4 +1,8 @@
-import { get, patch, put } from './client';
+// Copyright (C) 2026 YIQISOFT
+//
+// SPDX-License-Identifier: Apache-2.0
+
+import { get, patch, put, del } from './client';
 
 export interface ExchangeNode {
   name?: string;
@@ -46,5 +50,17 @@ export const NodeAPI = {
   // PUT replaces the entire policy (not a partial update)
   updatePolicy(nodeId: string, policy: NodePolicy) {
     return put(`/nodes/${encodeURIComponent(nodeId)}/policy`, policy);
+  },
+  deleteNode(nodeId: string) {
+    return del(`/nodes/${encodeURIComponent(nodeId)}`);
+  },
+  agreements(nodeId: string) {
+    return get<{ agreements: Record<string, any> }>(`/nodes/${encodeURIComponent(nodeId)}/agreements`);
+  },
+  errors(nodeId: string) {
+    return get<{ errors: any[] }>(`/nodes/${encodeURIComponent(nodeId)}/errors`);
+  },
+  managementStatus(nodeId: string) {
+    return get<{ managementStatus: Record<string, any> }>(`/nodes/${encodeURIComponent(nodeId)}/managementStatus`);
   },
 };

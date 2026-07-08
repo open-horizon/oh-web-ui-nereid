@@ -1,3 +1,7 @@
+// Copyright (C) 2026 YIQISOFT
+//
+// SPDX-License-Identifier: Apache-2.0
+
 const crypto = require('crypto');
 
 // Generate RSA key pair for deployment signing

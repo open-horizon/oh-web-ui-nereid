@@ -1,12 +1,17 @@
+// Copyright (C) 2026 YIQISOFT
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { useEffect, useState } from 'react';
 import { usePolling } from '../hooks/usePolling';
-import { Table, Button, Space, Typography, message, Modal, Tag, Badge, Select, Alert, Drawer, Descriptions, List, Input, Switch } from 'antd';
-import { SearchOutlined, ReloadOutlined, EyeOutlined, NodeIndexOutlined, CheckCircleOutlined, CloseCircleOutlined, MinusCircleOutlined, KeyOutlined, EditOutlined } from '@ant-design/icons';
+import { Table, Button, Space, Typography, message, Modal, Tag, Badge, Select, Alert, Drawer, Descriptions, List, Input, Switch, Tabs } from 'antd';
+import { SearchOutlined, ReloadOutlined, EyeOutlined, NodeIndexOutlined, CheckCircleOutlined, CloseCircleOutlined, MinusCircleOutlined, KeyOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import { NodeAPI, ExchangeNode, NodeServiceStatus, NodePolicy } from '../api/nodes';
 import { PatternAPI, ExchangePattern } from '../api/patterns';
 import { getConfig, setRootAuth } from '../api/config';
 import { useT } from '../i18n/context';
 import { useScreenSize } from '../hooks/useIsMobile';
+import HelpButton from '../components/HelpButton';
 
 const { Text } = Typography;
 
@@ -42,6 +47,10 @@ export default function Nodes() {
 
   const [policies, setPolicies] = useState<Record<string, NodePolicy>>({});
   const [policiesLoading, setPoliciesLoading] = useState<Record<string, boolean>>({});
+  const [nodeAgreements, setNodeAgreements] = useState<any[]>([]);
+  const [nodeErrors, setNodeErrors] = useState<any[]>([]);
+  const [nodeMgmtStatus, setNodeMgmtStatus] = useState<any[]>([]);
+  const [subLoading, setSubLoading] = useState(false);
 
   // Fetch node service status (agreements, containers running on the node) from Exchange
   const loadServices = async (nodeId: string) => {
@@ -57,17 +66,38 @@ export default function Nodes() {
     }
   };
 
-  const openDrawer = (nodeId: string) => {
+  const openDrawer = async (nodeId: string) => {
     setDrawerNodeId(nodeId);
     setDrawerNode(data[nodeId]);
     setNodeServices([]);
+    setNodeAgreements([]);
+    setNodeErrors([]);
+    setNodeMgmtStatus([]);
     setDrawerOpen(true);
     loadServices(nodeId);
+    const nid = localNodeId(nodeId);
     if (!policies[nodeId]) {
-      NodeAPI.getPolicy(localNodeId(nodeId)).then((pol) => {
+      NodeAPI.getPolicy(nid).then((pol) => {
         setPolicies((prev) => ({ ...prev, [nodeId]: pol }));
       }).catch(() => {});
     }
+    setSubLoading(true);
+    try {
+      const [ag, er, ms] = await Promise.allSettled([
+        NodeAPI.agreements(nid),
+        NodeAPI.errors(nid),
+        NodeAPI.managementStatus(nid),
+      ]);
+      if (ag.status === 'fulfilled') setNodeAgreements(Object.values(ag.value?.agreements ?? {}));
+      if (er.status === 'fulfilled') {
+        const errData = er.value?.errors ?? [];
+        setNodeErrors(Array.isArray(errData) ? errData : []);
+      }
+      if (ms.status === 'fulfilled') {
+        const msData = ms.value?.managementStatus ?? {};
+        setNodeMgmtStatus(Object.values(msData));
+      }
+    } finally { setSubLoading(false); }
   };
 
   const load = async () => {
@@ -370,6 +400,20 @@ export default function Nodes() {
           <Space>
             <Button size="small" icon={<NodeIndexOutlined />} onClick={() => openSetPattern(id)}>{t('Set Pattern')}</Button>
             <Button size="small" icon={<EyeOutlined />} onClick={() => openDrawer(id)} />
+            <Button size="small" danger icon={<DeleteOutlined />} onClick={() => {
+              Modal.confirm({
+                title: t('Confirm deletion of node').replace('{0}', id),
+                onOk: async () => {
+                  try {
+                    await NodeAPI.deleteNode(id);
+                    message.success(t('Deleted'));
+                    load();
+                  } catch (err: any) {
+                    message.error(err.message);
+                  }
+                },
+              });
+            }} />
           </Space>
         );
       },
@@ -407,6 +451,7 @@ export default function Nodes() {
       <div style={{ marginBottom: 16 }}>
         <div>
           <Text strong style={{ fontSize: 20 }}>{t('Edge Nodes')}</Text>
+          <HelpButton module="nodes" />
           <br /><Text type="secondary">{t('Edge Node Management')}</Text>
         </div>
         <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -427,7 +472,7 @@ export default function Nodes() {
         loading={loading}
         size="middle"
         scroll={{ x: 'max-content' }}
-        pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `${total} ${t('Nodes')}` }}
+        pagination={{ pageSize: 10, showSizeChanger: true, showQuickJumper: true, showLessItems: false, showTotal: (total) => `${total} ${t('Nodes')}` }}
       />
 
       <Modal
@@ -508,83 +553,173 @@ export default function Nodes() {
         title={t('Node Details - ') + drawerNodeId}
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        width={560}
+        width={640}
       >
-        {drawerNode && (
-          <Descriptions column={1} size="small" bordered style={{ marginBottom: 24 }}>
-            <Descriptions.Item label={t('Name')}>{drawerNode.name || '-'}</Descriptions.Item>
-            <Descriptions.Item label={t('Type')}>{drawerNode.nodeType || '-'}</Descriptions.Item>
-            <Descriptions.Item label={t('Arch')}>{drawerNode.arch || '-'}</Descriptions.Item>
-            <Descriptions.Item label={t('Deployment')}>
-              {drawerNode.pattern ? <Tag color="blue">{t('Pattern: ')}{drawerNode.pattern}</Tag> : <Tag>{t('Policy')}</Tag>}
-            </Descriptions.Item>
-            <Descriptions.Item label={t('Status')}>
-              <Badge status={isAlive(drawerNode.lastHeartbeat) ? 'success' : 'error'}
-                text={isAlive(drawerNode.lastHeartbeat) ? t('Online') : t('Offline')} />
-            </Descriptions.Item>
-            <Descriptions.Item label={t('Last Heartbeat')}>{fmtTime(drawerNode.lastHeartbeat)}</Descriptions.Item>
-          </Descriptions>
-        )}
-        <Text strong style={{ fontSize: 16 }}>{t('Registered Services')}</Text>
-        <List
-          loading={servicesLoading}
-          dataSource={nodeServices}
-          locale={{ emptyText: t('No registered services') }}
-          renderItem={(svc: NodeServiceStatus) => (
-            <List.Item>
-              <List.Item.Meta
-                avatar={
-                  svc.agreementId
-                    ? <CheckCircleOutlined style={{ fontSize: 20, color: '#52c41a' }} />
-                    : <MinusCircleOutlined style={{ fontSize: 20, color: '#faad14' }} />
-                }
-                title={
-                  <Space>
-                    <Text code>{svc.url || svc.serviceUrl || '-'}</Text>
-                    <Tag>{svc.version || '-'}</Tag>
-                    <Tag>{svc.arch || '-'}</Tag>
-                  </Space>
-                }
-                description={
-                  svc.agreementId
-                    ? t('Agreement: ') + svc.agreementId
-                    : t('Waiting for agreement...')
-                }
-              />
-            </List.Item>
-          )}
+        <Tabs
+          items={[
+            {
+              key: 'info',
+              label: t('Info'),
+              children: (<>
+                {drawerNode && (
+                  <Descriptions column={1} size="small" bordered style={{ marginBottom: 24 }}>
+                    <Descriptions.Item label={t('Name')}>{drawerNode.name || '-'}</Descriptions.Item>
+                    <Descriptions.Item label={t('Type')}>{drawerNode.nodeType || '-'}</Descriptions.Item>
+                    <Descriptions.Item label={t('Arch')}>{drawerNode.arch || '-'}</Descriptions.Item>
+                    <Descriptions.Item label={t('Deployment')}>
+                      {drawerNode.pattern ? <Tag color="blue">{t('Pattern: ')}{drawerNode.pattern}</Tag> : <Tag>{t('Policy')}</Tag>}
+                    </Descriptions.Item>
+                    <Descriptions.Item label={t('Status')}>
+                      <Badge status={isAlive(drawerNode.lastHeartbeat) ? 'success' : 'error'}
+                        text={isAlive(drawerNode.lastHeartbeat) ? t('Online') : t('Offline')} />
+                    </Descriptions.Item>
+                    <Descriptions.Item label={t('Last Heartbeat')}>{fmtTime(drawerNode.lastHeartbeat)}</Descriptions.Item>
+                  </Descriptions>
+                )}
+                <Space>
+                  <Text strong style={{ fontSize: 16 }}>{t('Node Policy')}</Text>
+                  {drawerNodeId && policies[drawerNodeId] && (
+                    <Button size="small" icon={<EditOutlined />} onClick={() => openEditPolicy(drawerNodeId)}>{t('Edit')}</Button>
+                  )}
+                </Space>
+                {drawerNodeId && policies[drawerNodeId] ? (
+                  (() => {
+                    const pol = policies[drawerNodeId]!;
+                    return (
+                      <Descriptions column={1} size="small" bordered style={{ marginTop: 12 }}>
+                        <Descriptions.Item label={t('Properties')}>
+                          {pol.properties && pol.properties.length > 0
+                            ? pol.properties.map((p: any) => (
+                                <Tag key={p.name} style={{ marginBottom: 4 }}>{p.name}: {String(p.value)}</Tag>
+                              ))
+                            : '-'}
+                        </Descriptions.Item>
+                        <Descriptions.Item label={t('Constraints')}>
+                          {pol.constraints && pol.constraints.length > 0
+                            ? pol.constraints.map((c: string) => <Tag key={c} style={{ marginBottom: 4 }}>{c}</Tag>)
+                            : '-'}
+                        </Descriptions.Item>
+                      </Descriptions>
+                    );
+                  })()
+                ) : (
+                  <Text type="secondary" style={{ display: 'block', marginTop: 8 }}>{t('No policy data')}</Text>
+                )}
+              </>),
+            },
+            {
+              key: 'services',
+              label: t('Services'),
+              children: (
+                <List
+                  loading={servicesLoading}
+                  dataSource={nodeServices}
+                  locale={{ emptyText: t('No registered services') }}
+                  renderItem={(svc: NodeServiceStatus) => (
+                    <List.Item>
+                      <List.Item.Meta
+                        avatar={
+                          svc.agreementId
+                            ? <CheckCircleOutlined style={{ fontSize: 20, color: '#52c41a' }} />
+                            : <MinusCircleOutlined style={{ fontSize: 20, color: '#faad14' }} />
+                        }
+                        title={
+                          <Space>
+                            <Text code>{svc.url || svc.serviceUrl || '-'}</Text>
+                            <Tag>{svc.version || '-'}</Tag>
+                            <Tag>{svc.arch || '-'}</Tag>
+                          </Space>
+                        }
+                        description={
+                          svc.agreementId
+                            ? t('Agreement: ') + svc.agreementId
+                            : t('Waiting for agreement...')
+                        }
+                      />
+                    </List.Item>
+                  )}
+                />
+              ),
+            },
+            {
+              key: 'agreements',
+              label: t('Agreements'),
+              children: (
+                <List
+                  loading={subLoading}
+                  dataSource={nodeAgreements}
+                  locale={{ emptyText: t('No agreements') }}
+                  renderItem={(ag: any, i: number) => (
+                    <List.Item>
+                      <List.Item.Meta
+                        title={<Text code>{ag.current_agreement_id || ag.id || `#${i + 1}`}</Text>}
+                        description={
+                          <div>
+                            <div>{t('State: ')}{ag.state || ag.agreement_state || '-'}</div>
+                            {ag.service_specifications?.map((s: any, j: number) => (
+                              <Tag key={j} style={{ marginTop: 4 }}>{s.service_url}@{s.service_version_range}</Tag>
+                            ))}
+                            {ag.credits && <div>{t('Credits: ')}{ag.credits}</div>}
+                          </div>
+                        }
+                      />
+                    </List.Item>
+                  )}
+                />
+              ),
+            },
+            {
+              key: 'errors',
+              label: t('Errors'),
+              children: (
+                <List
+                  loading={subLoading}
+                  dataSource={nodeErrors}
+                  locale={{ emptyText: t('No errors') }}
+                  renderItem={(err: any, i: number) => (
+                    <List.Item>
+                      <List.Item.Meta
+                        avatar={<CloseCircleOutlined style={{ fontSize: 20, color: '#ff4d4f' }} />}
+                        title={<Text code>{err.record_id || err.id || `#${i + 1}`}</Text>}
+                        description={
+                          <div>
+                            <div>{err.message || err.error || '-'}</div>
+                            {err.timestamp && <Text type="secondary" style={{ fontSize: 12 }}>{fmtTime(err.timestamp)}</Text>}
+                          </div>
+                        }
+                      />
+                    </List.Item>
+                  )}
+                />
+              ),
+            },
+            {
+              key: 'mgmtStatus',
+              label: t('Mgmt Status'),
+              children: (
+                <List
+                  loading={subLoading}
+                  dataSource={nodeMgmtStatus}
+                  locale={{ emptyText: t('No management status') }}
+                  renderItem={(ms: any, i: number) => (
+                    <List.Item>
+                      <List.Item.Meta
+                        title={<Text code>{ms.management_policy_name || ms.name || `#${i + 1}`}</Text>}
+                        description={
+                          <div>
+                            <div>{t('Status: ')}{ms.status || '-'}</div>
+                            {ms.agent_upgrade_status && <div>{t('Agent: ')}{ms.agent_upgrade_status}</div>}
+                            {ms.message && <Text type="secondary">{ms.message}</Text>}
+                          </div>
+                        }
+                      />
+                    </List.Item>
+                  )}
+                />
+              ),
+            },
+          ]}
         />
-        <div style={{ marginTop: 24 }}>
-          <Space>
-            <Text strong style={{ fontSize: 16 }}>{t('Node Policy')}</Text>
-            {drawerNodeId && policies[drawerNodeId] && (
-              <Button size="small" icon={<EditOutlined />} onClick={() => openEditPolicy(drawerNodeId)}>{t('Edit')}</Button>
-            )}
-          </Space>
-          {drawerNodeId && policies[drawerNodeId] ? (
-            (() => {
-              const pol = policies[drawerNodeId]!;
-              return (
-                <Descriptions column={1} size="small" bordered style={{ marginTop: 12 }}>
-                  <Descriptions.Item label={t('Properties')}>
-                    {pol.properties && pol.properties.length > 0
-                      ? pol.properties.map((p: any) => (
-                          <Tag key={p.name} style={{ marginBottom: 4 }}>{p.name}: {String(p.value)}</Tag>
-                        ))
-                      : '-'}
-                  </Descriptions.Item>
-                  <Descriptions.Item label={t('Constraints')}>
-                    {pol.constraints && pol.constraints.length > 0
-                      ? pol.constraints.map((c: string) => <Tag key={c} style={{ marginBottom: 4 }}>{c}</Tag>)
-                      : '-'}
-                  </Descriptions.Item>
-                </Descriptions>
-              );
-            })()
-          ) : (
-            <Text type="secondary" style={{ display: 'block', marginTop: 8 }}>{t('No policy data')}</Text>
-          )}
-        </div>
 
       <Modal
         title={t('Edit Node Policy')}

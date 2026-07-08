@@ -1,3 +1,7 @@
+// Copyright (C) 2026 YIQISOFT
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { useEffect, useState } from 'react';
 import { usePolling } from '../hooks/usePolling';
 import { useNavigate } from 'react-router-dom';
@@ -18,6 +22,7 @@ import {
 import { OrgAPI, OrgStatusResponse, DashboardAPI, DashboardResponse } from '../api/organizations';
 import { getConfig } from '../api/config';
 import { useT } from '../i18n/context';
+import HelpButton from '../components/HelpButton';
 
 const { Text } = Typography;
 
@@ -43,7 +48,7 @@ export default function Dashboard() {
   const config = getConfig();
 
   const load = async () => {
-    const vRes = await fetch('/api/version', { headers: { 'X-Session-Id': config.sessionId } });
+    const vRes = await fetch('/api/version');
     const vData = await vRes.json();
     setVersion(vData?.version || '');
     const s = await OrgAPI.status();
@@ -94,6 +99,7 @@ export default function Dashboard() {
         <Text strong style={{ fontSize: 20 }}>
           {t('Dashboard')}
         </Text>
+        <HelpButton module="dashboard" />
         <br />
         <Text type="secondary">{t('Overview of org').replace('{0}', config.orgId)}</Text>
       </div>

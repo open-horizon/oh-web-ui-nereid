@@ -1,3 +1,7 @@
+// Copyright (C) 2026 YIQISOFT
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { get, post, put, del } from './client';
 
 export interface ExchangeAgbot {
@@ -90,5 +94,8 @@ export const AgbotAPI = {
   removeBusinessPol(agbotId: string, polId: string, org?: string) {
     const p = splitId(polId);
     return del<{ code: string; msg: string }>(agbotUrl(agbotId, `/businesspols/${encodeURIComponent(p.name)}`, org));
+  },
+  listAgreements(id: string, org?: string) {
+    return get<{ agreements: Record<string, any> }>(agbotUrl(id, '/agreements', org));
   },
 };

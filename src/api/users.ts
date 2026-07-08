@@ -1,4 +1,8 @@
-import { get, post, put, del } from './client';
+// Copyright (C) 2026 YIQISOFT
+//
+// SPDX-License-Identifier: Apache-2.0
+
+import { get, post, put, patch, del } from './client';
 
 export interface ExchangeUser {
   email?: string;
@@ -36,5 +40,8 @@ export const UserAPI = {
   },
   deleteApiKey(username: string, keyId: string) {
     return del(`/users/${username}/apikeys/${keyId}`);
+  },
+  changePassword(username: string, newPassword: string) {
+    return post(`/users/${username}/changepw`, { newPassword });
   },
 };

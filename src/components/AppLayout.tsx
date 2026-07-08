@@ -1,3 +1,7 @@
+// Copyright (C) 2026 YIQISOFT
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { useState, useEffect } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { Layout, Menu, Button, Tag, Typography, theme, Select, Drawer } from 'antd';
@@ -16,9 +20,9 @@ import {
   SafetyOutlined,
   LogoutOutlined,
   HddOutlined,
+  QuestionCircleOutlined,
 } from '@ant-design/icons';
 import { clearSession, getConfig } from '../api/config';
-import { clearCreds } from '../api/storage';
 import { useT } from '../i18n/context';
 
 const { Header, Sider, Content } = Layout;
@@ -29,6 +33,9 @@ const adminMenuItems = [
   { key: '/organizations', icon: <BuildOutlined />, label: '组织管理' },
   { key: '/users', icon: <TeamOutlined />, label: '用户' },
   { key: '/catalog', icon: <BookOutlined />, label: '目录' },
+  { key: '/agentfileversion', icon: <SettingOutlined />, label: 'Agent 版本' },
+  { key: '/help', icon: <QuestionCircleOutlined />, label: '帮助' },
+  { key: '/audit', icon: <FileTextOutlined />, label: '审计日志' },
 ];
 
 const systemMenuItems = [
@@ -37,6 +44,9 @@ const systemMenuItems = [
   { key: '/users', icon: <TeamOutlined />, label: '用户' },
   { key: '/agbots', icon: <RobotOutlined />, label: '协议机器人' },
   { key: '/catalog', icon: <BookOutlined />, label: '目录' },
+  { key: '/agentfileversion', icon: <SettingOutlined />, label: 'Agent 版本' },
+  { key: '/help', icon: <QuestionCircleOutlined />, label: '帮助' },
+  { key: '/audit', icon: <FileTextOutlined />, label: '审计日志' },
 ];
 
 const userMenuItems = [
@@ -48,6 +58,9 @@ const userMenuItems = [
   { key: '/policies', icon: <FileTextOutlined />, label: '部署策略' },
   { key: '/mgmtpolicies', icon: <SettingOutlined />, label: '管理策略' },
   { key: '/hagroups', icon: <SafetyOutlined />, label: 'HA 组' },
+  { key: '/agentfileversion', icon: <SettingOutlined />, label: 'Agent 版本' },
+  { key: '/help', icon: <QuestionCircleOutlined />, label: '帮助' },
+  { key: '/audit', icon: <FileTextOutlined />, label: '审计日志' },
 ];
 
 export default function AppLayout() {
@@ -78,6 +91,9 @@ export default function AppLayout() {
     { key: '/organizations', icon: <BuildOutlined />, label: t('Organization Management') },
     { key: '/users', icon: <TeamOutlined />, label: t('Users') },
     { key: '/catalog', icon: <BookOutlined />, label: t('Catalog') },
+    { key: '/agentfileversion', icon: <SettingOutlined />, label: t('Agent Version') },
+    { key: '/help', icon: <QuestionCircleOutlined />, label: t('Help') },
+    { key: '/audit', icon: <FileTextOutlined />, label: t('Audit Log') },
   ];
 
   const systemMenuItems = [
@@ -86,6 +102,9 @@ export default function AppLayout() {
     { key: '/users', icon: <TeamOutlined />, label: t('Users') },
     { key: '/agbots', icon: <RobotOutlined />, label: t('Agreement Bots') },
     { key: '/catalog', icon: <BookOutlined />, label: t('Catalog') },
+    { key: '/agentfileversion', icon: <SettingOutlined />, label: t('Agent Version') },
+    { key: '/help', icon: <QuestionCircleOutlined />, label: t('Help') },
+    { key: '/audit', icon: <FileTextOutlined />, label: t('Audit Log') },
   ];
 
   const userMenuItems = [
@@ -97,6 +116,9 @@ export default function AppLayout() {
     { key: '/policies', icon: <FileTextOutlined />, label: t('Deployment Policies') },
     { key: '/mgmtpolicies', icon: <SettingOutlined />, label: t('Management Policies') },
     { key: '/hagroups', icon: <SafetyOutlined />, label: t('HA Groups') },
+    { key: '/agentfileversion', icon: <SettingOutlined />, label: t('Agent Version') },
+    { key: '/help', icon: <QuestionCircleOutlined />, label: t('Help') },
+    { key: '/audit', icon: <FileTextOutlined />, label: t('Audit Log') },
   ];
 
   // Select menu items based on org type: hubadmin, system org, or regular user
@@ -104,14 +126,11 @@ export default function AppLayout() {
     : orgType === 'system' ? systemMenuItems
     : userMenuItems;
 
-  // Logout: call backend to destroy session, clear local state, redirect to login
+  // Logout: call backend to destroy session (clears HttpOnly cookie), reset
+  // local UI state, and redirect to login.
   const handleLogout = async () => {
-    await fetch('/api/logout', {
-      method: 'POST',
-      headers: { 'X-Session-Id': config.sessionId },
-    }).catch(() => {});
+    await fetch('/api/logout', { method: 'POST' }).catch(() => {});
     clearSession();
-    clearCreds();
     navigate('/login');
   };
 

@@ -22,6 +22,12 @@ Thumbs.db
 .env.local
 .env.*.local
 *.cfg
+# Server-side session master key (auto-generated, NEVER commit)
+.session.key
+*.session.key
+# Redis persistence (local dev)
+redis-data/
+dump.rdb
 
 # Logs
 logs

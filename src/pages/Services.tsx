@@ -1,12 +1,17 @@
+// Copyright (C) 2026 YIQISOFT
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { useEffect, useState, useCallback } from 'react';
 import { usePolling } from '../hooks/usePolling';
-import { Table, Button, Space, Typography, message, Modal, Drawer, Descriptions, Tag, Form, Input, Select, Tabs, Collapse, Alert, Switch, Upload, Tooltip } from 'antd';
+import { Table, Button, Space, Typography, message, Modal, Drawer, Descriptions, Tag, Form, Input, Select, Tabs, Collapse, Alert, Switch, Upload, Tooltip, List } from 'antd';
 import { SearchOutlined, ReloadOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, EditOutlined, DownloadOutlined, ImportOutlined, MinusCircleOutlined } from '@ant-design/icons';
 import { ServiceAPI, ExchangeService } from '../api/services';
 import { OrgAPI } from '../api/organizations';
 import { getConfig } from '../api/config';
 import { useT } from '../i18n/context';
 import { useScreenSize } from '../hooks/useIsMobile';
+import HelpButton from '../components/HelpButton';
 
 const { Text, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -141,6 +146,18 @@ export default function Services() {
   const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
   const [selectedService, setSelectedService] = useState<string | null>(null);
   const [editModalOpen, setEditModalOpen] = useState(false);
+  const [createActiveKey, setCreateActiveKey] = useState<string[]>(['basic']);
+  const [editActiveKey, setEditActiveKey] = useState<string[]>(['basic']);
+  const [svcKeys, setSvcKeys] = useState<string[]>([]);
+  const [svcKeysLoading, setSvcKeysLoading] = useState(false);
+  const [svcDockauths, setSvcDockauths] = useState<any[]>([]);
+  const [svcDockauthsLoading, setSvcDockauthsLoading] = useState(false);
+  const [keyAddModalOpen, setKeyAddModalOpen] = useState(false);
+  const [keyAddForm] = Form.useForm();
+  const [keyAddLoading, setKeyAddLoading] = useState(false);
+  const [dockauthAddModalOpen, setDockauthAddModalOpen] = useState(false);
+  const [dockauthAddForm] = Form.useForm();
+  const [dockauthAddLoading, setDockauthAddLoading] = useState(false);
   const [editTarget, setEditTarget] = useState<string | null>(null);
   const [editTab, setEditTab] = useState<'json' | 'ui'>('json');
   const [editForm] = Form.useForm();
@@ -200,9 +217,17 @@ export default function Services() {
     });
   };
 
-  const showDetail = (id: string) => {
+  const showDetail = async (id: string) => {
     setSelectedService(id);
     setDetailDrawerOpen(true);
+    setSvcKeys([]);
+    setSvcDockauths([]);
+    setSvcKeysLoading(true);
+    setSvcDockauthsLoading(true);
+    try { const r = await ServiceAPI.keys(id); setSvcKeys(r?.keys ?? []); } catch (_) {}
+    setSvcKeysLoading(false);
+    try { const r = await ServiceAPI.dockauths(id); setSvcDockauths(r?.dockauths ?? []); } catch (_) {}
+    setSvcDockauthsLoading(false);
   };
 
   // Trigger browser download of service definition as JSON file
@@ -220,6 +245,7 @@ export default function Services() {
 
   const openCreate = () => {
     setCreateOpen(true);
+    setCreateActiveKey(['basic']);
     form.resetFields();
   };
 
@@ -266,6 +292,19 @@ export default function Services() {
   };
 
   // Populate edit form with existing service data, parsing deployment JSON into individual form fields
+  // Compute which deployment panels to expand in edit mode based on existing config
+  const computeEditActiveKeys = (svc: ExchangeService, sd: any): string[] => {
+    const keys: string[] = ['basic']; // basic always relevant
+    if (sd?.image || sd?.imageStore || sd?.imageRegistryToken) keys.push('deployImg');
+    if (sd?.privileged || sd?.user || sd?.pid || sd?.ipc || sd?.max_memory_mb != null || sd?.max_cpus != null) keys.push('deploySvc');
+    if ((sd?.cap_add && sd.cap_add.length) || (sd?.devices && sd.devices.length) || sd?.command || sd?.entrypoint) keys.push('capabilities');
+    if (sd?.healthCheckCommand || sd?.healthCheckInterval != null || sd?.healthCheckRetries != null || sd?.healthCheckMinHealth != null) keys.push('health');
+    if ((sd?.ports && sd.ports.length) || (sd?.ephemeral_ports && sd.ephemeral_ports.length) || sd?.network || (sd?.netOpenPorts && sd.netOpenPorts.length) || sd?.netActiveAdapter || sd?.netDefaultInterface) keys.push('network');
+    if ((sd?.binds && sd.binds.length) || (sd?.tmpfs && objKeys(sd.tmpfs).length)) keys.push('storage');
+    if (sd?.environment || sd?.log_driver || sd?.secrets || sd?.sysctls || sd?.sharedBlockDevice || sd?.haMode) keys.push('other');
+    return keys;
+  };
+
   const openEdit = (id: string) => {
     setEditTarget(id);
     const svc = data[id];
@@ -275,6 +314,7 @@ export default function Services() {
     const sd = dep?.services?.[svc.url || ''] || {};
     const existingDeployment = objKeys(dep).length > 0;
     setEditType(existingDeployment ? 'update' : 'full');
+    setEditActiveKey(computeEditActiveKeys(svc, sd));
     editForm.setFieldsValue({
       name: id,
       label: svc.label || '',
@@ -560,6 +600,7 @@ export default function Services() {
       <div style={{ marginBottom: 16 }}>
         <div>
           <Text strong style={{ fontSize: 20 }}>{t('Service')} (Services)</Text>
+          <HelpButton module="services" />
           <br /><Text type="secondary">{t('Manage service definitions, deployment configuration, and version strategy')}</Text>
           {getConfig().orgType === 'system' && (
           <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
@@ -595,7 +636,7 @@ export default function Services() {
           <Button icon={<ReloadOutlined />} onClick={() => load()}>{t('Refresh')}</Button>
         </div>
       </div>
-      <Table columns={columns} dataSource={tableData} loading={loading} size="middle" scroll={{ x: 'max-content' }} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `${total} ${t('Services')}` }} />
+      <Table columns={columns} dataSource={tableData} loading={loading} size="middle" scroll={{ x: 'max-content' }} pagination={{ pageSize: 10, showSizeChanger: true, showQuickJumper: true, showLessItems: false, showTotal: (total) => `${total} ${t('Services')}` }} />
 
       <Modal
         title={t('Import')}
@@ -642,27 +683,162 @@ export default function Services() {
         extra={<Button icon={<DownloadOutlined />} onClick={() => selectedService && exportService(selectedService)}>{t('Export JSON')}</Button>}
       >
         {selectedService && data[selectedService] ? (
-          <Descriptions column={1} size="small" bordered>
-            <Descriptions.Item label={t('Name')}>{selectedService}</Descriptions.Item>
-            <Descriptions.Item label={t('Label')}>{data[selectedService].label || '-'}</Descriptions.Item>
-            <Descriptions.Item label={t('Version')}>{data[selectedService].version || '-'}</Descriptions.Item>
-            <Descriptions.Item label={t('Architecture')}>{data[selectedService].arch || '-'}</Descriptions.Item>
-            <Descriptions.Item label={t('URL')}>{data[selectedService].url || '-'}</Descriptions.Item>
-            <Descriptions.Item label={t('Description')}>{data[selectedService].description || '-'}</Descriptions.Item>
-            <Descriptions.Item label={t('Image')}>
-              {(() => { const d = parseDep(data[selectedService].deployment); const sd = d?.services?.[data[selectedService].url || ''] || {}; return sd.image || '-'; })()}
-            </Descriptions.Item>
-            <Descriptions.Item label={t('Privileged')}>
-              {(() => { const d = parseDep(data[selectedService].deployment); const sd = d?.services?.[data[selectedService].url || ''] || {}; return <Switch checked={!!sd.privileged} disabled />; })()}
-            </Descriptions.Item>
-            <Descriptions.Item label={t('Deployment Config')}>
-              <pre style={{ background: '#f5f5f5', padding: 8, borderRadius: 4, maxHeight: 200, overflow: 'auto', margin: 0, fontSize: 12 }}>
-                {JSON.stringify(parseDep(data[selectedService].deployment), null, 2)}
-              </pre>
-            </Descriptions.Item>
-          </Descriptions>
+          <Tabs items={[
+            {
+              key: 'info',
+              label: t('Info'),
+              children: (
+                <Descriptions column={1} size="small" bordered>
+                  <Descriptions.Item label={t('Name')}>{selectedService}</Descriptions.Item>
+                  <Descriptions.Item label={t('Label')}>{data[selectedService].label || '-'}</Descriptions.Item>
+                  <Descriptions.Item label={t('Version')}>{data[selectedService].version || '-'}</Descriptions.Item>
+                  <Descriptions.Item label={t('Architecture')}>{data[selectedService].arch || '-'}</Descriptions.Item>
+                  <Descriptions.Item label={t('URL')}>{data[selectedService].url || '-'}</Descriptions.Item>
+                  <Descriptions.Item label={t('Description')}>{data[selectedService].description || '-'}</Descriptions.Item>
+                  <Descriptions.Item label={t('Image')}>
+                    {(() => { const d = parseDep(data[selectedService].deployment); const sd = d?.services?.[data[selectedService].url || ''] || {}; return sd.image || '-'; })()}
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('Privileged')}>
+                    {(() => { const d = parseDep(data[selectedService].deployment); const sd = d?.services?.[data[selectedService].url || ''] || {}; return <Switch checked={!!sd.privileged} disabled />; })()}
+                  </Descriptions.Item>
+                  <Descriptions.Item label={t('Deployment Config')}>
+                    <pre style={{ background: '#f5f5f5', padding: 8, borderRadius: 4, maxHeight: 200, overflow: 'auto', margin: 0, fontSize: 12 }}>
+                      {JSON.stringify(parseDep(data[selectedService].deployment), null, 2)}
+                    </pre>
+                  </Descriptions.Item>
+                </Descriptions>
+              ),
+            },
+            {
+              key: 'keys',
+              label: t('Keys'),
+              children: (
+                <div>
+                  <div style={{ marginBottom: 8 }}>
+                    <Button size="small" icon={<PlusOutlined />} onClick={() => { keyAddForm.resetFields(); setKeyAddModalOpen(true); }}>{t('Add Key')}</Button>
+                  </div>
+                  <List
+                    loading={svcKeysLoading}
+                    dataSource={svcKeys}
+                    locale={{ emptyText: t('No keys') }}
+                    renderItem={(k: string) => (
+                      <List.Item
+                        actions={[
+                          <Button
+                            size="small"
+                            danger
+                            onClick={async () => {
+                              if (!selectedService) return;
+                              try { await ServiceAPI.deleteKey(selectedService, k); message.success(t('Key deleted')); showDetail(selectedService); } catch (err: any) { message.error(err.message); }
+                            }}
+                          >{t('Delete')}</Button>,
+                        ]}
+                      >
+                        <Text code>{k}</Text>
+                      </List.Item>
+                    )}
+                  />
+                </div>
+              ),
+            },
+            {
+              key: 'dockauths',
+              label: t('Docker Auths'),
+              children: (
+                <div>
+                  <div style={{ marginBottom: 8 }}>
+                    <Button size="small" icon={<PlusOutlined />} onClick={() => { dockauthAddForm.resetFields(); setDockauthAddModalOpen(true); }}>{t('Add Docker Auth')}</Button>
+                  </div>
+                  <List
+                    loading={svcDockauthsLoading}
+                    dataSource={svcDockauths}
+                    locale={{ emptyText: t('No docker auths') }}
+                    renderItem={(da: any, i: number) => (
+                      <List.Item
+                        actions={[
+                          <Button
+                            size="small"
+                            danger
+                            onClick={async () => {
+                              if (!selectedService) return;
+                              const id = da._id || da.id || i;
+                              try { await ServiceAPI.deleteDockauth(selectedService, id); message.success(t('Docker auth deleted')); showDetail(selectedService); } catch (err: any) { message.error(err.message); }
+                            }}
+                          >{t('Delete')}</Button>,
+                        ]}
+                      >
+                        <List.Item.Meta
+                          title={<Text code>{da.registry || da._id || da.id || `#${i + 1}`}</Text>}
+                          description={da.userName ? `${da.userName}@${da.registry || '-'}` : '-'}
+                        />
+                      </List.Item>
+                    )}
+                  />
+                </div>
+              ),
+            },
+          ]} />
         ) : <Text type="secondary">{t('No data')}</Text>}
       </Drawer>
+
+      <Modal title={t('Add Key')} open={keyAddModalOpen} onCancel={() => setKeyAddModalOpen(false)} footer={null} width={500}>
+        <Form form={keyAddForm} layout="vertical">
+          <Form.Item name="keyId" label={t('Key ID')} rules={[{ required: true }]}>
+            <Input placeholder="my-key" />
+          </Form.Item>
+          <Form.Item name="key" label={t('Key Content')} rules={[{ required: true }]}>
+            <TextArea rows={6} placeholder={t('Paste public key content')} />
+          </Form.Item>
+          <Button
+            type="primary"
+            loading={keyAddLoading}
+            onClick={async () => {
+              try {
+                const v = await keyAddForm.validateFields();
+                if (!selectedService) return;
+                setKeyAddLoading(true);
+                await ServiceAPI.addKey(selectedService, v.keyId, v.key);
+                message.success(t('Key added'));
+                setKeyAddModalOpen(false);
+                showDetail(selectedService);
+              } catch (err: any) {
+                if (!err.message?.includes('validate')) message.error(err.message);
+              } finally { setKeyAddLoading(false); }
+            }}
+          >{t('Add')}</Button>
+        </Form>
+      </Modal>
+
+      <Modal title={t('Add Docker Auth')} open={dockauthAddModalOpen} onCancel={() => setDockauthAddModalOpen(false)} footer={null} width={500}>
+        <Form form={dockauthAddForm} layout="vertical">
+          <Form.Item name="registry" label={t('Registry')} rules={[{ required: true }]}>
+            <Input placeholder="docker.io" />
+          </Form.Item>
+          <Form.Item name="userName" label={t('Username')} rules={[{ required: true }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="password" label={t('Password / Token')} rules={[{ required: true }]}>
+            <Input.Password />
+          </Form.Item>
+          <Button
+            type="primary"
+            loading={dockauthAddLoading}
+            onClick={async () => {
+              try {
+                const v = await dockauthAddForm.validateFields();
+                if (!selectedService) return;
+                setDockauthAddLoading(true);
+                await ServiceAPI.addDockauth(selectedService, v);
+                message.success(t('Docker auth added'));
+                setDockauthAddModalOpen(false);
+                showDetail(selectedService);
+              } catch (err: any) {
+                if (!err.message?.includes('validate')) message.error(err.message);
+              } finally { setDockauthAddLoading(false); }
+            }}
+          >{t('Add')}</Button>
+        </Form>
+      </Modal>
 
       <Modal
         title={t('Create Service Definition')}
@@ -677,7 +853,8 @@ export default function Services() {
         <Form form={form} layout="vertical">
           <Collapse
             size="small"
-            defaultActiveKey={['basic', 'deployImg', 'deploySvc', 'capabilities', 'health', 'network', 'storage', 'other']}
+            activeKey={createActiveKey}
+            onChange={(k) => setCreateActiveKey(k as string[])}
             items={[
               {
                 key: 'basic',
@@ -904,7 +1081,8 @@ export default function Services() {
                 <Form form={editForm} layout="vertical">
                   <Collapse
                     size="small"
-                    defaultActiveKey={['basic', 'deployImg', 'deploySvc', 'capabilities', 'health', 'network', 'storage', 'other']}
+                    activeKey={editActiveKey}
+                    onChange={(k) => setEditActiveKey(k as string[])}
                     items={[
                       {
                         key: 'basic',

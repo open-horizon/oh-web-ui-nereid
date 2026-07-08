@@ -1,18 +1,43 @@
 version: '3.8'
 
 services:
-  backend:
+  redis:
+    image: redis:6.2.2-alpine
+    container_name: open-horizon-exchangeui-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis-data:/data
+    networks:
+      - nereid-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  open-horizon-exchangeui-backend:
     build:
       context: .
       target: backend
       dockerfile: Dockerfile
-    container_name: nereid-backend
+    image: open-horizon-exchangeui-backend:latest
+    container_name: open-horizon-exchangeui-backend
     restart: unless-stopped
     environment:
       - NODE_ENV=production
       - PORT=3001
+      - REDIS_URL=redis://redis:6379
+      - SESSION_TTL=1800
+      # SESSION_ENC_KEY is the 32-byte master key (hex) used for AES-256-GCM encryption
+      # of Exchange credentials at rest. Override in production via secret/env file.
+      - SESSION_ENC_KEY=${SESSION_ENC_KEY:-}
     ports:
       - "3001:3001"
+    depends_on:
+      redis:
+        condition: service_healthy
     networks:
       - nereid-network
     healthcheck:
@@ -22,17 +47,19 @@ services:
       retries: 3
       start_period: 10s
 
-  frontend:
+  open-horizon-exchangeui-frontend:
     build:
       context: .
       target: frontend
       dockerfile: Dockerfile
-    container_name: nereid-frontend
+    image: open-horizon-exchangeui-frontend:latest
+    container_name: open-horizon-exchangeui-frontend
     restart: unless-stopped
     ports:
+      - "8443:443"
       - "8090:80"
     depends_on:
-      backend:
+      open-horizon-exchangeui-backend:
         condition: service_healthy
     networks:
       - nereid-network
@@ -40,3 +67,6 @@ services:
 networks:
   nereid-network:
     driver: bridge
+
+volumes:
+  redis-data:

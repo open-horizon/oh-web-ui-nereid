@@ -1,3 +1,7 @@
+// Copyright (C) 2026 YIQISOFT
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { get, post, put, del } from './client';
 
 export interface DeploymentPolicy {
@@ -49,6 +53,9 @@ export const MgmtPolicyAPI = {
   },
   create(name: string, data: Partial<MgmtPolicy>) {
     return post('/mgmtpolicies', { name, ...data });
+  },
+  update(policyId: string, data: Partial<MgmtPolicy>) {
+    return put(`/mgmtpolicies/${encodeURIComponent(policyId)}`, data);
   },
   delete(policyId: string) {
     return del(`/mgmtpolicies/${encodeURIComponent(policyId)}`);

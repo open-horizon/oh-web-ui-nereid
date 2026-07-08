@@ -1,3 +1,7 @@
+// Copyright (C) 2026 YIQISOFT
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { useEffect, useState } from 'react';
 import { usePolling } from '../hooks/usePolling';
 import { Table, Button, Space, Typography, message, Modal, Tag, Form, Input, Select, Upload } from 'antd';
@@ -9,6 +13,7 @@ import { OrgAPI } from '../api/organizations';
 import { getConfig } from '../api/config';
 import { useT } from '../i18n/context';
 import { useScreenSize } from '../hooks/useIsMobile';
+import HelpButton from '../components/HelpButton';
 
 const { Text } = Typography;
 const { TextArea } = Input;
@@ -365,6 +370,7 @@ export default function Policies() {
       <div style={{ marginBottom: 16 }}>
         <div>
           <Text strong style={{ fontSize: 20 }}>{t('Deployment Policies')}</Text>
+          <HelpButton module="policies" />
           <br /><Text type="secondary">{t('Manage service-to-node binding policy')}</Text>
           {getConfig().orgType === 'system' && (
           <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
@@ -400,7 +406,7 @@ export default function Policies() {
           <Button icon={<ReloadOutlined />} onClick={() => load()}>{t('Refresh')}</Button>
         </div>
       </div>
-      <Table columns={columns} dataSource={tableData} loading={loading} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `${total} ${t('Deployment Policies')}` }} size="middle" scroll={{ x: 'max-content' }} />
+      <Table columns={columns} dataSource={tableData} loading={loading} pagination={{ pageSize: 10, showSizeChanger: true, showQuickJumper: true, showLessItems: false, showTotal: (total) => `${total} ${t('Deployment Policies')}` }} size="middle" scroll={{ x: 'max-content' }} />
 
       <Modal
         title={t('Create Deployment Policy')}

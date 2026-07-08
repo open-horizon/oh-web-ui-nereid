@@ -1,13 +1,18 @@
+// Copyright (C) 2026 YIQISOFT
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { useEffect, useState } from 'react';
 import { usePolling } from '../hooks/usePolling';
-import { Table, Button, Space, Typography, message, Modal, Tag, Form, Input, Alert, Select, Checkbox } from 'antd';
-import { ReloadOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, SearchOutlined, ImportOutlined, EditOutlined } from '@ant-design/icons';
+import { Table, Button, Space, Typography, message, Modal, Tag, Form, Input, Alert, Select, Checkbox, Drawer, Tabs, List } from 'antd';
+import { ReloadOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, SearchOutlined, ImportOutlined, EditOutlined, DownloadOutlined } from '@ant-design/icons';
 import { PatternAPI, ExchangePattern } from '../api/patterns';
 import { ServiceAPI, ExchangeService } from '../api/services';
 import { OrgAPI } from '../api/organizations';
 import { getConfig } from '../api/config';
 import { useT } from '../i18n/context';
 import { useScreenSize } from '../hooks/useIsMobile';
+import HelpButton from '../components/HelpButton';
 
 const { Text } = Typography;
 const { TextArea } = Input;
@@ -50,6 +55,10 @@ export default function Patterns() {
   const [editServices, setEditServices] = useState<Record<string, ExchangeService>>({});
   const [editServiceSearch, setEditServiceSearch] = useState('');
   const [editSelectedSvcIds, setEditSelectedSvcIds] = useState<string[]>([]);
+  const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
+  const [detailPatternId, setDetailPatternId] = useState<string>('');
+  const [patternNodeHealth, setPatternNodeHealth] = useState<any[]>([]);
+  const [nodeHealthLoading, setNodeHealthLoading] = useState(false);
 
   // Load patterns from Exchange; system org also loads org list for cross-org browsing
   const load = async (org?: string) => {
@@ -99,17 +108,29 @@ export default function Patterns() {
     });
   };
 
-  const showDetail = (id: string) => {
-    Modal.info({ maskClosable: true,
-      title: t('Pattern') + ' - ' + id,
-      width: 700,
-      content: (
-        <pre style={{ background: '#f5f5f5', padding: 16, borderRadius: 6, overflow: 'auto', maxHeight: 500 }}>
-          {JSON.stringify(data[id], null, 2)}
-        </pre>
-      ),
-      footer: null,
-    });
+  // Trigger browser download of pattern definition as JSON file
+  const exportPattern = (id: string) => {
+    const p = data[id];
+    if (!p) return;
+    const blob = new Blob([JSON.stringify(p, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${id}.pattern.definition.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const showDetail = async (id: string) => {
+    setDetailPatternId(id);
+    setDetailDrawerOpen(true);
+    setPatternNodeHealth([]);
+    setNodeHealthLoading(true);
+    try {
+      const r = await PatternAPI.nodehealth(id);
+      setPatternNodeHealth(r?.nodeHealth ?? []);
+    } catch (_) {}
+    setNodeHealthLoading(false);
   };
 
   // Open edit modal: pre-select services currently in the pattern by matching Exchange keys with 3 fallback strategies
@@ -326,6 +347,7 @@ export default function Patterns() {
       <div style={{ marginBottom: 16 }}>
         <div>
           <Text strong style={{ fontSize: 20 }}>{t('Pattern (Deployment Patterns)')}</Text>
+          <HelpButton module="patterns" />
           <br /><Text type="secondary">{t('Define service deployment topology and version strategy')}</Text>
           {getConfig().orgType === 'system' && (
           <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
@@ -361,7 +383,52 @@ export default function Patterns() {
           <Button icon={<ReloadOutlined />} onClick={() => load()}>{t('Refresh')}</Button>
         </div>
       </div>
-      <Table columns={columns} dataSource={tableData} loading={loading} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `${total} ${t('Patterns')}` }} size="middle" scroll={{ x: 'max-content' }} />
+      <Table columns={columns} dataSource={tableData} loading={loading} pagination={{ pageSize: 10, showSizeChanger: true, showQuickJumper: true, showLessItems: false, showTotal: (total) => `${total} ${t('Patterns')}` }} size="middle" scroll={{ x: 'max-content' }} />
+
+      <Drawer
+        title={t('Pattern Detail - ') + detailPatternId}
+        open={detailDrawerOpen}
+        onClose={() => setDetailDrawerOpen(false)}
+        width={640}
+        extra={<Button icon={<DownloadOutlined />} onClick={() => detailPatternId && exportPattern(detailPatternId)}>{t('Export JSON')}</Button>}
+      >
+        <Tabs items={[
+          {
+            key: 'info',
+            label: t('Info'),
+            children: (
+              <pre style={{ background: '#f5f5f5', padding: 16, borderRadius: 6, overflow: 'auto', maxHeight: 500 }}>
+                {JSON.stringify(data[detailPatternId], null, 2)}
+              </pre>
+            ),
+          },
+          {
+            key: 'nodehealth',
+            label: t('Node Health'),
+            children: (
+              <List
+                loading={nodeHealthLoading}
+                dataSource={patternNodeHealth}
+                locale={{ emptyText: t('No node health data') }}
+                renderItem={(nh: any, i: number) => (
+                  <List.Item>
+                    <List.Item.Meta
+                      title={<Text code>{nh.node_id || nh.node || `#${i + 1}`}</Text>}
+                      description={
+                        <div>
+                          <div>{t('Status: ')}{nh.status || nh.health_status || '-'}</div>
+                          {nh.last_seen && <div>{t('Last Seen: ')}{fmtTime(nh.last_seen)}</div>}
+                          {nh.last_health && <div>{t('Last Health: ')}{fmtTime(nh.last_health)}</div>}
+                        </div>
+                      }
+                    />
+                  </List.Item>
+                )}
+              />
+            ),
+          },
+        ]} />
+      </Drawer>
 
       <Modal
         title={t('Create Pattern')}

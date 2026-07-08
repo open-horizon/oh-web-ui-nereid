@@ -1,13 +1,18 @@
+// Copyright (C) 2026 YIQISOFT
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { useEffect, useState } from 'react';
 import {
   Table, Button, Space, Typography, message, Modal, Tag, Form, Input, Switch, Divider,
 } from 'antd';
 import {
-  SearchOutlined, ReloadOutlined, DeleteOutlined, PlusOutlined, KeyOutlined,
+  SearchOutlined, ReloadOutlined, DeleteOutlined, PlusOutlined, KeyOutlined, LockOutlined,
 } from '@ant-design/icons';
 import { UserAPI, ExchangeUser } from '../api/users';
 import { useT } from '../i18n/context';
 import { useScreenSize } from '../hooks/useIsMobile';
+import HelpButton from '../components/HelpButton';
 
 const { Text } = Typography;
 
@@ -22,8 +27,11 @@ export default function Users() {
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [pwOpen, setPwOpen] = useState(false);
+  const [pwUser, setPwUser] = useState('');
   const [search, setSearch] = useState('');
   const [form] = Form.useForm();
+  const [pwForm] = Form.useForm();
   const screenSize = useScreenSize();
   const load = async () => {
     setLoading(true);
@@ -80,6 +88,18 @@ export default function Users() {
   };
 
   // Open API key manager modal for a given user
+  const handleChangePw = async () => {
+    try {
+      const values = await pwForm.validateFields();
+      await UserAPI.changePassword(shortName(pwUser), values.newPassword);
+      message.success(t('Password changed successfully'));
+      setPwOpen(false);
+      pwForm.resetFields();
+    } catch (err: any) {
+      if (!err.message?.includes('validate')) message.error(err.message);
+    }
+  };
+
   const showApiKeys = (fullname: string) => {
     const username = shortName(fullname);
     const modal = Modal.info({ maskClosable: true,
@@ -107,6 +127,7 @@ export default function Users() {
         return (
           <Space>
             <Button size="small" icon={<KeyOutlined />} onClick={() => showApiKeys(name)} />
+            <Button size="small" icon={<LockOutlined />} onClick={() => { setPwUser(name); setPwOpen(true); pwForm.resetFields(); }} />
             <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(name)} />
           </Space>
         );
@@ -141,6 +162,7 @@ export default function Users() {
       <div style={{ marginBottom: 16 }}>
         <div>
           <Text strong style={{ fontSize: 20 }}>{t('User')}</Text>
+          <HelpButton module="users" />
           <br /><Text type="secondary">{t('User Management')}</Text>
         </div>
         <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -156,7 +178,7 @@ export default function Users() {
           <Button icon={<ReloadOutlined />} onClick={load}>{t('Refresh')}</Button>
         </div>
       </div>
-      <Table columns={columns} dataSource={tableData} loading={loading} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `${total} ${t('Users')}` }} size="middle" scroll={{ x: 'max-content' }} />
+      <Table columns={columns} dataSource={tableData} loading={loading} pagination={{ pageSize: 10, showSizeChanger: true, showQuickJumper: true, showLessItems: false, showTotal: (total) => `${total} ${t('Users')}` }} size="middle" scroll={{ x: 'max-content' }} />
 
       <Modal
         title={t('Create User')}
@@ -178,6 +200,14 @@ export default function Users() {
           </Form.Item>
           <Form.Item name="admin" label={t('Admin')} valuePropName="checked">
             <Switch />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal title={t('Change Password') + ' - ' + shortName(pwUser)} open={pwOpen} onOk={handleChangePw} onCancel={() => { setPwOpen(false); pwForm.resetFields(); }} width={400}>
+        <Form form={pwForm} layout="vertical">
+          <Form.Item name="newPassword" label={t('New Password')} rules={[{ required: true, message: t('Please enter new password') }]}>
+            <Input.Password />
           </Form.Item>
         </Form>
       </Modal>

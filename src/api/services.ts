@@ -1,3 +1,7 @@
+// Copyright (C) 2026 YIQISOFT
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { get, post, put, del } from './client';
 
 export interface ExchangeService {
@@ -45,5 +49,35 @@ export const ServiceAPI = {
   },
   delete(serviceId: string) {
     return del(svcUrl(serviceId));
+  },
+  keys(serviceId: string) {
+    const s = splitOrg(serviceId);
+    const qs = s.org ? `?org=${encodeURIComponent(s.org)}` : '';
+    return get<{ keys: string[] }>(`/services/${encodeURIComponent(s.name)}/keys${qs}`);
+  },
+  addKey(serviceId: string, keyId: string, key: string) {
+    const s = splitOrg(serviceId);
+    const qs = s.org ? `?org=${encodeURIComponent(s.org)}` : '';
+    return post(`/services/${encodeURIComponent(s.name)}/keys${qs}`, { keyId, key });
+  },
+  deleteKey(serviceId: string, keyId: string) {
+    const s = splitOrg(serviceId);
+    const qs = s.org ? `?org=${encodeURIComponent(s.org)}` : '';
+    return del(`/services/${encodeURIComponent(s.name)}/keys/${keyId}${qs}`);
+  },
+  dockauths(serviceId: string) {
+    const s = splitOrg(serviceId);
+    const qs = s.org ? `?org=${encodeURIComponent(s.org)}` : '';
+    return get<{ dockauths: any[] }>(`/services/${encodeURIComponent(s.name)}/dockauths${qs}`);
+  },
+  addDockauth(serviceId: string, data: any) {
+    const s = splitOrg(serviceId);
+    const qs = s.org ? `?org=${encodeURIComponent(s.org)}` : '';
+    return post(`/services/${encodeURIComponent(s.name)}/dockauths${qs}`, data);
+  },
+  deleteDockauth(serviceId: string, authId: string) {
+    const s = splitOrg(serviceId);
+    const qs = s.org ? `?org=${encodeURIComponent(s.org)}` : '';
+    return del(`/services/${encodeURIComponent(s.name)}/dockauths/${authId}${qs}`);
   },
 };
