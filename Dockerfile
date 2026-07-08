@@ -11,9 +11,9 @@ FROM node:20-alpine AS frontend-build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
-COPY tsconfig.json tsconfig.node.json vite.config.ts ./
+COPY tsconfig.json tsconfig.node.json vite.config.ts index.html ./
 COPY src ./src
-RUN npm run build
+RUN npx vite build
 
 # ---- Backend Runtime (Express BFF) ----
 FROM node:20-alpine AS backend
