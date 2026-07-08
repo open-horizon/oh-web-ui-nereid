@@ -1,8 +1,6 @@
 # ==========================================
 # Production Multi-stage Dockerfile for NereidAI
 # ==========================================
-# Production Multi-stage Dockerfile for NereidAI
-# ==========================================
 
 # ---- Backend Runtime ----
 FROM node:20-alpine AS backend
