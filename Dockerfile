@@ -8,6 +8,7 @@
 
 # ---- Frontend build stage ----
 FROM node:20-alpine AS frontend-build
+ARG TARGETARCH
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
