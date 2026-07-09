@@ -31,6 +31,8 @@ services:
       - SESSION_ENC_KEY=${SESSION_ENC_KEY:-}
     ports:
       - "3001:3001"
+    volumes:
+      - nereid-logs:/app/logs
     depends_on:
       redis:
         condition: service_healthy
@@ -61,4 +63,6 @@ networks:
     driver: bridge
 
 volumes:
+  nereid-logs:
+
   redis-data:
