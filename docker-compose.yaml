@@ -18,11 +18,7 @@ services:
       start_period: 10s
 
   open-horizon-exchangeui-backend:
-    build:
-      context: .
-      target: backend
-      dockerfile: Dockerfile
-    image: open-horizon-exchangeui-backend:latest
+    image: ghcr.io/nereidai/open-horizon-exchangeui-backend:v0.0.1
     container_name: open-horizon-exchangeui-backend
     restart: unless-stopped
     environment:
@@ -48,11 +44,7 @@ services:
       start_period: 10s
 
   open-horizon-exchangeui-frontend:
-    build:
-      context: .
-      target: frontend
-      dockerfile: Dockerfile
-    image: open-horizon-exchangeui-frontend:latest
+    image: ghcr.io/nereidai/open-horizon-exchangeui-frontend:v0.0.1
     container_name: open-horizon-exchangeui-frontend
     restart: unless-stopped
     ports:
