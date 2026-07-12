@@ -3,54 +3,69 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useState } from 'react';
-import { Table, Typography, Input, Tag, Button, Segmented } from 'antd';
+import { Table, Typography, Input, Tag, Button, Drawer, Descriptions, Select } from 'antd';
 import { SearchOutlined, ReloadOutlined } from '@ant-design/icons';
 import { get } from '../api/client';
+import { OrgAPI } from '../api/organizations';
+import { getConfig } from '../api/config';
 import { useT } from '../i18n/context';
 
 const { Text, Paragraph } = Typography;
 
 interface LogEntry {
-  t: string;
-  type?: string;
-  u?: string;
-  o?: string;
-  m?: string;
-  p?: string;
-  url?: string;
-  s?: number;
-  ms?: number;
-  name?: string;
-  detail?: any;
-  op?: string;
-  body?: any;
-  _idx?: number;
+  id: number;
+  ts: string;
+  actor_type: string;
+  actor: string;
+  org: string | null;
+  method: string;
+  path: string;
+  status: number;
+  ip: string;
+  ms: number;
+  proxied_to: string | null;
+  detail: any;
 }
 
 export default function AuditLog() {
   const { t, fmtTime } = useT();
+  const config = getConfig();
+  const isPlatform = config.role === 'platform';
   const [data, setData] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [source, setSource] = useState<'system' | 'audit'>('system');
+  const [orgFilter, setOrgFilter] = useState<string | undefined>();
+  const [orgs, setOrgs] = useState<{ id: string }[]>([]);
+  const [detail, setDetail] = useState<LogEntry | null>(null);
   const [pageSize, setPageSize] = useState(50);
 
-  const load = async (q?: string, src?: 'system' | 'audit') => {
+  const load = async () => {
     setLoading(true);
     try {
-      const s = src || source;
-      const params = new URLSearchParams({ source: s, limit: '200000' });
-      if (q) params.set('search', q);
+      const params = new URLSearchParams({ limit: '500' });
+      if (search) params.set('search', search);
+      if (isPlatform && orgFilter) params.set('org', orgFilter);
       const res = await get<{ entries: LogEntry[] }>(`/audit?${params.toString()}`);
-      const entries = (res?.entries ?? []).map((e, i) => ({ ...e, _idx: i }));
-      setData(entries);
-    } catch { setData([]); }
+      setData(res?.entries ?? []);
+    } catch {
+      setData([]);
+    }
     setLoading(false);
   };
 
   useEffect(() => {
-    load('', source);
-  }, [source]);
+    load();
+    // Platform can filter by org
+    if (isPlatform) {
+      OrgAPI.list()
+        .then((d) => {
+          const map = d.orgs || {};
+          setOrgs(Object.keys(map).filter((id) => id !== 'root').map((id) => ({ id })));
+        })
+        .catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const methodColor = (m: string) => {
     switch (m) {
@@ -61,79 +76,35 @@ export default function AuditLog() {
       default: return 'default';
     }
   };
-
-  const statusColor = (s: number) => s < 300 ? 'green' : s < 400 ? 'orange' : 'red';
-
-  const typeColor = (ty: string) => {
+  const statusColor = (s: number) => (s < 300 ? 'green' : s < 400 ? 'orange' : 'red');
+  const actorColor = (ty: string) => {
     switch (ty) {
-      case 'api': return 'blue';
-      case 'exchange': return 'purple';
-      case 'event': return 'gold';
+      case 'user': return 'blue';
+      case 'apikey': return 'purple';
       default: return 'default';
     }
   };
-
-  const typeLabel = (ty: string) => {
+  const actorLabel = (ty: string) => {
     switch (ty) {
-      case 'api': return t('API Call');
-      case 'exchange': return t('Exchange Call');
-      case 'event': return t('System Event');
+      case 'user': return t('Console User');
+      case 'apikey': return t('Partner API');
+      case 'system': return t('System');
       default: return ty || '-';
     }
   };
 
   const columns = [
-    { title: t('Time'), key: 'time', width: 180, render: (_: any, r: LogEntry) => fmtTime(r.t) },
-    { title: t('Type'), key: 'type', width: 110, render: (_: any, r: LogEntry) => <Tag color={typeColor(r.type || '')}>{typeLabel(r.type || '')}</Tag> },
-    { title: t('Operation'), key: 'op', width: 220, render: (_: any, r: LogEntry) => r.op || '-' },
-    { title: t('User'), dataIndex: 'u', key: 'u', width: 150 },
-    { title: t('Method'), dataIndex: 'm', key: 'm', width: 70, render: (v: string) => v ? <Tag color={methodColor(v)}>{v}</Tag> : '-' },
-    {
-      title: t('Path / URL / Event'),
-      key: 'target',
-      render: (_: any, r: LogEntry) => {
-        if (r.type === 'event') return <Text code style={{ fontSize: 12 }}>{r.name}</Text>;
-        const target = r.p || r.url || '-';
-        return <Text code style={{ fontSize: 12 }}>{target}</Text>;
-      },
-    },
-    { title: t('Status Code'), dataIndex: 's', key: 's', width: 80, render: (v: number) => v ? <Tag color={statusColor(v)}>{v}</Tag> : '-' },
+    { title: t('Time'), key: 'time', width: 180, render: (_: any, r: LogEntry) => fmtTime(r.ts) },
+    { title: t('Actor'), key: 'actor', width: 150, render: (_: any, r: LogEntry) => <Tag color={actorColor(r.actor_type)}>{actorLabel(r.actor_type)}</Tag> },
+    { title: t('User'), dataIndex: 'actor', key: 'actorName', width: 150 },
+    ...(isPlatform ? [{ title: t('Org'), dataIndex: 'org', key: 'org', width: 120, render: (v: string) => v || '-' }] : []),
+    { title: t('Method'), dataIndex: 'method', key: 'method', width: 80, render: (v: string) => v ? <Tag color={methodColor(v)}>{v}</Tag> : '-' },
+    { title: t('Path'), dataIndex: 'path', key: 'path', render: (v: string) => <Text code style={{ fontSize: 12 }}>{v}</Text> },
+    { title: t('Proxied To'), dataIndex: 'proxied_to', key: 'proxied_to', width: 280, render: (v: string) => v ? <Text code style={{ fontSize: 12 }}>{v}</Text> : <Text type="secondary">-</Text> },
+    { title: t('Status'), dataIndex: 'status', key: 'status', width: 80, render: (v: number) => v ? <Tag color={statusColor(v)}>{v}</Tag> : '-' },
+    { title: t('IP'), dataIndex: 'ip', key: 'ip', width: 130, render: (v: string) => v || '-' },
+    { title: t('Ms'), dataIndex: 'ms', key: 'ms', width: 70, render: (v: number) => v ?? '-' },
   ];
-
-  const expandedRowRender = (r: LogEntry) => {
-    if (r.body) {
-      return (
-        <Paragraph style={{ margin: 0 }}>
-          <Text strong>{t('Submitted Content')}:</Text>
-          <pre style={{ background: '#f5f5f5', padding: 12, borderRadius: 4, maxHeight: 300, overflow: 'auto', fontSize: 12, margin: '8px 0 0' }}>
-            {JSON.stringify(r.body, null, 2)}
-          </pre>
-        </Paragraph>
-      );
-    }
-    if (r.detail) {
-      return (
-        <Paragraph style={{ margin: 0 }}>
-          <Text strong>{t('Event Detail')}:</Text>
-          <pre style={{ background: '#f5f5f5', padding: 12, borderRadius: 4, maxHeight: 300, overflow: 'auto', fontSize: 12, margin: '8px 0 0' }}>
-            {JSON.stringify(r.detail, null, 2)}
-          </pre>
-        </Paragraph>
-      );
-    }
-    if (r.type === 'exchange') {
-      return (
-        <Paragraph style={{ margin: 0 }}>
-          <Text strong>{t('Outgoing Call')}: </Text>
-          <Text type="secondary">{r.url} — {r.ms ? `${r.ms}ms` : ''} — {t('No payload logged')}</Text>
-        </Paragraph>
-      );
-    }
-    if (r.type === 'api') {
-      return <Text type="secondary">{t('Read-only request, no submitted content')}</Text>;
-    }
-    return <Text type="secondary">—</Text>;
-  };
 
   return (
     <div>
@@ -142,46 +113,72 @@ export default function AuditLog() {
         <br /><Text type="secondary">{t('Operation history and audit trail')}</Text>
       </div>
       <div style={{ marginBottom: 12, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        <Segmented
-          value={source}
-          onChange={(v) => setSource(v as 'system' | 'audit')}
-          options={[
-            { label: t('System Log'), value: 'system' },
-            { label: t('Audit Trail'), value: 'audit' },
-          ]}
-        />
         <Input
           allowClear
           placeholder={t('Search by user, path, status...')}
           prefix={<SearchOutlined style={{ opacity: 0.4 }} />}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          onPressEnter={() => load(search)}
+          onPressEnter={load}
           style={{ width: 320 }}
         />
-        <Button icon={<ReloadOutlined />} onClick={() => load(search)}>{t('Search')}</Button>
-        <Button onClick={() => { setSearch(''); load('', source); }}>{t('Clear')}</Button>
+        {isPlatform && (
+          <Select
+            allowClear
+            placeholder={t('All orgs')}
+            value={orgFilter}
+            onChange={setOrgFilter}
+            options={orgs.map((o) => ({ value: o.id, label: o.id }))}
+            style={{ width: 160 }}
+          />
+        )}
+        <Button icon={<ReloadOutlined />} onClick={load}>{t('Search')}</Button>
+        <Button onClick={() => { setSearch(''); setOrgFilter(undefined); setTimeout(load, 0); }}>{t('Clear')}</Button>
       </div>
       <Table
         columns={columns}
         dataSource={data}
         loading={loading}
-        rowKey={(r) => `${r._idx}-${r.t}`}
+        rowKey="id"
         size="small"
         scroll={{ x: 'max-content' }}
-        expandable={{
-          expandedRowRender,
-        }}
+        onRow={(r) => ({ onClick: () => setDetail(r) })}
         pagination={{
           pageSize,
           pageSizeOptions: [10, 20, 50, 100, 200, 500],
           showSizeChanger: true,
           showQuickJumper: true,
-          showLessItems: false,
-          onShowSizeChange: (_current, size) => setPageSize(size),
+          onShowSizeChange: (_c, size) => setPageSize(size),
           showTotal: (total) => `${total} ${t('entries')}`,
         }}
       />
+      <Drawer
+        title={t('Audit Detail')}
+        open={!!detail}
+        onClose={() => setDetail(null)}
+        width={520}
+      >
+        {detail && (
+          <Descriptions column={1} bordered size="small">
+            <Descriptions.Item label={t('Time')}>{fmtTime(detail.ts)}</Descriptions.Item>
+            <Descriptions.Item label={t('Actor')}>{actorLabel(detail.actor_type)} / {detail.actor}</Descriptions.Item>
+            <Descriptions.Item label={t('Org')}>{detail.org || '-'}</Descriptions.Item>
+            <Descriptions.Item label={t('Request')}>{detail.method} {detail.path}</Descriptions.Item>
+            <Descriptions.Item label={t('Status')}>{detail.status}</Descriptions.Item>
+            <Descriptions.Item label={t('IP')}>{detail.ip || '-'}</Descriptions.Item>
+            <Descriptions.Item label={t('Duration')}>{detail.ms} ms</Descriptions.Item>
+            <Descriptions.Item label={t('Proxied To')}>{detail.proxied_to || '-'}</Descriptions.Item>
+          </Descriptions>
+        )}
+        {detail?.detail && (
+          <Paragraph style={{ marginTop: 16 }}>
+            <Text strong>{t('Detail')}:</Text>
+            <pre style={{ background: '#f5f5f5', padding: 12, borderRadius: 4, maxHeight: 320, overflow: 'auto', fontSize: 12, margin: '8px 0 0' }}>
+              {JSON.stringify(detail.detail, null, 2)}
+            </pre>
+          </Paragraph>
+        )}
+      </Drawer>
     </div>
   );
 }

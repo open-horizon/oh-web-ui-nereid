@@ -7,11 +7,12 @@ and air-gapped environments.
 
 | Service | Image | Purpose | Port |
 |---|---|---|---|
-| `redis` | `redis:6.2.2-alpine` | Encrypted session store (TTL) | internal |
+| `postgres` | `postgres:16-alpine` | BFF user/API key/Exchange config/audit storage | internal (5432) |
+| `redis` | `redis:6.2.2-alpine` | Encrypted session store (TTL, optional) | internal |
 | `open-horizon-exchangeui-backend` | local build | BFF API proxy | `3001` (internal) |
 | `open-horizon-exchangeui-frontend` | local build | Nginx + static assets + TLS | `8090` (HTTP→HTTPS), `8443` (HTTPS) |
 
-The Nginx front end terminates TLS and reverse-proxies `/api` to the backend.
+The Nginx front end terminates TLS and reverse-proxies `/api` to the backend. PostgreSQL is required; Redis is optional (falls back to in-memory session storage).
 
 ## 1.1 Prerequisites (local build / development)
 
@@ -25,8 +26,10 @@ The Nginx front end terminates TLS and reverse-proxies `/api` to the backend.
     nvm alias default 20
     ```
 - **Docker >= 20.10** and **Docker Compose v2** (for container deployment).
-- **Redis** (provided automatically as the `redis` service in Compose; not
-  required for local `npm run dev:backend` unless session persistence is needed).
+- **PostgreSQL** (included as the `postgres` service in Compose; a running PG instance
+  is required even for local `npm run dev:backend`).
+- **Redis** (provided automatically as the `redis` service in Compose; **optional**,
+  falls back to in-memory session store when `REDIS_URL` is not set).
 - **Network access** to the Open Horizon Exchange API endpoint.
 
 > Note: The Docker images are built `FROM node:20-alpine`, so the runtime
@@ -37,11 +40,13 @@ The Nginx front end terminates TLS and reverse-proxies `/api` to the backend.
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | `3001` | BFF listen port |
-| `REDIS_URL` | `redis://redis:6379` | Redis connection string |
-| `SESSION_TTL` | `1800` | Session idle lifetime (seconds) |
+| `DATABASE_URL` | — | **Required.** PostgreSQL connection string (e.g. `postgres://nereid:nereidpass@postgres:5432/nereid`) |
+| `REDIS_URL` | — | Redis connection string (optional; when unset uses in-memory session store) |
+| `SESSION_TTL` | `86400` | Session idle lifetime (seconds, default 24h) |
+| `SESSION_ABS_TTL` | `28800` | Session absolute timeout (seconds, default 8h) |
 | `SESSION_ENC_KEY` | _(auto-generated)_ | 32-byte master key as **64 hex chars** for AES-256-GCM |
 
-Create a `.env` from `.env.example` and set at least `SESSION_ENC_KEY` in
+Create a `.env` from `.env.example` and set at least `DATABASE_URL` and `SESSION_ENC_KEY` in
 production.
 
 ## 3. Generate the Session Master Key
@@ -110,8 +115,11 @@ override the image in `docker-compose.yaml`.
 
 ## 6. Persistence
 
-- **Redis data**: the `redis-data` named volume is declared in
-  `docker-compose.yaml`. Keep it to retain the session store across restarts.
+- **PostgreSQL data**: the `postgres-data` named volume is declared in
+  `docker-compose.yaml`. Keep it to retain BFF user accounts, API keys,
+  Exchange config, audit logs, and settings across restarts.
+- **Redis data** (optional): the `redis-data` named volume is declared in
+  `docker-compose.yaml`. Keeps encrypted sessions across restarts when Redis is enabled.
 - **Session key**: prefer `SESSION_ENC_KEY` (env/secret) over the auto-generated
   `.session.key` file so it survives volume changes.
 
@@ -123,9 +131,11 @@ built-in Nginx TLS is sufficient for direct exposure.
 
 ## 8. Security Checklist
 
+- [ ] `DATABASE_URL` set via secret (connection string with strong password)
 - [ ] `SESSION_ENC_KEY` set via secret (not auto-generated per host)
 - [ ] Real TLS certificate mounted
 - [ ] `.session.key`, `.env` never committed (git-ignored)
-- [ ] Redis volume persistent
-- [ ] Audit logs (`system.log` / `audit.log`) rotated/collected
+- [ ] PostgreSQL volume persistent
+- [ ] Redis volume persistent (if Redis is used)
+- [ ] Audit logs (`audit_log` table) retention configured via `/api/settings` or `audit_retention_days` env
 - [ ] Firewall limits exposure to `8443` (and `8090` if HTTP redirect desired)

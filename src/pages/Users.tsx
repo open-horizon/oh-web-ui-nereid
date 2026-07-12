@@ -2,14 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import {
   Table, Button, Space, Typography, message, Modal, Tag, Form, Input, Switch, Divider,
 } from 'antd';
 import {
-  SearchOutlined, ReloadOutlined, DeleteOutlined, PlusOutlined, KeyOutlined, LockOutlined,
+  SearchOutlined, ReloadOutlined, DeleteOutlined, PlusOutlined, KeyOutlined, LockOutlined, UserOutlined,
 } from '@ant-design/icons';
-import { UserAPI, ExchangeUser } from '../api/users';
+import { ExchangeUserAPI, ExchangeUser } from '../api/exchangeUsers';
 import { useT } from '../i18n/context';
 import { useScreenSize } from '../hooks/useIsMobile';
 import HelpButton from '../components/HelpButton';
@@ -23,6 +23,16 @@ function shortName(full: string) {
 
 export default function Users() {
   const { t } = useT();
+
+  // Generate a random password with mixed case letters
+  const generatePassword = useCallback((len: number) => {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+    const buf = new Uint32Array(len);
+    crypto.getRandomValues(buf);
+    let pw = '';
+    for (let i = 0; i < len; i++) pw += chars[buf[i] % chars.length];
+    return pw;
+  }, []);
   const [data, setData] = useState<Record<string, ExchangeUser>>({});
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
@@ -36,7 +46,7 @@ export default function Users() {
   const load = async () => {
     setLoading(true);
     try {
-      const res = await UserAPI.list();
+      const res = await ExchangeUserAPI.list();
       setData(res?.users ?? {});
     } catch (err: any) {
       message.error(err.message);
@@ -50,11 +60,13 @@ export default function Users() {
   }, []);
 
   const handleDelete = (fullname: string) => {
+    const name = shortName(fullname);
+    const org = fullname.includes('/') ? fullname.split('/')[0] : undefined;
     Modal.confirm({
       title: t('Confirm deletion of user').replace('{0}', fullname),
       onOk: async () => {
         try {
-          await UserAPI.delete(shortName(fullname));
+          await ExchangeUserAPI.delete(name, org);
           message.success(t('Deleted'));
           load();
         } catch (err: any) {
@@ -75,7 +87,7 @@ export default function Users() {
       if (values.password) {
         body.password = values.password;
       }
-      await UserAPI.create(values.username, body);
+      await ExchangeUserAPI.create(values.username, body);
       message.success(t('User created successfully'));
       setCreateOpen(false);
       form.resetFields();
@@ -91,7 +103,7 @@ export default function Users() {
   const handleChangePw = async () => {
     try {
       const values = await pwForm.validateFields();
-      await UserAPI.changePassword(shortName(pwUser), values.newPassword);
+      await ExchangeUserAPI.changePassword(shortName(pwUser), values.newPassword, pwUser.includes('/') ? pwUser.split('/')[0] : undefined);
       message.success(t('Password changed successfully'));
       setPwOpen(false);
       pwForm.resetFields();
@@ -163,7 +175,7 @@ export default function Users() {
         <div>
           <Text strong style={{ fontSize: 20 }}>{t('User')}</Text>
           <HelpButton module="users" />
-          <br /><Text type="secondary">{t('User Management')}</Text>
+          <br /><Text type="secondary">{t('Exchange User Management')}</Text>
         </div>
         <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <Input
@@ -193,7 +205,31 @@ export default function Users() {
             <Input placeholder="username" />
           </Form.Item>
           <Form.Item name="password" label={t('Password')} rules={[{ required: true, message: t('Password must be set when creating user') }]}>
-            <Input.Password placeholder={t('Password')} />
+            <Input.Password
+              addonAfter={
+                <Button type="link" size="small" icon={<UserOutlined />} onClick={() => {
+                  const pw = generatePassword(24);
+                  form.setFieldsValue({ password: pw, passwordConfirm: pw });
+                }} style={{ padding: 0, height: 'auto' }} />
+              }
+              placeholder={t('Password')}
+            />
+          </Form.Item>
+          <Form.Item
+            name="passwordConfirm"
+            label={t('Confirm Password')}
+            dependencies={['password']}
+            rules={[
+              { required: true, message: t('Required') },
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  if (!value || value === getFieldValue('password')) return Promise.resolve();
+                  return Promise.reject(new Error(t('Passwords do not match')));
+                },
+              }),
+            ]}
+          >
+            <Input.Password />
           </Form.Item>
           <Form.Item name="email" label={t('Email')}>
             <Input placeholder="user@example.com" />
@@ -207,6 +243,29 @@ export default function Users() {
       <Modal title={t('Change Password') + ' - ' + shortName(pwUser)} open={pwOpen} onOk={handleChangePw} onCancel={() => { setPwOpen(false); pwForm.resetFields(); }} width={400}>
         <Form form={pwForm} layout="vertical">
           <Form.Item name="newPassword" label={t('New Password')} rules={[{ required: true, message: t('Please enter new password') }]}>
+            <Input.Password
+              addonAfter={
+                <Button type="link" size="small" icon={<UserOutlined />} onClick={() => {
+                  const pw = generatePassword(24);
+                  pwForm.setFieldsValue({ newPassword: pw, newPasswordConfirm: pw });
+                }} style={{ padding: 0, height: 'auto' }} />
+              }
+            />
+          </Form.Item>
+          <Form.Item
+            name="newPasswordConfirm"
+            label={t('Confirm Password')}
+            dependencies={['newPassword']}
+            rules={[
+              { required: true, message: t('Required') },
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  if (!value || value === getFieldValue('newPassword')) return Promise.resolve();
+                  return Promise.reject(new Error(t('Passwords do not match')));
+                },
+              }),
+            ]}
+          >
             <Input.Password />
           </Form.Item>
         </Form>
@@ -223,7 +282,7 @@ function ApiKeyManager({ username, onClose }: { username: string; onClose: () =>
   const [newKey, setNewKey] = useState('');
   const loadKeys = async () => {
     try {
-      const res = await UserAPI.listApiKeys(username);
+      const res = await ExchangeUserAPI.listApiKeys(username, username.includes('/') ? username.split('/')[0] : undefined);
       setKeys(res?.apiKeys ?? []);
     } catch { /* ignore */ }
     setLoading(false);
@@ -235,7 +294,7 @@ function ApiKeyManager({ username, onClose }: { username: string; onClose: () =>
 
   const handleGenerate = async () => {
     try {
-      const res = await UserAPI.createApiKey(username, { label: `webui-${Date.now()}` });
+      const res = await ExchangeUserAPI.createApiKey(username, { label: `webui-${Date.now()}` });
       const key = res?.value || '';
       setNewKey(key);
       message.success(t('API key generated'));
@@ -250,7 +309,7 @@ function ApiKeyManager({ username, onClose }: { username: string; onClose: () =>
       title: t('Confirm deletion of this API key?'),
       onOk: async () => {
         try {
-          await UserAPI.deleteApiKey(username, keyId);
+          await ExchangeUserAPI.deleteApiKey(username, keyId);
           message.success(t('Deleted'));
           loadKeys();
         } catch (err: any) {

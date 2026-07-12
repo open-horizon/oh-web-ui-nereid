@@ -41,8 +41,9 @@ export const ServiceAPI = {
     const params = org ? `?org=${encodeURIComponent(org)}` : '';
     return get<{ services: Record<string, ExchangeService> }>(`/services${params}`);
   },
-  create(data: Record<string, any>) {
-    return post('/services', data);
+  create(data: Record<string, any>, org?: string) {
+    const qs = org ? `?org=${encodeURIComponent(org)}` : '';
+    return post(`/services${qs}`, data);
   },
   update(serviceId: string, data: Record<string, any>) {
     return put(svcUrl(serviceId), data);

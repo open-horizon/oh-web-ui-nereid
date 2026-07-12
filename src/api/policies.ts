@@ -28,6 +28,21 @@ export interface MgmtPolicy {
   [key: string]: any;
 }
 
+function splitOrg(raw: string): { name: string; org?: string } {
+  const i = raw.indexOf('/');
+  return i >= 0 ? { name: raw.slice(i + 1), org: raw.slice(0, i) } : { name: raw };
+}
+function polUrl(id: string): string {
+  const s = splitOrg(id);
+  const qs = s.org ? `?org=${encodeURIComponent(s.org)}` : '';
+  return `/policies/${encodeURIComponent(s.name)}${qs}`;
+}
+function mgmtUrl(id: string): string {
+  const s = splitOrg(id);
+  const qs = s.org ? `?org=${encodeURIComponent(s.org)}` : '';
+  return `/mgmtpolicies/${encodeURIComponent(s.name)}${qs}`;
+}
+
 // Deployment policies (businessPolicy) — controls which services deploy on which nodes via constraints
 export const DeploymentPolicyAPI = {
   // List with optional cross-org query parameter
@@ -35,14 +50,15 @@ export const DeploymentPolicyAPI = {
     const qs = org ? `?org=${encodeURIComponent(org)}` : '';
     return get<{ businessPolicy: Record<string, DeploymentPolicy> }>(`/policies${qs}`);
   },
-  create(name: string, data: Partial<DeploymentPolicy>) {
-    return post('/policies', { name, ...data });
+  create(name: string, data: Partial<DeploymentPolicy>, org?: string) {
+    const qs = org ? `?org=${encodeURIComponent(org)}` : '';
+    return post(`/policies${qs}`, { name, ...data });
   },
   update(policyId: string, data: Partial<DeploymentPolicy>) {
-    return put(`/policies/${encodeURIComponent(policyId)}`, data);
+    return put(polUrl(policyId), data);
   },
   delete(policyId: string) {
-    return del(`/policies/${encodeURIComponent(policyId)}`);
+    return del(polUrl(policyId));
   },
 };
 
@@ -55,9 +71,9 @@ export const MgmtPolicyAPI = {
     return post('/mgmtpolicies', { name, ...data });
   },
   update(policyId: string, data: Partial<MgmtPolicy>) {
-    return put(`/mgmtpolicies/${encodeURIComponent(policyId)}`, data);
+    return put(mgmtUrl(policyId), data);
   },
   delete(policyId: string) {
-    return del(`/mgmtpolicies/${encodeURIComponent(policyId)}`);
+    return del(mgmtUrl(policyId));
   },
 };

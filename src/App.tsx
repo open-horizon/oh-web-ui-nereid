@@ -1,7 +1,3 @@
-// Copyright (C) 2026 YIQISOFT
-//
-// SPDX-License-Identifier: Apache-2.0
-
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { ConfigProvider, theme } from 'antd';
@@ -9,9 +5,12 @@ import zhCN from 'antd/locale/zh_CN';
 import enUS from 'antd/locale/en_US';
 import AppLayout from './components/AppLayout';
 import Login from './pages/Login';
+import Settings from './pages/Settings';
 import Dashboard from './pages/Dashboard';
 import Organizations from './pages/Organizations';
 import Users from './pages/Users';
+import BffUsers from './pages/BffUsers';
+import Profile from './pages/Profile';
 import Nodes from './pages/Nodes';
 import Services from './pages/Services';
 import Patterns from './pages/Patterns';
@@ -23,7 +22,8 @@ import HaGroups from './pages/HaGroups';
 import AgentFileVersion from './pages/AgentFileVersion';
 import Help from './pages/Help';
 import AuditLog from './pages/AuditLog';
-import { isAuthenticated, saveSession, saveOrgType } from './api/config';
+import ApiKeys from './pages/ApiKeys';
+import { isAuthenticated, saveSession, clearSession } from './api/config';
 import { LanguageProvider, useT } from './i18n/context';
 import dict from './i18n/zh';
 
@@ -44,11 +44,11 @@ function SessionBootstrap({ children }: { children: React.ReactNode }) {
         const me = await fetch('/api/me');
         if (me.ok) {
           const data = await me.json();
-          saveSession(data.orgId, data.version);
-          const typeRes = await fetch('/api/org-type');
-          if (typeRes.ok) saveOrgType((await typeRes.json()).orgType);
+          saveSession(data);
         }
-      } catch {}
+      } catch {
+        clearSession();
+      }
       setReady(true);
     })();
   }, []);
@@ -61,42 +61,35 @@ function Root() {
   return (
     <ConfigProvider
       locale={lang === 'zh' ? zhCN : enUS}
-      theme={{
-        algorithm: theme.defaultAlgorithm,
-        token: {
-          borderRadius: 6,
-        },
-      }}
+      theme={{ algorithm: theme.defaultAlgorithm, token: { borderRadius: 6 } }}
     >
       <BrowserRouter>
-          <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route
-              element={
-                <RequireAuth>
-                  <AppLayout />
-                </RequireAuth>
-              }
-            >
-              <Route path="/dashboard" element={<Dashboard />} />
-              <Route path="/organizations" element={<Organizations />} />
-              <Route path="/users" element={<Users />} />
-              <Route path="/nodes" element={<Nodes />} />
-              <Route path="/services" element={<Services />} />
-              <Route path="/patterns" element={<Patterns />} />
-              <Route path="/policies" element={<Policies />} />
-              <Route path="/mgmtpolicies" element={<MgmtPolicies />} />
-              <Route path="/agbots" element={<Agbots />} />
-              <Route path="/catalog" element={<Catalog />} />
-              <Route path="/hagroups" element={<HaGroups />} />
-              <Route path="/agentfileversion" element={<AgentFileVersion />} />
-              <Route path="/help" element={<Help />} />
-              <Route path="/audit" element={<AuditLog />} />
-              <Route path="/" element={<Navigate to="/dashboard" replace />} />
-              <Route path="*" element={<Navigate to="/dashboard" replace />} />
-            </Route>
-          </Routes>
-        </BrowserRouter>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/settings" element={<Settings />} />
+            <Route path="/organizations" element={<Organizations />} />
+            <Route path="/users" element={<Users />} />
+            <Route path="/bff-users" element={<BffUsers />} />
+            <Route path="/profile" element={<Profile />} />
+            <Route path="/nodes" element={<Nodes />} />
+            <Route path="/services" element={<Services />} />
+            <Route path="/patterns" element={<Patterns />} />
+            <Route path="/policies" element={<Policies />} />
+            <Route path="/mgmtpolicies" element={<MgmtPolicies />} />
+            <Route path="/agbots" element={<Agbots />} />
+            <Route path="/catalog" element={<Catalog />} />
+            <Route path="/hagroups" element={<HaGroups />} />
+            <Route path="/agentfileversion" element={<AgentFileVersion />} />
+            <Route path="/help" element={<Help />} />
+            <Route path="/audit" element={<AuditLog />} />
+            <Route path="/apikeys" element={<ApiKeys />} />
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          </Route>
+        </Routes>
+      </BrowserRouter>
     </ConfigProvider>
   );
 }

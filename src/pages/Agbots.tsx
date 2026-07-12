@@ -4,13 +4,13 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { usePolling } from '../hooks/usePolling';
-import { Table, Button, Space, Typography, message, Modal, Drawer, Descriptions, Tag, Form, Input, Select, Tabs, Tooltip, List } from 'antd';
-import { SearchOutlined, ReloadOutlined, DeleteOutlined, EyeOutlined, KeyOutlined, LinkOutlined } from '@ant-design/icons';
+import { Table, Button, Space, Typography, message, Modal, Drawer, Descriptions, Tag, Input, Select, Tabs, Tooltip, List, Form } from 'antd';
+import { SearchOutlined, ReloadOutlined, DeleteOutlined, EyeOutlined, LinkOutlined, PlusOutlined, KeyOutlined } from '@ant-design/icons';
 import { AgbotAPI, ExchangeAgbot } from '../api/agbots';
 import { PatternAPI, ExchangePattern } from '../api/patterns';
 import { DeploymentPolicyAPI, DeploymentPolicy } from '../api/policies';
 import { OrgAPI } from '../api/organizations';
-import { getConfig, setAgbotAuth } from '../api/config';
+import { getConfig } from '../api/config';
 import { useT } from '../i18n/context';
 import { useScreenSize } from '../hooks/useIsMobile';
 import HelpButton from '../components/HelpButton';
@@ -23,9 +23,6 @@ export default function Agbots() {
   const [loading, setLoading] = useState(true);
   const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
   const [selectedAgbot, setSelectedAgbot] = useState<ExchangeAgbot | null>(null);
-  const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [authForm] = Form.useForm();
-  const [authing, setAuthing] = useState(false);
 
   const [patternPickerOpen, setPatternPickerOpen] = useState(false);
   const [policyPickerOpen, setPolicyPickerOpen] = useState(false);
@@ -33,10 +30,11 @@ export default function Agbots() {
   const [policies, setPolicies] = useState<Record<string, DeploymentPolicy>>({});
   const [pickerLoading, setPickerLoading] = useState(false);
   const [pickerOrg, setPickerOrg] = useState<string>('');
-  const [agbotAuthToken, setAgbotAuthToken] = useState<string>('');
 
-  const [authHistory, setAuthHistory] = useState<string[]>([]);
   const [allOrgs, setAllOrgs] = useState<string[]>([]);
+  const [pageOrg, setPageOrg] = useState<string>('');
+  const [patternCounts, setPatternCounts] = useState<Record<string, number>>({});
+  const [policyCounts, setPolicyCounts] = useState<Record<string, number>>({});
   const [currentAgbotId, setCurrentAgbotId] = useState<string>('');
   const [detailPatterns, setDetailPatterns] = useState<{key: string; patternOrgid: string; pattern: string}[]>([]);
   const [detailPols, setDetailPols] = useState<{key: string; businessPolOrgid: string; businessPol: string}[]>([]);
@@ -44,9 +42,13 @@ export default function Agbots() {
   const [agbotAgreements, setAgbotAgreements] = useState<any[]>([]);
   const [agbotAgreementsLoading, setAgbotAgreementsLoading] = useState(false);
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createOrg, setCreateOrg] = useState('');
+  const [createForm] = Form.useForm();
   const screenSize = useScreenSize();
-
-  const rootAuthCreds = getConfig().rootAuth || '';
 
   const tableData = [...data]
     .sort((a, b) => {
@@ -66,58 +68,17 @@ export default function Agbots() {
     .map((a, i) => ({ ...a, key: a.id, index: i }));
 
   const sessionOrg = getConfig().orgId || '';
-  const orgType = getConfig().orgType;
+  const isPlatform = getConfig().role === 'platform';
 
-  // Store agbot cross-org auth token in memory and global config; used via x-agbot-auth header
-  const doAgbotAuth = (userToken: string, org: string) => {
-    setAgbotAuthToken(userToken);
-    setPickerOrg(org);
-    setAgbotAuth(userToken);
-    message.success(t('Agbot authorization applied'));
-  };
-
-  // Authorized if user has provided agbot credentials or root auth is available
-  const isAuthorized = !!(agbotAuthToken || rootAuthCreds);
-
-  // Toggle auth: clear existing or open modal for new credentials
-  const handleAuthorize = () => {
-    if (agbotAuthToken) {
-      setAgbotAuthToken('');
-      setPickerOrg('');
-      setAgbotAuth('');
-      message.success(t('Authorization cleared'));
-      return;
-    }
-    setAuthModalOpen(true);
-    authForm.resetFields();
-  };
-
-  const handleAuthSubmit = async () => {
-    try {
-      const values = await authForm.validateFields();
-      setAuthing(true);
-      // Encode as Basic auth header value for the backend to forward to Exchange
-      const userToken = btoa(`${values.user}:${values.token}`);
-      const org = values.org || sessionOrg;
-      doAgbotAuth(userToken, org);
-      setAuthHistory((prev) => {
-        const newEntry = `${values.user}@${org}`;
-        return prev.includes(newEntry) ? prev : [newEntry, ...prev].slice(0, 5);
-      });
-      setAuthModalOpen(false);
-    } catch (err: any) {
-      if (!err.message?.includes('validate')) message.error(err.message);
-    } finally {
-      setAuthing(false);
-    }
-  };
-
-  // Open picker to select a pattern to bind to the agbot
-  const pickPattern = async () => {
+  // Open picker to select a pattern to bind to the agbot. Defaults the org
+  // filter to the currently selected org so the list is populated immediately.
+  const pickPattern = async (org?: string) => {
+    const targetOrg = org ?? pickerOrg ?? sessionOrg;
+    setPickerOrg(targetOrg);
     setPatternPickerOpen(true);
     setPickerLoading(true);
     try {
-      const res = await PatternAPI.list(pickerOrg || undefined);
+      const res = await PatternAPI.list(targetOrg || undefined);
       setPatterns(res?.patterns ?? {});
     } catch (err: any) {
       message.error(err.message);
@@ -127,11 +88,13 @@ export default function Agbots() {
   };
 
   // Open picker to select a business policy to bind to the agbot
-  const pickPolicy = async () => {
+  const pickPolicy = async (org?: string) => {
+    const targetOrg = org ?? pickerOrg ?? sessionOrg;
+    setPickerOrg(targetOrg);
     setPolicyPickerOpen(true);
     setPickerLoading(true);
     try {
-      const res = await DeploymentPolicyAPI.list(pickerOrg || undefined);
+      const res = await DeploymentPolicyAPI.list(targetOrg || undefined);
       setPolicies(res?.businessPolicy ?? {});
     } catch (err: any) {
       message.error(err.message);
@@ -172,26 +135,49 @@ export default function Agbots() {
     }
   };
 
-  // Load agbot list from Exchange; IBM org agbots are auto-merged server-side
-  const load = useCallback(async () => {
+  // Load agbot list from Exchange; pass org to filter by org
+  const load = useCallback(async (org?: string) => {
+    const targetOrg = org !== undefined ? org : pageOrg;
     setLoading(true);
     try {
-      const res = await AgbotAPI.list();
+      const res = await AgbotAPI.list(targetOrg || undefined);
       const agbotMap = res?.agbots ?? {};
       const agbotList = Object.keys(agbotMap).map((id) => ({ id, ...agbotMap[id] }));
       setData(agbotList);
+      if (getConfig().role === 'platform') {
+        try {
+          const orgRes = await OrgAPI.list();
+          setAllOrgs(Object.keys(orgRes?.orgs ?? {}).filter((o) => o !== 'root'));
+        } catch {}
+      }
+      // Batch-fetch pattern/policy counts for each agbot
+      const pc: Record<string, number> = {};
+      const bc: Record<string, number> = {};
+      await Promise.all(agbotList.map(async (a) => {
+        const aOrg = a.id.includes('/') ? a.id.split('/')[0] : sessionOrg;
+        try {
+          const pat = await AgbotAPI.listPatterns(a.id, aOrg);
+          pc[a.id] = Object.keys(pat?.patterns ?? {}).length;
+        } catch { pc[a.id] = 0; }
+        try {
+          const pol = await AgbotAPI.listBusinessPols(a.id, aOrg);
+          bc[a.id] = Object.keys(pol?.businessPols ?? {}).length;
+        } catch { bc[a.id] = 0; }
+      }));
+      setPatternCounts(pc);
+      setPolicyCounts(bc);
     } catch (err: any) {
       message.error(err.message);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [sessionOrg]);
 
   useEffect(() => {
     load();
-    if (getConfig().orgType === 'system') {
+    if (getConfig().role === 'platform') {
       OrgAPI.list().then((orgRes) => {
-        setAllOrgs(Object.keys(orgRes?.orgs ?? {}));
+        setAllOrgs(Object.keys(orgRes?.orgs ?? {}).filter((o) => o !== 'root'));
       }).catch(() => {});
     }
   }, [load]);
@@ -212,7 +198,7 @@ export default function Agbots() {
     setDetailPatterns([]);
     setDetailPols([]);
     setAgbotAgreements([]);
-    const org = agbot.id.startsWith('IBM/') ? 'IBM' : sessionOrg;
+    const org = agbot.id.includes('/') ? agbot.id.split('/')[0] : sessionOrg;
     try {
       const patRes = await AgbotAPI.listPatterns(agbot.id, org);
       setDetailPatterns(Object.entries(patRes?.patterns ?? {}).map(([k, v]: [string, any]) => ({ key: k, ...v })));
@@ -231,7 +217,7 @@ export default function Agbots() {
   };
 
   const handleDelete = (agbotId: string) => {
-    const owner = agbotId.startsWith('IBM/') ? 'IBM' : sessionOrg || 'myorg';
+    const owner = agbotId.includes('/') ? agbotId.split('/')[0] : sessionOrg || 'myorg';
     Modal.confirm({
       title: t('Confirm deletion of agbot').replace('{0}', agbotId),
       onOk: async () => {
@@ -244,6 +230,38 @@ export default function Agbots() {
         }
       },
     });
+  };
+
+  const generateToken = useCallback((len: number) => {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    const buf = new Uint32Array(len);
+    crypto.getRandomValues(buf);
+    let pw = '';
+    for (let i = 0; i < len; i++) pw += chars[buf[i] % chars.length];
+    return pw;
+  }, []);
+
+  const handleCreate = async () => {
+    try {
+      const values = await createForm.validateFields();
+      const agbotId = values.name;
+      const targetOrg = values.org || createOrg || sessionOrg;
+      // Platform must not silently create in the root org — require an explicit organization.
+      if (isPlatform && (!targetOrg || targetOrg === 'root')) {
+        message.error(t('Please select an organization'));
+        return;
+      }
+      setCreating(true);
+      await AgbotAPI.create(agbotId, { token: values.token, name: agbotId, publicKey: '' }, targetOrg);
+      message.success(t('Agbot created'));
+      setCreateOpen(false);
+      createForm.resetFields();
+      load();
+    } catch (err: any) {
+      if (!err.message?.includes('validate')) message.error(err.message);
+    } finally {
+      setCreating(false);
+    }
   };
 
   const handleUnlinkPattern = async (agbotId: string, pattern: string) => {
@@ -285,11 +303,11 @@ export default function Agbots() {
     },
     {
       title: t('Patterns'), key: 'patterns', width: 120,
-      render: (_: any, record: ExchangeAgbot) => record.patterns?.length ?? 0,
+      render: (_: any, record: ExchangeAgbot) => patternCounts[record.id] ?? '-',
     },
     {
       title: t('Business Policies'), key: 'policies', width: 120,
-      render: (_: any, record: ExchangeAgbot) => record.businessPols?.length ?? 0,
+      render: (_: any, record: ExchangeAgbot) => policyCounts[record.id] ?? '-',
     },
     {
       title: t('Last Heartbeat'), dataIndex: 'lastHeartbeat', key: 'lastHeartbeat', width: 180,
@@ -302,14 +320,18 @@ export default function Agbots() {
           <Tooltip title={t('View associations')}>
             <Button size="small" icon={<EyeOutlined />} onClick={() => showDetail(record)} />
           </Tooltip>
-          <Tooltip title={t('Link pattern')}>
-            <Button size="small" icon={<LinkOutlined />} onClick={() => { setPickerOrg(''); setCurrentAgbotId(record.id); pickPattern(); }} />
-          </Tooltip>
-          <Tooltip title={t('Link policy')}>
-            <Button size="small" icon={<LinkOutlined />} onClick={() => { setPickerOrg(''); setCurrentAgbotId(record.id); pickPolicy(); }} />
-          </Tooltip>
-          {!record.id.startsWith('IBM/') && (
-            <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(record.id)} />
+          {(!record.id.startsWith('IBM/') || isPlatform) && (
+            <>
+              <Tooltip title={t('Link pattern')}>
+                <Button size="small" icon={<LinkOutlined />} onClick={() => { setCurrentAgbotId(record.id); pickPattern(sessionOrg); }} />
+              </Tooltip>
+              <Tooltip title={t('Link policy')}>
+                <Button size="small" icon={<LinkOutlined />} onClick={() => { setCurrentAgbotId(record.id); pickPolicy(sessionOrg); }} />
+              </Tooltip>
+              {!record.id.startsWith('IBM/') && (
+                <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(record.id)} />
+              )}
+            </>
           )}
         </Space>
       ),
@@ -334,32 +356,21 @@ export default function Agbots() {
             placeholder={t('Search')}
             prefix={<SearchOutlined />}
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             style={{ width: 200 }}
           />
-          <Button
-            type={agbotAuthToken ? 'default' : 'primary'}
-            icon={<KeyOutlined />}
-            onClick={handleAuthorize}
-            danger={!!agbotAuthToken}
-          >
-            {agbotAuthToken ? t('Clear') : t('Authorize')}
+          <Button icon={<ReloadOutlined />} onClick={() => load()}>{t('Refresh')}</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => { createForm.resetFields(); setCreateOrg(isPlatform ? pageOrg : sessionOrg); setCreateOpen(true); }}>
+            {t('Create Agbot')}
           </Button>
-          <Button icon={<ReloadOutlined />} onClick={load}>{t('Refresh')}</Button>
         </div>
       </div>
-
-      {agbotAuthToken && (
-        <Tag color="green" style={{ marginBottom: 8 }}>
-          {t('Authorized')}: {agbotAuthToken ? `${agbotAuthToken.substring(0, 12)}...` : ''}
-        </Tag>
-      )}
 
       <Table
         columns={columns}
         dataSource={tableData}
         loading={loading}
-        pagination={{ pageSize: 10, showSizeChanger: true, showQuickJumper: true, showLessItems: false, showTotal: (total) => `${total} ${t('Agreement Bots')}` }}
+        pagination={{ current: page, pageSize, pageSizeOptions: [10, 20, 50, 100], showSizeChanger: true, showQuickJumper: true, showTotal: (total) => `${total} ${t('Agreement Bots')}`, onChange: (p) => setPage(p), onShowSizeChange: (_c, size) => { setPageSize(size); setPage(1); } }}
         size="middle"
         scroll={{ x: 'max-content' }}
         rowKey="id"
@@ -377,54 +388,54 @@ export default function Agbots() {
               key: 'patterns',
               label: t('Patterns'),
               children: (
-                <div>
-                  <div style={{ marginBottom: 8 }}>
-                    <Button size="small" icon={<LinkOutlined />} onClick={() => { setCurrentAgbotId(selectedAgbot.id); pickPattern(); }}>
-                      {t('Add Pattern')}
-                    </Button>
+                  <div>
+                    <div style={{ marginBottom: 8 }}>
+                      <Button size="small" icon={<LinkOutlined />} onClick={() => { setCurrentAgbotId(selectedAgbot.id); pickPattern(sessionOrg); }}>
+                        {t('Add Pattern')}
+                      </Button>
+                    </div>
+                    {detailLoading ? (
+                      <Text type="secondary">{t('Loading...')}</Text>
+                    ) : detailPatterns.length === 0 ? (
+                      <Text type="secondary">{t('No patterns')}</Text>
+                    ) : (
+                      detailPatterns.map((p, i) => (
+                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', borderBottom: '1px solid #f0f0f0' }}>
+                          <Text>{p.patternOrgid}/{p.pattern}</Text>
+                          <Button size="small" danger onClick={() => handleUnlinkPattern(selectedAgbot.id, p.key)}>
+                            {t('Remove')}
+                          </Button>
+                        </div>
+                      ))
+                    )}
                   </div>
-                  {detailLoading ? (
-                    <Text type="secondary">{t('Loading...')}</Text>
-                  ) : detailPatterns.length === 0 ? (
-                    <Text type="secondary">{t('No patterns')}</Text>
-                  ) : (
-                    detailPatterns.map((p, i) => (
-                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', borderBottom: '1px solid #f0f0f0' }}>
-                        <Text>{p.patternOrgid}/{p.pattern}</Text>
-                        <Button size="small" danger onClick={() => handleUnlinkPattern(selectedAgbot.id, p.key)}>
-                          {t('Remove')}
-                        </Button>
-                      </div>
-                    ))
-                  )}
-                </div>
               ),
             },
             {
               key: 'policies',
               label: t('Business Policies'),
               children: (
-                <div>
-                  <div style={{ marginBottom: 8 }}>
-                    <Button size="small" icon={<LinkOutlined />} onClick={() => { setCurrentAgbotId(selectedAgbot.id); pickPolicy(); }}>
-                      {t('Add Business Policy')}
-                    </Button>
+                  <div>
+                    <div style={{ marginBottom: 8 }}>
+                      <Button size="small" icon={<LinkOutlined />} onClick={() => { setCurrentAgbotId(selectedAgbot.id); pickPolicy(sessionOrg); }}>
+                        {t('Add Business Policy')}
+                      </Button>
+                    </div>
+                    {detailLoading ? (
+                      <Text type="secondary">{t('Loading...')}</Text>
+                    ) : detailPols.length === 0 ? (
+                      <Text type="secondary">{t('No business policies')}</Text>
+                    ) : (
+                      detailPols.map((p, i) => (
+                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', borderBottom: '1px solid #f0f0f0' }}>
+                          <Text>{p.businessPolOrgid}/{p.businessPol}</Text>
+                          <Button size="small" danger onClick={() => handleUnlinkPolicy(selectedAgbot.id, p.key)}>
+                            {t('Remove')}
+                          </Button>
+                        </div>
+                      ))
+                    )}
                   </div>
-                  {detailLoading ? (
-                    <Text type="secondary">{t('Loading...')}</Text>
-                  ) : detailPols.length === 0 ? (
-                    <Text type="secondary">{t('No business policies')}</Text>
-                  ) : (
-                    detailPols.map((p, i) => (
-                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', borderBottom: '1px solid #f0f0f0' }}>
-                        <Text>{p.businessPolOrgid}/{p.businessPol}</Text>
-                        <Button size="small" danger onClick={() => handleUnlinkPolicy(selectedAgbot.id, p.key)}>
-                          {t('Remove')}
-                        </Button>
-                      </div>
-                    ))
-                  )}
-                </div>
               ),
             },
             {
@@ -474,42 +485,6 @@ export default function Agbots() {
       </Drawer>
 
       <Modal
-        title={t('Authorize agbot credentials')}
-        open={authModalOpen}
-        onOk={handleAuthSubmit}
-        onCancel={() => setAuthModalOpen(false)}
-        confirmLoading={authing}
-      >
-        <Form form={authForm} layout="vertical">
-          <Form.Item name="user" label={t('User')} rules={[{ required: true }]}>
-            <Input placeholder="root/root" />
-          </Form.Item>
-          <Form.Item name="token" label={t('Token / API Key')} rules={[{ required: true }]}>
-            <Input.Password placeholder={t('Enter token')} />
-          </Form.Item>
-          <Form.Item name="org" label={t('Organization')}>
-            <Input placeholder={t('Leave empty to use current session org')} />
-          </Form.Item>
-        </Form>
-        {authHistory.length > 0 && (
-          <div style={{ marginTop: 12 }}>
-            <Text type="secondary" style={{ fontSize: 12 }}>{t('Recent authorizations')}</Text>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
-              {authHistory.map((entry, i) => (
-                <Tag
-                  key={i}
-                  style={{ cursor: 'pointer' }}
-                  onClick={() => authForm.setFieldsValue({ user: entry.split('@')[0], org: entry.split('@')[1] })}
-                >
-                  {entry}
-                </Tag>
-              ))}
-            </div>
-          </div>
-        )}
-      </Modal>
-
-      <Modal
         title={t('Select Pattern to bind')}
         open={patternPickerOpen}
         onCancel={() => setPatternPickerOpen(false)}
@@ -520,16 +495,15 @@ export default function Agbots() {
           <Select
             style={{ width: 200 }}
             placeholder={t('Organization')}
-            allowClear
+            showSearch
             value={pickerOrg || undefined}
-            onChange={(org) => setPickerOrg(org || '')}
-            options={allOrgs ? allOrgs.map((o: string) => ({ label: o, value: o })) : []}
+            onChange={(org) => pickPattern(org || '')}
+            options={allOrgs.map((o: string) => ({ label: o, value: o }))}
           />
           <Input
             placeholder={t('Or enter org ID')}
-            value={pickerOrg}
-            onChange={(e) => setPickerOrg(e.target.value)}
-            onPressEnter={pickPattern}
+            defaultValue={pickerOrg}
+            onPressEnter={(e) => pickPattern((e.target as HTMLInputElement).value)}
             style={{ width: 180 }}
           />
         </div>
@@ -567,16 +541,15 @@ export default function Agbots() {
           <Select
             style={{ width: 200 }}
             placeholder={t('Organization')}
-            allowClear
+            showSearch
             value={pickerOrg || undefined}
-            onChange={(org) => setPickerOrg(org || '')}
-            options={allOrgs ? allOrgs.map((o: string) => ({ label: o, value: o })) : []}
+            onChange={(org) => pickPolicy(org || '')}
+            options={allOrgs.map((o: string) => ({ label: o, value: o }))}
           />
           <Input
             placeholder={t('Or enter org ID')}
-            value={pickerOrg}
-            onChange={(e) => setPickerOrg(e.target.value)}
-            onPressEnter={pickPolicy}
+            defaultValue={pickerOrg}
+            onPressEnter={(e) => pickPolicy((e.target as HTMLInputElement).value)}
             style={{ width: 180 }}
           />
         </div>
@@ -601,6 +574,60 @@ export default function Agbots() {
             ))
           )
         )}
+      </Modal>
+
+      <Modal
+        title={t('Create Agbot')}
+        open={createOpen}
+        onCancel={() => setCreateOpen(false)}
+        onOk={handleCreate}
+        confirmLoading={creating}
+        destroyOnClose
+        width={480}
+      >
+        <Form form={createForm} layout="vertical" preserve={false}>
+          <Form.Item name="name" label={t('Agbot Name')} rules={[{ required: true, message: t('Required') }]}>
+            <Input placeholder="myagbot" />
+          </Form.Item>
+          <Form.Item name="org" label={t('Organization')} initialValue={isPlatform ? pageOrg : sessionOrg}>
+            <Select
+              showSearch
+              disabled={!isPlatform}
+              placeholder={isPlatform ? t('Select organization') : sessionOrg}
+              options={allOrgs.length > 0 ? allOrgs.map((o) => ({ value: o, label: o })) : [{ value: sessionOrg, label: sessionOrg }]}
+              onChange={(val) => setCreateOrg(val)}
+              filterOption={(input, option) =>
+                (option?.label as string ?? '').toLowerCase().includes(input.toLowerCase())
+              }
+            />
+          </Form.Item>
+          <Form.Item name="token" label={t('Token')} rules={[{ required: true, message: t('Required') }]}>
+            <Input.Password
+              addonAfter={
+                <Button type="link" size="small" icon={<KeyOutlined />} onClick={() => {
+                  const t = generateToken(24);
+                  createForm.setFieldsValue({ token: t, tokenConfirm: t });
+                }} style={{ padding: 0, height: 'auto' }} />
+              }
+            />
+          </Form.Item>
+          <Form.Item
+            name="tokenConfirm"
+            label={t('Confirm Token')}
+            dependencies={['token']}
+            rules={[
+              { required: true, message: t('Required') },
+              ({ getFieldValue }: { getFieldValue: (name: string) => any }) => ({
+                validator(_: any, value: any) {
+                  if (!value || value === getFieldValue('token')) return Promise.resolve();
+                  return Promise.reject(new Error(t('Tokens do not match')));
+                },
+              }),
+            ]}
+          >
+            <Input.Password />
+          </Form.Item>
+        </Form>
       </Modal>
     </div>
   );

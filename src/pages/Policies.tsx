@@ -23,6 +23,7 @@ export default function Policies() {
   const [data, setData] = useState<Record<string, DeploymentPolicy>>({});
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
+  const [createOrg, setCreateOrg] = useState<string>('');
   const [importOpen, setImportOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [form] = Form.useForm();
@@ -31,7 +32,7 @@ export default function Policies() {
   const [exampleData, setExampleData] = useState<string>('');
 
   const sessionOrg = getConfig().orgId || '';
-  const [pageOrg, setPageOrg] = useState<string>(sessionOrg);
+  const [pageOrg, setPageOrg] = useState<string>(getConfig().role === 'platform' ? '' : sessionOrg);
   const [allOrgs, setAllOrgs] = useState<string[]>([]);
   const [services, setServices] = useState<Record<string, ExchangeService>>({});
   const [selectedServiceId, setSelectedServiceId] = useState<string>('');
@@ -41,6 +42,8 @@ export default function Policies() {
   const [editing, setEditing] = useState(false);
   const [editForm] = Form.useForm();
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   const screenSize = useScreenSize();
 
@@ -115,14 +118,14 @@ export default function Policies() {
 
   // Load deployment policies from Exchange; system org also loads org list for cross-org browsing
   const load = async (org?: string) => {
-    const targetOrg = org ?? pageOrg;
+    const targetOrg = org !== undefined ? org : pageOrg;
     setLoading(true);
     try {
-      const res = await DeploymentPolicyAPI.list(targetOrg);
+      const res = await DeploymentPolicyAPI.list(targetOrg || undefined);
       setData(res?.businessPolicy ?? {});
-      if (getConfig().orgType === 'system') {
+      if (getConfig().role === 'platform') {
         const orgRes = await OrgAPI.list();
-        setAllOrgs(Object.keys(orgRes?.orgs ?? {}));
+        setAllOrgs(Object.keys(orgRes?.orgs ?? {}).filter((o) => o !== 'root'));
       }
     } catch (err: any) {
       message.error(err.message);
@@ -137,11 +140,11 @@ export default function Policies() {
 
   usePolling(async () => {
     try {
-      const res = await DeploymentPolicyAPI.list(pageOrg);
+      const res = await DeploymentPolicyAPI.list(pageOrg || undefined);
       setData(res?.businessPolicy ?? {});
-      if (getConfig().orgType === 'system') {
+      if (getConfig().role === 'platform') {
         const orgRes = await OrgAPI.list();
-        setAllOrgs(Object.keys(orgRes?.orgs ?? {}));
+        setAllOrgs(Object.keys(orgRes?.orgs ?? {}).filter((o) => o !== 'root'));
       }
     } catch { /* auto-refresh: silent */ }
   }, 30000);
@@ -230,6 +233,7 @@ export default function Policies() {
 
   const openCreate = async () => {
     setCreateOpen(true);
+    setCreateOrg(pageOrg);
     setSelectedServiceId('');
     form.resetFields();
     try {
@@ -309,6 +313,10 @@ export default function Policies() {
         message.error(t('Please select a service'));
         return;
       }
+      if (getConfig().role === 'platform' && !createOrg) {
+        message.error(t('Please select an organization'));
+        return;
+      }
       const svc = services[selectedServiceId];
       setCreating(true);
       const body: Record<string, any> = {
@@ -316,7 +324,7 @@ export default function Policies() {
         description: values.description || '',
         service: {
           name: svc.url || selectedServiceId,
-          org: getConfig().orgId || '',
+          org: selectedServiceId.includes('/') ? selectedServiceId.split('/')[0] : (getConfig().orgId || ''),
           arch: svc.arch || 'amd64',
           serviceVersions: [{ version: svc.version || '1.0.0', priority: {}, upgradePolicy: {} }],
           nodeHealth: { ping_interval: 60, parallel_health_check: true },
@@ -325,7 +333,7 @@ export default function Policies() {
         userInput: [],
         secretBinding: [],
       };
-      await DeploymentPolicyAPI.create(values.name, body);
+      await DeploymentPolicyAPI.create(values.name, body, createOrg);
       message.success(t('Policy created successfully'));
       setCreateOpen(false);
       form.resetFields();
@@ -372,33 +380,30 @@ export default function Policies() {
           <Text strong style={{ fontSize: 20 }}>{t('Deployment Policies')}</Text>
           <HelpButton module="policies" />
           <br /><Text type="secondary">{t('Manage service-to-node binding policy')}</Text>
-          {getConfig().orgType === 'system' && (
-          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-            <Select
-              style={{ width: 160 }}
-              showSearch
-              value={pageOrg}
-              placeholder={t('Organization')}
-              onChange={(org) => { setPageOrg(org); load(org); }}
-              options={allOrgs.map((o) => ({ label: o, value: o }))}
-            />
-            <Input
-              style={{ width: 180 }}
-              placeholder={t('Or enter org ID')}
-              value={pageOrg}
-              onChange={(e) => setPageOrg(e.target.value)}
-              onPressEnter={(e: any) => load(e.target.value.trim())}
-            />
-          </div>
-          )}
         </div>
         <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {getConfig().role === 'platform' && (
+          <Select
+            style={{ width: 180 }}
+            showSearch
+            value={pageOrg}
+            placeholder={t('Organization')}
+            onChange={(org) => { setPageOrg(org); setPage(1); load(org); }}
+            options={[
+              { label: t('All Organizations'), value: '' },
+              ...allOrgs.map((o) => ({ label: o, value: o }))
+            ]}
+            filterOption={(input, option) =>
+              (option?.label as string ?? '').toLowerCase().includes(input.toLowerCase())
+            }
+          />
+          )}
           <Input
             allowClear
             placeholder={t('Search')}
             prefix={<SearchOutlined />}
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             style={{ width: 200 }}
           />
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('Create Policy')}</Button>
@@ -406,7 +411,7 @@ export default function Policies() {
           <Button icon={<ReloadOutlined />} onClick={() => load()}>{t('Refresh')}</Button>
         </div>
       </div>
-      <Table columns={columns} dataSource={tableData} loading={loading} pagination={{ pageSize: 10, showSizeChanger: true, showQuickJumper: true, showLessItems: false, showTotal: (total) => `${total} ${t('Deployment Policies')}` }} size="middle" scroll={{ x: 'max-content' }} />
+      <Table columns={columns} dataSource={tableData} loading={loading} rowKey="key" pagination={{ current: page, pageSize, pageSizeOptions: [10, 20, 50, 100], showSizeChanger: true, showQuickJumper: true, showTotal: (total) => `${total} ${t('Deployment Policies')}`, onChange: (p) => setPage(p), onShowSizeChange: (_c, size) => { setPageSize(size); setPage(1); } }} size="middle" scroll={{ x: 'max-content' }} />
 
       <Modal
         title={t('Create Deployment Policy')}
@@ -420,6 +425,18 @@ export default function Policies() {
           <Form.Item name="name" label={t('Policy Name')} rules={[{ required: true, message: t('Please enter policy name') }]}>
             <Input placeholder="my-policy" />
           </Form.Item>
+          {getConfig().role === 'platform' && (
+            <Form.Item label={t('Organization')} required tooltip={t('Policy will be created in this organization')}>
+              <Select
+                showSearch
+                placeholder={t('Select organization')}
+                value={createOrg || undefined}
+                onChange={(v) => setCreateOrg(v)}
+                options={allOrgs.map((o) => ({ label: o, value: o }))}
+                filterOption={(input, option) => (option?.label as string ?? '').toLowerCase().includes(input.toLowerCase())}
+              />
+            </Form.Item>
+          )}
           <Form.Item name="label" label={t('Label')} rules={[{ required: true, message: t('Please enter a label') }]}>
             <Input placeholder={t('Policy display name')} />
           </Form.Item>

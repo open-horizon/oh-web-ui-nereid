@@ -5,10 +5,11 @@
 import { useEffect, useState } from 'react';
 import { usePolling } from '../hooks/usePolling';
 import { Table, Button, Space, Typography, message, Modal, Tag, Badge, Select, Alert, Drawer, Descriptions, List, Input, Switch, Tabs } from 'antd';
-import { SearchOutlined, ReloadOutlined, EyeOutlined, NodeIndexOutlined, CheckCircleOutlined, CloseCircleOutlined, MinusCircleOutlined, KeyOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { SearchOutlined, ReloadOutlined, EyeOutlined, NodeIndexOutlined, CheckCircleOutlined, CloseCircleOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import { NodeAPI, ExchangeNode, NodeServiceStatus, NodePolicy } from '../api/nodes';
 import { PatternAPI, ExchangePattern } from '../api/patterns';
-import { getConfig, setRootAuth } from '../api/config';
+import { OrgAPI } from '../api/organizations';
+import { getConfig } from '../api/config';
 import { useT } from '../i18n/context';
 import { useScreenSize } from '../hooks/useIsMobile';
 import HelpButton from '../components/HelpButton';
@@ -32,9 +33,6 @@ export default function Nodes() {
   const [nodeServices, setNodeServices] = useState<NodeServiceStatus[]>([]);
   const [servicesLoading, setServicesLoading] = useState(false);
 
-  const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [authPassword, setAuthPassword] = useState('');
-
   const [policyEditOpen, setPolicyEditOpen] = useState(false);
   const [policyEditCustomProps, setPolicyEditCustomProps] = useState<{ name: string; value: string }[]>([]);
   const [policyEditConstraints, setPolicyEditConstraints] = useState('');
@@ -43,7 +41,13 @@ export default function Nodes() {
   const [reRegisterCmd, setReRegisterCmd] = useState<string | null>(null);
 
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const screenSize = useScreenSize();
+
+  const sessionOrg = getConfig().orgId || '';
+  const [pageOrg, setPageOrg] = useState<string>(getConfig().role === 'platform' ? '' : sessionOrg);
+  const [allOrgs, setAllOrgs] = useState<string[]>([]);
 
   const [policies, setPolicies] = useState<Record<string, NodePolicy>>({});
   const [policiesLoading, setPoliciesLoading] = useState<Record<string, boolean>>({});
@@ -56,7 +60,7 @@ export default function Nodes() {
   const loadServices = async (nodeId: string) => {
     setServicesLoading(true);
     try {
-      const res = await NodeAPI.services(nodeId);
+      const res = await NodeAPI.services(nodeId, pageOrg);
       const svcs = res?.services ?? [];
       setNodeServices(Array.isArray(svcs) ? svcs : Object.values(svcs));
     } catch {
@@ -75,18 +79,19 @@ export default function Nodes() {
     setNodeMgmtStatus([]);
     setDrawerOpen(true);
     loadServices(nodeId);
+    const nOrg = nodeId.includes('/') ? nodeId.split('/')[0] : pageOrg;
     const nid = localNodeId(nodeId);
     if (!policies[nodeId]) {
-      NodeAPI.getPolicy(nid).then((pol) => {
+      NodeAPI.getPolicy(nid, nOrg).then((pol) => {
         setPolicies((prev) => ({ ...prev, [nodeId]: pol }));
       }).catch(() => {});
     }
     setSubLoading(true);
     try {
       const [ag, er, ms] = await Promise.allSettled([
-        NodeAPI.agreements(nid),
-        NodeAPI.errors(nid),
-        NodeAPI.managementStatus(nid),
+        NodeAPI.agreements(nid, nOrg),
+        NodeAPI.errors(nid, nOrg),
+        NodeAPI.managementStatus(nid, nOrg),
       ]);
       if (ag.status === 'fulfilled') setNodeAgreements(Object.values(ag.value?.agreements ?? {}));
       if (er.status === 'fulfilled') {
@@ -100,17 +105,22 @@ export default function Nodes() {
     } finally { setSubLoading(false); }
   };
 
-  const load = async () => {
+  const load = async (org?: string) => {
+    const targetOrg = org !== undefined ? org : pageOrg;
     setLoading(true);
     try {
-      const res = await NodeAPI.list();
+      const res = await NodeAPI.list(targetOrg || undefined);
       setData(res?.nodes ?? {});
+      if (getConfig().role === 'platform') {
+        const orgRes = await OrgAPI.list();
+        setAllOrgs(Object.keys(orgRes?.orgs ?? {}).filter((o) => o !== 'root'));
+      }
     } catch (err: any) {
       message.error(err.message);
     } finally {
       setLoading(false);
     }
-};
+  };
 
   // Strip org prefix from Exchange node IDs for API calls: "myorg/node1" → "node1"
   const localNodeId = (fullId: string) => {
@@ -123,7 +133,8 @@ export default function Nodes() {
     const newPolicies: Record<string, NodePolicy> = {};
     await Promise.all(nodeIds.map(async (id) => {
       try {
-        const pol = await NodeAPI.getPolicy(localNodeId(id));
+        const nOrg = id.includes('/') ? id.split('/')[0] : pageOrg;
+        const pol = await NodeAPI.getPolicy(localNodeId(id), nOrg);
         newPolicies[id] = pol;
       } catch {
       }
@@ -135,12 +146,13 @@ export default function Nodes() {
   const togglePrivileged = async (nodeId: string) => {
     setPoliciesLoading((prev) => ({ ...prev, [nodeId]: true }));
     try {
+      const nOrg = nodeId.includes('/') ? nodeId.split('/')[0] : pageOrg;
       const cleanId = localNodeId(nodeId);
       let currentPolicy = policies[nodeId];
 
       if (!currentPolicy) {
         try {
-          currentPolicy = await NodeAPI.getPolicy(cleanId);
+          currentPolicy = await NodeAPI.getPolicy(cleanId, nOrg);
         } catch {
           currentPolicy = { properties: [], constraints: [] };
         }
@@ -163,7 +175,7 @@ export default function Nodes() {
         constraints: currentPolicy.constraints || [],
       };
 
-      await NodeAPI.updatePolicy(cleanId, updatedPolicy);
+      await NodeAPI.updatePolicy(cleanId, updatedPolicy, nOrg);
       setPolicies((prev) => ({ ...prev, [nodeId]: updatedPolicy }));
       message.success(t('Privileged container support') + t(newValue ? 'enabled' : 'disabled'));
     } catch (err: any) {
@@ -200,13 +212,14 @@ export default function Nodes() {
           return { name: p.name.trim(), value: isNaN(num) ? val : num };
         });
       const constraints = policyEditConstraints.split('\n').map((l) => l.trim()).filter(Boolean);
+      const nOrg = drawerNodeId.includes('/') ? drawerNodeId.split('/')[0] : pageOrg;
       const cleanId = localNodeId(drawerNodeId);
       const updatedPolicy = {
         ...current,
         properties: [...systemProps, ...customProps],
         constraints,
       };
-      await NodeAPI.updatePolicy(cleanId, updatedPolicy);
+      await NodeAPI.updatePolicy(cleanId, updatedPolicy, nOrg);
       setPolicies((prev) => ({ ...prev, [drawerNodeId]: updatedPolicy }));
       message.success(t('Node policy updated'));
       setPolicyEditOpen(false);
@@ -223,7 +236,7 @@ export default function Nodes() {
 
   usePolling(async () => {
     try {
-      const res = await NodeAPI.list();
+      const res = await NodeAPI.list(pageOrg);
       setData(res?.nodes ?? {});
     } catch { /* auto-refresh: silent */ }
   }, 30000);
@@ -254,7 +267,7 @@ export default function Nodes() {
     if (!patternTarget) return;
     setSettingPattern(true);
     try {
-      await NodeAPI.setPattern(patternTarget, selectedPattern || '');
+      await NodeAPI.setPattern(patternTarget, selectedPattern || '', pageOrg);
       message.success(selectedPattern ? t('Node Pattern') + ': ' + selectedPattern : t('Node pattern cleared'));
       setPatternModalOpen(false);
       if (selectedPattern) {
@@ -265,26 +278,10 @@ export default function Nodes() {
       }
       load();
     } catch (err: any) {
-      if (err.message?.includes('bad input') && !getConfig().rootAuth) {
-        message.error(t('Root authorization required: please click Authorize button'));
-      } else if (err.message?.includes('[401]') && getConfig().rootAuth) {
-        setRootAuth('');
-        message.error(t('Root auth failed, credentials cleared. Please re-authorize.'));
-      } else {
-        message.error(err.message);
-      }
+      message.error(err.message);
     } finally {
       setSettingPattern(false);
     }
-  };
-
-  const confirmRootAuth = () => {
-    if (!authPassword) { message.warning(t('Please enter root password')); return; }
-    const b64 = btoa('root/root:' + authPassword);
-    setRootAuth(b64);
-    setAuthPassword('');
-    setAuthModalOpen(false);
-    message.success(t('Root authorization successful'));
   };
 
   // Node is "alive" if lastHeartbeat is within the last 5 minutes (300000 ms)
@@ -455,24 +452,50 @@ export default function Nodes() {
           <br /><Text type="secondary">{t('Edge Node Management')}</Text>
         </div>
         <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {getConfig().role === 'platform' && (
+            <Select
+              style={{ width: 180 }}
+              showSearch
+              value={pageOrg}
+              placeholder={t('Organization')}
+              onChange={(org) => { setPageOrg(org); setPage(1); load(org); }}
+              options={[
+                { label: t('All Organizations'), value: '' },
+                ...allOrgs.map((o) => ({ label: o, value: o }))
+              ]}
+              filterOption={(input, option) =>
+                (option?.label as string ?? '').toLowerCase().includes(input.toLowerCase())
+              }
+            />
+          )}
           <Input
             allowClear
             placeholder={t('Search')}
             prefix={<SearchOutlined style={{ opacity: 0.4 }} />}
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             style={{ width: 220 }}
           />
-          <Button icon={<ReloadOutlined />} onClick={load}>{t('Refresh')}</Button>
+          <Button icon={<ReloadOutlined />} onClick={() => load()}>{t('Refresh')}</Button>
         </div>
       </div>
       <Table
         columns={columns}
         dataSource={tableData}
         loading={loading}
+        rowKey="key"
         size="middle"
         scroll={{ x: 'max-content' }}
-        pagination={{ pageSize: 10, showSizeChanger: true, showQuickJumper: true, showLessItems: false, showTotal: (total) => `${total} ${t('Nodes')}` }}
+        pagination={{
+          current: page,
+          pageSize,
+          pageSizeOptions: [10, 20, 50, 100],
+          showSizeChanger: true,
+          showQuickJumper: true,
+          showTotal: (total) => `${total} ${t('Nodes')}`,
+          onChange: (p) => setPage(p),
+          onShowSizeChange: (_c, size) => { setPageSize(size); setPage(1); },
+        }}
       />
 
       <Modal
@@ -487,10 +510,7 @@ export default function Nodes() {
         <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Text>{t('Select pattern (leave empty = clear, use policy):')}</Text>
           <Space>
-            {getConfig().rootAuth
-              ? <Tag color="green" style={{ marginRight: 0, cursor: 'pointer' }} onClick={() => { setRootAuth(''); message.info(t('Root auth cleared')); }}>{t('Root authorized')} ✕</Tag>
-              : <Button size="small" icon={<KeyOutlined />} onClick={() => setAuthModalOpen(true)}>{t('Authorize')}</Button>
-            }
+            <Tag color="blue" style={{ marginRight: 0 }}>{t('Authorized via Exchange admin')}</Tag>
           </Space>
         </div>
         <Select
@@ -500,22 +520,6 @@ export default function Nodes() {
           value={selectedPattern}
           onChange={setSelectedPattern}
           options={availablePatterns.map((p) => ({ label: p, value: p }))}
-        />
-      </Modal>
-
-      <Modal
-        title={t('Root Authorization')}
-        open={authModalOpen}
-        onOk={confirmRootAuth}
-        onCancel={() => { setAuthModalOpen(false); setAuthPassword(''); }}
-        width={400}
-      >
-        <Alert message={t('Modifying pattern of registered nodes requires root/root credentials')} type="info" showIcon style={{ marginBottom: 16 }} />
-        <Input.Password
-          placeholder={t('Root password')}
-          value={authPassword}
-          onChange={(e) => setAuthPassword(e.target.value)}
-          onPressEnter={confirmRootAuth}
         />
       </Modal>
 

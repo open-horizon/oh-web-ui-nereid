@@ -1,48 +1,52 @@
-// Copyright (C) 2026 YIQISOFT
-//
-// SPDX-License-Identifier: Apache-2.0
-
 // Session configuration for Exchange API calls.
 // SECURITY: credentials are NEVER persisted in the browser. The backend stores
-// the Exchange Basic auth encrypted in Redis and issues an HttpOnly+Secure+
-// SameSite cookie, which the browser sends automatically. This module only keeps
-// non-sensitive UI state (org id, version, role) in memory for the current tab.
-let orgId = '';
+// the Exchange Basic auth encrypted and issues an HttpOnly+Secure+SameSite cookie.
+// This module only keeps non-sensitive UI state in memory for the current tab.
+let orgId = '';          // effective org used for resource operations (?org=)
 let version = '';
-let orgType: 'hubadmin' | 'system' | 'user' = 'user';
-let agbotAuth = '';  // Base64 auth string for agbot-privileged cross-org operations
-let rootAuth = '';  // Base64 auth string for root-privileged operations
+let username = '';
+let role: 'platform' | 'partner' = 'partner';
+let userOrg = '';        // user's bound org (for partner)
+let csrfToken = '';
 
-export function saveSession(oid: string, ver: string) {
-  orgId = oid;
-  version = ver;
+export function saveSession(data: {
+  username: string;
+  role: 'platform' | 'partner';
+  org: string;
+  orgId: string;
+  version: string;
+  csrfToken: string;
+}) {
+  username = data.username;
+  role = data.role;
+  userOrg = data.org || '';
+  orgId = data.orgId || '';
+  version = data.version || '';
+  csrfToken = data.csrfToken || '';
 }
 
-export function saveOrgType(t: 'hubadmin' | 'system' | 'user') {
-  orgType = t;
+// Platform users can switch the effective org; partner is locked to its own org.
+export function setOrgId(org: string) {
+  orgId = org;
 }
 
 export function clearSession() {
+  username = '';
+  role = 'partner';
+  userOrg = '';
   orgId = '';
   version = '';
-  orgType = 'user';
-  agbotAuth = '';
-  rootAuth = '';
+  csrfToken = '';
 }
 
-// Returns true if the user has an active in-memory session for this tab.
 export function isAuthenticated() {
-  return !!orgId;
+  return !!username;
 }
 
 export function getConfig() {
-  return { orgId, version, orgType, agbotAuth, rootAuth };
+  return { orgId, version, username, role, userOrg, csrfToken };
 }
 
-export function setAgbotAuth(auth: string) {
-  agbotAuth = auth;
-}
-
-export function setRootAuth(auth: string) {
-  rootAuth = auth;
+export function setCsrfToken(token: string) {
+  csrfToken = token;
 }

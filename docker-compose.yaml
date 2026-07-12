@@ -17,6 +17,25 @@ services:
       retries: 3
       start_period: 10s
 
+  postgres:
+    image: postgres:16-alpine
+    container_name: open-horizon-exchangeui-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=nereid
+      - POSTGRES_USER=nereid
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-nereidpass}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - nereid-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nereid -d nereid"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   open-horizon-exchangeui-backend:
     image: ghcr.io/nereidai/open-horizon-exchangeui-backend:latest
     container_name: open-horizon-exchangeui-backend
@@ -25,7 +44,9 @@ services:
       - NODE_ENV=production
       - PORT=3001
       - REDIS_URL=redis://redis:6379
-      - SESSION_TTL=1800
+      - DATABASE_URL=postgres://nereid:${POSTGRES_PASSWORD:-nereidpass}@postgres:5432/nereid
+      - SESSION_TTL=86400
+      - SESSION_ABS_TTL=28800
       # SESSION_ENC_KEY is the 32-byte master key (hex) used for AES-256-GCM encryption
       # of Exchange credentials at rest. Override in production via secret/env file.
       - SESSION_ENC_KEY=${SESSION_ENC_KEY:-}
@@ -35,6 +56,8 @@ services:
       - nereid-logs:/app/logs
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     networks:
       - nereid-network
@@ -66,3 +89,5 @@ volumes:
   nereid-logs:
 
   redis-data:
+
+  postgres-data:

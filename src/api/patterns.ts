@@ -15,21 +15,35 @@ export interface ExchangePattern {
   [key: string]: any;
 }
 
+// Split an Exchange key (org/name) — org goes to ?org= to avoid Express 5 %2F decoding issue
+function splitOrg(raw: string): { name: string; org?: string } {
+  const i = raw.indexOf('/');
+  return i >= 0 ? { name: raw.slice(i + 1), org: raw.slice(0, i) } : { name: raw };
+}
+function patUrl(id: string): string {
+  const s = splitOrg(id);
+  const qs = s.org ? `?org=${encodeURIComponent(s.org)}` : '';
+  return `/patterns/${encodeURIComponent(s.name)}${qs}`;
+}
+
 export const PatternAPI = {
   list(org?: string) {
     const qs = org ? `?org=${encodeURIComponent(org)}` : '';
     return get<{ patterns: Record<string, ExchangePattern> }>(`/patterns${qs}`);
   },
-  create(name: string, data: Partial<ExchangePattern>) {
-    return post('/patterns', { name, ...data });
+  create(name: string, data: Partial<ExchangePattern>, org?: string) {
+    const qs = org ? `?org=${encodeURIComponent(org)}` : '';
+    return post(`/patterns${qs}`, { name, ...data });
   },
   update(patternId: string, data: Partial<ExchangePattern>) {
-    return put(`/patterns/${encodeURIComponent(patternId)}`, data);
+    return put(patUrl(patternId), data);
   },
   delete(patternId: string) {
-    return del(`/patterns/${encodeURIComponent(patternId)}`);
+    return del(patUrl(patternId));
   },
   nodehealth(patternId: string) {
-    return get<{ nodeHealth: any[] }>(`/patterns/${encodeURIComponent(patternId)}/nodehealth`);
+    const s = splitOrg(patternId);
+    const qs = s.org ? `?org=${encodeURIComponent(s.org)}` : '';
+    return get<{ nodeHealth: any[] }>(`/patterns/${encodeURIComponent(s.name)}/nodehealth${qs}`);
   },
 };

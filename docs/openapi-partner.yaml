@@ -1,0 +1,415 @@
+openapi: 3.0.3
+info:
+  title: NereidAI Partner API
+  description: |
+    Read-only proxy to Open Horizon Exchange resources for third-party systems.
+
+    Authentication:
+    - Every request requires an API key sent via the `X-Api-Key` header.
+    - Keys are bound to a single org at creation. All requests are forced to
+      that org; any `?org=` query override or differing path `{org}` is rejected
+      with 403.
+    - Only GET requests are allowed. All mutations return 403.
+    - Keys are format `nk_live_<base64url>` or `nk_test_<base64url>` and can be
+      revoked or have expiry dates.
+
+    The BFF uses a single shared Exchange credential for proxying; partners never
+    interact with Exchange directly. All calls are recorded in the append-only
+    audit log.
+  version: 1.0.0
+  contact:
+    name: NereidAI
+
+servers:
+  - url: http://localhost:3001
+    description: Development
+  - url: https://api.nereidai.example.com
+    description: Production
+
+tags:
+  - name: Services
+  - name: Patterns
+  - name: Deployment Policies
+  - name: Management Policies
+  - name: Nodes
+  - name: Users
+  - name: HA Groups
+  - name: Agent File Version
+
+paths:
+  # =============================================================
+  # Services
+  # =============================================================
+  /api/v1/{org}/services:
+    get:
+      tags: [Services]
+      summary: List services
+      operationId: partnerListServices
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrgPath'
+      responses:
+        '200':
+          description: Service list (Exchange response)
+        '403':
+          description: Wrong org, revoked/expired key, or non-GET method
+  /api/v1/{org}/services/{id}:
+    get:
+      tags: [Services]
+      summary: Get service detail
+      operationId: partnerGetService
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrgPath'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Service ID (with or without org prefix)
+      responses:
+        '200':
+          description: Service detail
+        '404':
+          description: Not found
+
+  # =============================================================
+  # Patterns
+  # =============================================================
+  /api/v1/{org}/patterns:
+    get:
+      tags: [Patterns]
+      summary: List deployment patterns
+      operationId: partnerListPatterns
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrgPath'
+      responses:
+        '200':
+          description: Pattern list
+  /api/v1/{org}/patterns/{id}:
+    get:
+      tags: [Patterns]
+      summary: Get pattern detail
+      operationId: partnerGetPattern
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrgPath'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Pattern detail
+
+  # =============================================================
+  # Deployment Policies
+  # =============================================================
+  /api/v1/{org}/business/policies:
+    get:
+      tags: [Deployment Policies]
+      summary: List deployment (business) policies
+      operationId: partnerListPolicies
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrgPath'
+      responses:
+        '200':
+          description: Policy list
+  /api/v1/{org}/business/policies/{id}:
+    get:
+      tags: [Deployment Policies]
+      summary: Get deployment policy detail
+      operationId: partnerGetPolicy
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrgPath'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Policy detail
+
+  # =============================================================
+  # Management Policies
+  # =============================================================
+  /api/v1/{org}/managementpolicies:
+    get:
+      tags: [Management Policies]
+      summary: List management policies
+      operationId: partnerListMgmtPolicies
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrgPath'
+      responses:
+        '200':
+          description: Management policy list
+  /api/v1/{org}/managementpolicies/{id}:
+    get:
+      tags: [Management Policies]
+      summary: Get management policy detail
+      operationId: partnerGetMgmtPolicy
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrgPath'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Management policy detail
+
+  # =============================================================
+  # Nodes
+  # =============================================================
+  /api/v1/{org}/nodes:
+    get:
+      tags: [Nodes]
+      summary: List nodes
+      operationId: partnerListNodes
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrgPath'
+      responses:
+        '200':
+          description: Node list
+  /api/v1/{org}/nodes/{id}:
+    get:
+      tags: [Nodes]
+      summary: Get node detail
+      operationId: partnerGetNode
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrgPath'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Node detail
+  /api/v1/{org}/nodes/{id}/policy:
+    get:
+      tags: [Nodes]
+      summary: Get node policy
+      operationId: partnerGetNodePolicy
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrgPath'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Node policy
+  /api/v1/{org}/nodes/{id}/agreements:
+    get:
+      tags: [Nodes]
+      summary: Get node agreements
+      operationId: partnerGetNodeAgreements
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrgPath'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Node agreements
+  /api/v1/{org}/nodes/{id}/status:
+    get:
+      tags: [Nodes]
+      summary: Get node status
+      operationId: partnerGetNodeStatus
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrgPath'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Node status
+  /api/v1/{org}/nodes/{id}/errors:
+    get:
+      tags: [Nodes]
+      summary: Get node errors
+      operationId: partnerGetNodeErrors
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrgPath'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Node errors
+  /api/v1/{org}/nodes/{id}/managementStatus:
+    get:
+      tags: [Nodes]
+      summary: Get node management status
+      operationId: partnerGetNodeMgmtStatus
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrgPath'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Node management status
+
+  # =============================================================
+  # Users (org users, not BFF accounts)
+  # =============================================================
+  /api/v1/{org}/users:
+    get:
+      tags: [Users]
+      summary: List org users in Exchange
+      operationId: partnerListUsers
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrgPath'
+      responses:
+        '200':
+          description: User list
+  /api/v1/{org}/users/{username}:
+    get:
+      tags: [Users]
+      summary: Get org user detail
+      operationId: partnerGetUser
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrgPath'
+        - name: username
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User detail
+
+  # =============================================================
+  # HA Groups
+  # =============================================================
+  /api/v1/{org}/hagroups:
+    get:
+      tags: [HA Groups]
+      summary: List HA groups
+      operationId: partnerListHaGroups
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrgPath'
+      responses:
+        '200':
+          description: HA group list
+  /api/v1/{org}/hagroups/{id}:
+    get:
+      tags: [HA Groups]
+      summary: Get HA group detail
+      operationId: partnerGetHaGroup
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrgPath'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: HA group detail
+  /api/v1/{org}/hagroups/{id}/nodes:
+    get:
+      tags: [HA Groups]
+      summary: List nodes in HA group
+      operationId: partnerListHaGroupNodes
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrgPath'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Node list
+
+  # =============================================================
+  # Agent File Version
+  # =============================================================
+  /api/v1/{org}/AgentFileVersion:
+    get:
+      tags: [Agent File Version]
+      summary: Get agent file version
+      operationId: partnerGetAgentFileVersion
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OrgPath'
+      responses:
+        '200':
+          description: Agent file version info
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+      description: |
+        Partner API key. Format: `nk_live_<base64url>` (production) or
+        `nk_test_<base64url>` (non-production). Issued by the NereidAI console
+        and bound to a single organization.
+
+  parameters:
+    OrgPath:
+      name: org
+      in: path
+      required: true
+      schema:
+        type: string
+      description: |
+        Organization ID. Must match the org the API key is bound to.
+        Cross-org requests are rejected with 403.
+      example: myorg

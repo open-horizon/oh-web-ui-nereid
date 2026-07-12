@@ -137,6 +137,7 @@ export default function Services() {
   const [data, setData] = useState<Record<string, ExchangeService>>({});
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
+  const [createOrg, setCreateOrg] = useState<string>('');
   const [importOpen, setImportOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [form] = Form.useForm();
@@ -164,21 +165,23 @@ export default function Services() {
   const [editType, setEditType] = useState<'update' | 'full'>('update');
 
   const sessionOrg = getConfig().orgId || '';
-  const [pageOrg, setPageOrg] = useState<string>(sessionOrg);
+  const [pageOrg, setPageOrg] = useState<string>(getConfig().role === 'platform' ? '' : sessionOrg);
   const [allOrgs, setAllOrgs] = useState<string[]>([]);
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const screenSize = useScreenSize();
 
   // Load services list from Exchange; system org type also loads org list for cross-org browsing
   const load = useCallback(async (org?: string) => {
-    const targetOrg = org ?? pageOrg;
+    const targetOrg = org !== undefined ? org : pageOrg;
     setLoading(true);
     try {
-      const res = await ServiceAPI.list(targetOrg);
+      const res = await ServiceAPI.list(targetOrg || undefined);
       setData(res?.services ?? {});
-      if (getConfig().orgType === 'system') {
+      if (getConfig().role === 'platform') {
         const orgRes = await OrgAPI.list();
-        setAllOrgs(Object.keys(orgRes?.orgs ?? {}));
+        setAllOrgs(Object.keys(orgRes?.orgs ?? {}).filter((o) => o !== 'root'));
       }
     } catch (err: any) {
       message.error(err.message);
@@ -193,11 +196,11 @@ export default function Services() {
 
   usePolling(async () => {
     try {
-      const res = await ServiceAPI.list(pageOrg);
+      const res = await ServiceAPI.list(pageOrg || undefined);
       setData(res?.services ?? {});
-      if (getConfig().orgType === 'system') {
+      if (getConfig().role === 'platform') {
         const orgRes = await OrgAPI.list();
-        setAllOrgs(Object.keys(orgRes?.orgs ?? {}));
+        setAllOrgs(Object.keys(orgRes?.orgs ?? {}).filter((o) => o !== 'root'));
       }
     } catch { /* auto-refresh: silent */ }
   }, 30000);
@@ -246,6 +249,7 @@ export default function Services() {
   const openCreate = () => {
     setCreateOpen(true);
     setCreateActiveKey(['basic']);
+    setCreateOrg(pageOrg);
     form.resetFields();
   };
 
@@ -432,6 +436,10 @@ export default function Services() {
   const handleCreate = async () => {
     try {
       const values = await form.validateFields();
+      if (getConfig().role === 'platform' && !createOrg) {
+        message.error(t('Please select an organization'));
+        return;
+      }
       setCreating(true);
       const deployment = buildDeployment(values);
       const body: Record<string, any> = {
@@ -447,7 +455,7 @@ export default function Services() {
         deployment,
         deploymentSignature: '',
       };
-      await ServiceAPI.create({ name: values.name, ...body });
+      await ServiceAPI.create({ name: values.name, ...body }, createOrg);
       message.success(t('Service created successfully'));
       setCreateOpen(false);
       form.resetFields();
@@ -602,33 +610,30 @@ export default function Services() {
           <Text strong style={{ fontSize: 20 }}>{t('Service')} (Services)</Text>
           <HelpButton module="services" />
           <br /><Text type="secondary">{t('Manage service definitions, deployment configuration, and version strategy')}</Text>
-          {getConfig().orgType === 'system' && (
-          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-            <Select
-              style={{ width: 160 }}
-              showSearch
-              value={pageOrg}
-              placeholder={t('Organization')}
-              onChange={(org) => { setPageOrg(org); load(org); }}
-              options={allOrgs.map((o) => ({ label: o, value: o }))}
-            />
-            <Input
-              style={{ width: 180 }}
-              placeholder={t('Or enter org ID')}
-              value={pageOrg}
-              onChange={(e) => setPageOrg(e.target.value)}
-              onPressEnter={(e: any) => load(e.target.value.trim())}
-            />
-          </div>
-          )}
         </div>
         <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {getConfig().role === 'platform' && (
+          <Select
+            style={{ width: 180 }}
+            showSearch
+            value={pageOrg}
+            placeholder={t('Organization')}
+            onChange={(org) => { setPageOrg(org); setPage(1); load(org); }}
+            options={[
+              { label: t('All Organizations'), value: '' },
+              ...allOrgs.map((o) => ({ label: o, value: o }))
+            ]}
+            filterOption={(input, option) =>
+              (option?.label as string ?? '').toLowerCase().includes(input.toLowerCase())
+            }
+          />
+          )}
           <Input
             allowClear
             placeholder={t('Search')}
             prefix={<SearchOutlined />}
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             style={{ width: 200 }}
           />
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('Create Service')}</Button>
@@ -636,7 +641,7 @@ export default function Services() {
           <Button icon={<ReloadOutlined />} onClick={() => load()}>{t('Refresh')}</Button>
         </div>
       </div>
-      <Table columns={columns} dataSource={tableData} loading={loading} size="middle" scroll={{ x: 'max-content' }} pagination={{ pageSize: 10, showSizeChanger: true, showQuickJumper: true, showLessItems: false, showTotal: (total) => `${total} ${t('Services')}` }} />
+      <Table columns={columns} dataSource={tableData} loading={loading} rowKey="key" size="middle" scroll={{ x: 'max-content' }} pagination={{ current: page, pageSize, pageSizeOptions: [10, 20, 50, 100], showSizeChanger: true, showQuickJumper: true, showTotal: (total) => `${total} ${t('Services')}`, onChange: (p) => setPage(p), onShowSizeChange: (_c, size) => { setPageSize(size); setPage(1); } }} />
 
       <Modal
         title={t('Import')}
@@ -864,6 +869,18 @@ export default function Services() {
                     <Form.Item name="name" label={t('Service Name')} rules={[{ required: true, message: t('Please enter service name') }]}>
                       <Input placeholder="my-service" />
                     </Form.Item>
+                    {getConfig().role === 'platform' && (
+                      <Form.Item label={t('Organization')} required tooltip={t('Service will be created in this organization')}>
+                        <Select
+                          showSearch
+                          placeholder={t('Select organization')}
+                          value={createOrg || undefined}
+                          onChange={(v) => setCreateOrg(v)}
+                          options={allOrgs.map((o) => ({ label: o, value: o }))}
+                          filterOption={(input, option) => (option?.label as string ?? '').toLowerCase().includes(input.toLowerCase())}
+                        />
+                      </Form.Item>
+                    )}
                     <Form.Item name="label" label={t('Label')} rules={[{ required: true, message: t('Please enter a label') }]}>
                       <Input placeholder={t('Service display name')} />
                     </Form.Item>

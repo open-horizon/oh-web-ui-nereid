@@ -34,6 +34,7 @@ export default function Patterns() {
   const [data, setData] = useState<Record<string, ExchangePattern>>({});
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
+  const [createOrg, setCreateOrg] = useState<string>('');
   const [importOpen, setImportOpen] = useState(false);
   const [editModelOpen, setEditModelOpen] = useState(false);
   const [editModelTarget, setEditModelTarget] = useState<string | null>(null);
@@ -43,9 +44,11 @@ export default function Patterns() {
   const [editForm] = Form.useForm();
 
   const sessionOrg = getConfig().orgId || '';
-  const [pageOrg, setPageOrg] = useState<string>(sessionOrg);
+  const [pageOrg, setPageOrg] = useState<string>(getConfig().role === 'platform' ? '' : sessionOrg);
   const [allOrgs, setAllOrgs] = useState<string[]>([]);
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const screenSize = useScreenSize();
 
   const [services, setServices] = useState<Record<string, ExchangeService>>({});
@@ -62,14 +65,14 @@ export default function Patterns() {
 
   // Load patterns from Exchange; system org also loads org list for cross-org browsing
   const load = async (org?: string) => {
-    const targetOrg = org ?? pageOrg;
+    const targetOrg = org !== undefined ? org : pageOrg;
     setLoading(true);
     try {
-      const res = await PatternAPI.list(targetOrg);
+      const res = await PatternAPI.list(targetOrg || undefined);
       setData(res?.patterns ?? {});
-      if (getConfig().orgType === 'system') {
+      if (getConfig().role === 'platform') {
         const orgRes = await OrgAPI.list();
-        setAllOrgs(Object.keys(orgRes?.orgs ?? {}));
+        setAllOrgs(Object.keys(orgRes?.orgs ?? {}).filter((o) => o !== 'root'));
       }
     } catch (err: any) {
       message.error(err.message);
@@ -84,11 +87,11 @@ export default function Patterns() {
 
   usePolling(async () => {
     try {
-      const res = await PatternAPI.list(pageOrg);
+      const res = await PatternAPI.list(pageOrg || undefined);
       setData(res?.patterns ?? {});
-      if (getConfig().orgType === 'system') {
+      if (getConfig().role === 'platform') {
         const orgRes = await OrgAPI.list();
-        setAllOrgs(Object.keys(orgRes?.orgs ?? {}));
+        setAllOrgs(Object.keys(orgRes?.orgs ?? {}).filter((o) => o !== 'root'));
       }
     } catch { /* auto-refresh: silent */ }
   }, 30000);
@@ -222,6 +225,7 @@ export default function Patterns() {
 
   const openCreate = async () => {
     setCreateOpen(true);
+    setCreateOrg(pageOrg);
     setServiceSearch('');
     setSelectedServices([]);
     form.resetFields();
@@ -267,19 +271,23 @@ export default function Patterns() {
         message.error(t('At least one service must be selected for a pattern'));
         return;
       }
+      if (getConfig().role === 'platform' && !createOrg) {
+        message.error(t('Please select an organization'));
+        return;
+      }
       setCreating(true);
       const body: Record<string, any> = {
         label: values.label,
         description: values.description || '',
         services: selectedServices.map((svcId) => ({
           serviceUrl: services[svcId].url || '',
-          serviceOrgid: getConfig().orgId || '',
+          serviceOrgid: svcId.includes('/') ? svcId.split('/')[0] : (getConfig().orgId || ''),
           serviceArch: services[svcId].arch || 'amd64',
           serviceVersions: [{ version: services[svcId].version || '1.0.0', priority: {}, upgradePolicy: {} }],
           nodeHealth: { ping_interval: 60, parallel_health_check: true },
         })),
       };
-      await PatternAPI.create(values.name, body);
+      await PatternAPI.create(values.name, body, createOrg);
       message.success(t('Pattern created successfully'));
       setCreateOpen(false);
       form.resetFields();
@@ -349,33 +357,30 @@ export default function Patterns() {
           <Text strong style={{ fontSize: 20 }}>{t('Pattern (Deployment Patterns)')}</Text>
           <HelpButton module="patterns" />
           <br /><Text type="secondary">{t('Define service deployment topology and version strategy')}</Text>
-          {getConfig().orgType === 'system' && (
-          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-            <Select
-              style={{ width: 160 }}
-              showSearch
-              value={pageOrg}
-              placeholder={t('Organization')}
-              onChange={(org) => { setPageOrg(org); load(org); }}
-              options={allOrgs.map((o) => ({ label: o, value: o }))}
-            />
-            <Input
-              style={{ width: 180 }}
-              placeholder={t('Or enter org ID')}
-              value={pageOrg}
-              onChange={(e) => setPageOrg(e.target.value)}
-              onPressEnter={(e: any) => load(e.target.value.trim())}
-            />
-          </div>
-          )}
         </div>
         <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {getConfig().role === 'platform' && (
+          <Select
+            style={{ width: 180 }}
+            showSearch
+            value={pageOrg}
+            placeholder={t('Organization')}
+            onChange={(org) => { setPageOrg(org); setPage(1); load(org); }}
+            options={[
+              { label: t('All Organizations'), value: '' },
+              ...allOrgs.map((o) => ({ label: o, value: o }))
+            ]}
+            filterOption={(input, option) =>
+              (option?.label as string ?? '').toLowerCase().includes(input.toLowerCase())
+            }
+          />
+          )}
           <Input
             allowClear
             placeholder={t('Search')}
             prefix={<SearchOutlined />}
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             style={{ width: 200 }}
           />
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('Create Pattern')}</Button>
@@ -383,7 +388,7 @@ export default function Patterns() {
           <Button icon={<ReloadOutlined />} onClick={() => load()}>{t('Refresh')}</Button>
         </div>
       </div>
-      <Table columns={columns} dataSource={tableData} loading={loading} pagination={{ pageSize: 10, showSizeChanger: true, showQuickJumper: true, showLessItems: false, showTotal: (total) => `${total} ${t('Patterns')}` }} size="middle" scroll={{ x: 'max-content' }} />
+      <Table columns={columns} dataSource={tableData} loading={loading} rowKey="key" pagination={{ current: page, pageSize, pageSizeOptions: [10, 20, 50, 100], showSizeChanger: true, showQuickJumper: true, showTotal: (total) => `${total} ${t('Patterns')}`, onChange: (p) => setPage(p), onShowSizeChange: (_c, size) => { setPageSize(size); setPage(1); } }} size="middle" scroll={{ x: 'max-content' }} />
 
       <Drawer
         title={t('Pattern Detail - ') + detailPatternId}
@@ -443,6 +448,18 @@ export default function Patterns() {
           <Form.Item name="name" label={t('Pattern Name')} rules={[{ required: true, message: t('Please enter pattern name') }]}>
             <Input placeholder="my-pattern" />
           </Form.Item>
+          {getConfig().role === 'platform' && (
+            <Form.Item label={t('Organization')} required tooltip={t('Pattern will be created in this organization')}>
+              <Select
+                showSearch
+                placeholder={t('Select organization')}
+                value={createOrg || undefined}
+                onChange={(v) => setCreateOrg(v)}
+                options={allOrgs.map((o) => ({ label: o, value: o }))}
+                filterOption={(input, option) => (option?.label as string ?? '').toLowerCase().includes(input.toLowerCase())}
+              />
+            </Form.Item>
+          )}
           <Form.Item name="label" label={t('Label')} rules={[{ required: true, message: t('Please enter a label') }]}>
             <Input placeholder={t('Pattern display name')} />
           </Form.Item>

@@ -32,35 +32,74 @@ export interface NodeServiceStatus {
   [key: string]: any;
 }
 
+// Split an Exchange key (org/name) — org goes to ?org= to avoid Express 5 %2F decoding issue
+function splitOrg(raw: string): { name: string; org?: string } {
+  const i = raw.indexOf('/');
+  return i >= 0 ? { name: raw.slice(i + 1), org: raw.slice(0, i) } : { name: raw };
+}
+function nodeUrl(id: string): string {
+  const s = splitOrg(id);
+  const qs = s.org ? `?org=${encodeURIComponent(s.org)}` : '';
+  return `/nodes/${encodeURIComponent(s.name)}${qs}`;
+}
+
+// All node API functions accept an optional `org` parameter.
+// When set (platform user switching orgs), appends ?org=... to query the targeted org's data.
+// When omitted, backend defaults to the session's orgId.
 export const NodeAPI = {
-  list() {
-    return get<{ nodes: Record<string, ExchangeNode> }>('/nodes');
+  list(org?: string) {
+    const qs = org ? `?org=${encodeURIComponent(org)}` : '';
+    return get<{ nodes: Record<string, ExchangeNode> }>(`/nodes${qs}`);
   },
   // Fetch agreements/containers running on a node
-  services(nodeId: string) {
-    return get<{ services: NodeServiceStatus[] }>(`/nodes/${encodeURIComponent(nodeId)}/services`);
+  services(nodeId: string, org?: string) {
+    const s = splitOrg(nodeId);
+    const orgQ = org || s.org;
+    const qs = orgQ ? `?org=${encodeURIComponent(orgQ)}` : '';
+    return get<{ services: NodeServiceStatus[] }>(`/nodes/${encodeURIComponent(s.name)}/services${qs}`);
   },
   // PATCH node to set pattern (requires root auth for already-registered nodes)
-  setPattern(nodeId: string, pattern: string) {
-    return patch(`/nodes/${encodeURIComponent(nodeId)}`, { pattern });
+  setPattern(nodeId: string, pattern: string, org?: string) {
+    const s = splitOrg(nodeId);
+    const orgQ = org || s.org;
+    const qs = orgQ ? `?org=${encodeURIComponent(orgQ)}` : '';
+    return patch(`/nodes/${encodeURIComponent(s.name)}${qs}`, { pattern });
   },
-  getPolicy(nodeId: string) {
-    return get<NodePolicy>(`/nodes/${encodeURIComponent(nodeId)}/policy`);
+  getPolicy(nodeId: string, org?: string) {
+    const s = splitOrg(nodeId);
+    const orgQ = org || s.org;
+    const qs = orgQ ? `?org=${encodeURIComponent(orgQ)}` : '';
+    return get<NodePolicy>(`/nodes/${encodeURIComponent(s.name)}/policy${qs}`);
   },
   // PUT replaces the entire policy (not a partial update)
-  updatePolicy(nodeId: string, policy: NodePolicy) {
-    return put(`/nodes/${encodeURIComponent(nodeId)}/policy`, policy);
+  updatePolicy(nodeId: string, policy: NodePolicy, org?: string) {
+    const s = splitOrg(nodeId);
+    const orgQ = org || s.org;
+    const qs = orgQ ? `?org=${encodeURIComponent(orgQ)}` : '';
+    return put(`/nodes/${encodeURIComponent(s.name)}/policy${qs}`, policy);
   },
-  deleteNode(nodeId: string) {
-    return del(`/nodes/${encodeURIComponent(nodeId)}`);
+  deleteNode(nodeId: string, org?: string) {
+    const s = splitOrg(nodeId);
+    const orgQ = org || s.org;
+    const qs = orgQ ? `?org=${encodeURIComponent(orgQ)}` : '';
+    return del(`/nodes/${encodeURIComponent(s.name)}${qs}`);
   },
-  agreements(nodeId: string) {
-    return get<{ agreements: Record<string, any> }>(`/nodes/${encodeURIComponent(nodeId)}/agreements`);
+  agreements(nodeId: string, org?: string) {
+    const s = splitOrg(nodeId);
+    const orgQ = org || s.org;
+    const qs = orgQ ? `?org=${encodeURIComponent(orgQ)}` : '';
+    return get<{ agreements: Record<string, any> }>(`/nodes/${encodeURIComponent(s.name)}/agreements${qs}`);
   },
-  errors(nodeId: string) {
-    return get<{ errors: any[] }>(`/nodes/${encodeURIComponent(nodeId)}/errors`);
+  errors(nodeId: string, org?: string) {
+    const s = splitOrg(nodeId);
+    const orgQ = org || s.org;
+    const qs = orgQ ? `?org=${encodeURIComponent(orgQ)}` : '';
+    return get<{ errors: any[] }>(`/nodes/${encodeURIComponent(s.name)}/errors${qs}`);
   },
-  managementStatus(nodeId: string) {
-    return get<{ managementStatus: Record<string, any> }>(`/nodes/${encodeURIComponent(nodeId)}/managementStatus`);
+  managementStatus(nodeId: string, org?: string) {
+    const s = splitOrg(nodeId);
+    const orgQ = org || s.org;
+    const qs = orgQ ? `?org=${encodeURIComponent(orgQ)}` : '';
+    return get<{ managementStatus: Record<string, any> }>(`/nodes/${encodeURIComponent(s.name)}/managementStatus${qs}`);
   },
 };

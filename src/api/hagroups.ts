@@ -12,6 +12,16 @@ export interface HaGroup {
   [key: string]: any;
 }
 
+function splitOrg(raw: string): { name: string; org?: string } {
+  const i = raw.indexOf('/');
+  return i >= 0 ? { name: raw.slice(i + 1), org: raw.slice(0, i) } : { name: raw };
+}
+function nodeUrl(nodeId: string): string {
+  const s = splitOrg(nodeId);
+  const qs = s.org ? `?org=${encodeURIComponent(s.org)}` : '';
+  return `/hagroups/${encodeURIComponent(s.name)}${qs}`;
+}
+
 export const HaGroupAPI = {
   list() {
     return get<{ hagroups: Record<string, HaGroup> }>('/hagroups');
@@ -29,9 +39,13 @@ export const HaGroupAPI = {
     return del(`/hagroups/${encodeURIComponent(id)}`);
   },
   addNode(hgId: string, nodeId: string) {
-    return put(`/hagroups/${encodeURIComponent(hgId)}/nodes/${encodeURIComponent(nodeId)}`);
+    const s = splitOrg(nodeId);
+    const qs = s.org ? `?org=${encodeURIComponent(s.org)}` : '';
+    return put(`/hagroups/${encodeURIComponent(hgId)}/nodes/${encodeURIComponent(s.name)}${qs}`);
   },
   removeNode(hgId: string, nodeId: string) {
-    return del(`/hagroups/${encodeURIComponent(hgId)}/nodes/${encodeURIComponent(nodeId)}`);
+    const s = splitOrg(nodeId);
+    const qs = s.org ? `?org=${encodeURIComponent(s.org)}` : '';
+    return del(`/hagroups/${encodeURIComponent(hgId)}/nodes/${encodeURIComponent(s.name)}${qs}`);
   },
 };
