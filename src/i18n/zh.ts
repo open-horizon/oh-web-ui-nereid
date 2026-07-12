@@ -176,6 +176,9 @@ const dict: Record<string, string> = {
   'Auto-generate if empty': '留空则自动生成',
   'Documentation URL': '文档 URL',
   'Required Services': '依赖服务',
+  'Dependent Services': '依赖的服务',
+  'Select dependent services': '选择依赖的服务',
+  'Dependent services hint': '所选服务将与本服务一起部署；边缘节点上的 agent 会确保这些依赖服务先于本服务启动（但不会等待其就绪）。',
   'User Input': '用户输入',
   'Select JSON File': '选择 JSON 文件',
   'Please paste JSON content': '请粘贴 JSON 内容',
@@ -758,6 +761,12 @@ const dict: Record<string, string> = {
   'Confirm Token': '确认令牌',
   'Tokens do not match': '两次输入的令牌不一致',
   'All Organizations': '全部组织',
+  'Agbot created': 'AgBot 创建成功',
+  'Edit BFF User': '编辑 BFF 用户',
+  'Pattern will be created in this organization': '部署模式将创建到此组织',
+  'Please select an organization': '请选择组织',
+  'Policy will be created in this organization': '部署策略将创建到此组织',
+  'Service will be created in this organization': '服务将创建到此组织',
 };
 
 export default dict;

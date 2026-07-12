@@ -28,6 +28,12 @@ function parseDep(dep: any): any {
   return dep;
 }
 
+// JSON.stringify that never throws (e.g. on circular structures) so a bad
+// payload can't blank the whole page with an uncaught render error.
+function safeStringify(v: any): string {
+  try { return JSON.stringify(v, null, 2); } catch { return String(v); }
+}
+
 // Convert form values to the Exchange deployment object format { services: { url: { image, ports, ... } } }
 // Each field is mapped from camelCase form name to snake_case Exchange field name
 function buildDeployment(values: any): any {
@@ -139,6 +145,7 @@ export default function Services() {
   const [createOpen, setCreateOpen] = useState(false);
   const [createOrg, setCreateOrg] = useState<string>('');
   const [importOpen, setImportOpen] = useState(false);
+  const [importOrg, setImportOrg] = useState<string>('');
   const [creating, setCreating] = useState(false);
   const [form] = Form.useForm();
   const [importForm] = Form.useForm();
@@ -227,9 +234,23 @@ export default function Services() {
     setSvcDockauths([]);
     setSvcKeysLoading(true);
     setSvcDockauthsLoading(true);
-    try { const r = await ServiceAPI.keys(id); setSvcKeys(r?.keys ?? []); } catch (_) {}
+    try {
+      // The Exchange keys endpoint shape varies: a root array of key ids,
+      // { keys: [...] }, or { keys: { keyId: content } }. Normalize to an
+      // array of key-id strings. Storing a raw object would make antd <List>
+      // call .map on it and throw an uncaught render error (blank page).
+      const r = await ServiceAPI.keys(id);
+      const k = r?.keys;
+      const raw = Array.isArray(r) ? r : (Array.isArray(k) ? k : (k && typeof k === 'object' ? Object.keys(k) : []));
+      setSvcKeys(raw.map((x: any) => (typeof x === 'string' ? x : (x?.keyId || x?.id || x?.name || String(x)))));
+    } catch (_) {}
     setSvcKeysLoading(false);
-    try { const r = await ServiceAPI.dockauths(id); setSvcDockauths(r?.dockauths ?? []); } catch (_) {}
+    try {
+      const r = await ServiceAPI.dockauths(id);
+      const d = r?.dockauths;
+      const raw = Array.isArray(r) ? r : (Array.isArray(d) ? d : []);
+      setSvcDockauths(raw);
+    } catch (_) {}
     setSvcDockauthsLoading(false);
   };
 
@@ -246,6 +267,32 @@ export default function Services() {
     URL.revokeObjectURL(url);
   };
 
+  // Convert selected service keys (e.g. "org/name") into the Open Horizon
+  // requiredServices array. Exchange's ServiceRef needs an explicit `org` plus the
+  // dependency's `url` field (NOT its id), so the agent deploys them with (and before) this service.
+  const toRequiredServices = (keys?: string[]): any[] =>
+    (keys || []).map((key) => {
+      const s = data[key];
+      return {
+        org: s?.organization || (key.includes('/') ? key.slice(0, key.indexOf('/')) : ''),
+        url: s?.url || key,
+        version: s?.version || '1.0.0',
+        arch: s?.arch || 'amd64',
+      };
+    });
+  // Convert stored requiredServices entries back into selectable keys for the form.
+  const fromRequiredServices = (rs?: any[]): string[] =>
+    (rs || []).map((r: any) => {
+      const hit = Object.keys(data).find(
+        (k) => data[k].organization === r?.org && data[k].url === r?.url
+      );
+      return hit || (r?.org && r?.url ? `${r.org}/${r.url}` : (r?.url || r?.serviceUrl || ''));
+    }).filter(Boolean);
+  // Options for the dependency selector (exclude the service being edited).
+  const depOptions = Object.keys(data)
+    .filter((k) => k !== editTarget)
+    .map((k) => ({ label: k, value: k }));
+
   const openCreate = () => {
     setCreateOpen(true);
     setCreateActiveKey(['basic']);
@@ -255,6 +302,7 @@ export default function Services() {
 
   const openImport = () => {
     setImportOpen(true);
+    setImportOrg(pageOrg);
     setImportMode('paste');
     setImportJsonText('');
     importForm.resetFields();
@@ -285,7 +333,11 @@ export default function Services() {
       }
       // Generate name from JSON content or fall back to a default
       const name = values.name || parsed.id || parsed.label?.replace(/\s+/g, '-').toLowerCase() || 'imported-service';
-      await ServiceAPI.create({ name, ...parsed });
+      if (getConfig().role === 'platform' && !importOrg) {
+        message.error(t('Please select an organization'));
+        return;
+      }
+      await ServiceAPI.create({ name, ...parsed }, importOrg);
       message.success(t('Service imported successfully'));
       setImportOpen(false);
       importForm.resetFields();
@@ -361,6 +413,7 @@ export default function Services() {
       devices: (sd.devices || []).join('\n'),
       command: Array.isArray(sd.command) ? sd.command.join('\n') : sd.command || '',
       entrypoint: Array.isArray(sd.entrypoint) ? sd.entrypoint.join('\n') : sd.entrypoint || '',
+      requiredServices: fromRequiredServices(svc.requiredServices),
     });
     setEditModalOpen(true);
     setEditTab('json');
@@ -418,6 +471,7 @@ export default function Services() {
           description: values.description || existing.description,
           userInput: existing.userInput || [],
           deployment,
+          requiredServices: toRequiredServices(values.requiredServices),
         };
         await ServiceAPI.update(editTarget, body);
       }
@@ -454,6 +508,7 @@ export default function Services() {
         userInput: [],
         deployment,
         deploymentSignature: '',
+        requiredServices: toRequiredServices(values.requiredServices),
       };
       await ServiceAPI.create({ name: values.name, ...body }, createOrg);
       message.success(t('Service created successfully'));
@@ -531,6 +586,7 @@ export default function Services() {
         description: fv.description || base.description,
         userInput: base.userInput || [],
         deployment,
+        requiredServices: toRequiredServices(fv.requiredServices),
       };
       editForm.setFieldsValue({
         serviceJSON: JSON.stringify(merged, null, 2),
@@ -664,6 +720,18 @@ export default function Services() {
           <Form.Item name="name" label={t('Service name (optional, leave empty to auto-generate)')}>
             <Input placeholder="my-imported-service" />
           </Form.Item>
+          {getConfig().role === 'platform' && (
+            <Form.Item label={t('Organization')} required tooltip={t('Service will be created in this organization')}>
+              <Select
+                showSearch
+                placeholder={t('Select organization')}
+                value={importOrg || undefined}
+                onChange={(v) => setImportOrg(v)}
+                options={allOrgs.map((o) => ({ label: o, value: o }))}
+                filterOption={(input, option) => (option?.label as string ?? '').toLowerCase().includes(input.toLowerCase())}
+              />
+            </Form.Item>
+          )}
           {importMode === 'upload' ? (
             <Form.Item label={t('Upload JSON file')}>
               <input type="file" accept=".json" onChange={handleFileSelect} />
@@ -708,7 +776,7 @@ export default function Services() {
                   </Descriptions.Item>
                   <Descriptions.Item label={t('Deployment Config')}>
                     <pre style={{ background: '#f5f5f5', padding: 8, borderRadius: 4, maxHeight: 200, overflow: 'auto', margin: 0, fontSize: 12 }}>
-                      {JSON.stringify(parseDep(data[selectedService].deployment), null, 2)}
+                      {safeStringify(parseDep(data[selectedService].deployment))}
                     </pre>
                   </Descriptions.Item>
                 </Descriptions>
@@ -724,7 +792,7 @@ export default function Services() {
                   </div>
                   <List
                     loading={svcKeysLoading}
-                    dataSource={svcKeys}
+                    dataSource={Array.isArray(svcKeys) ? svcKeys : []}
                     locale={{ emptyText: t('No keys') }}
                     renderItem={(k: string) => (
                       <List.Item
@@ -756,7 +824,7 @@ export default function Services() {
                   </div>
                   <List
                     loading={svcDockauthsLoading}
-                    dataSource={svcDockauths}
+                    dataSource={Array.isArray(svcDockauths) ? svcDockauths : []}
                     locale={{ emptyText: t('No docker auths') }}
                     renderItem={(da: any, i: number) => (
                       <List.Item
@@ -1048,6 +1116,28 @@ export default function Services() {
                   </div>
                 ),
               },
+              {
+                key: 'deps',
+                label: t('Required Services'),
+                children: (
+                  <div>
+                    <Alert
+                      message={t('Dependent services hint')}
+                      type="info" showIcon style={{ marginBottom: 12 }}
+                    />
+                    <Form.Item name="requiredServices" label={t('Dependent Services')} tooltip={t('Select services this service depends on')}>
+                      <Select
+                        mode="multiple"
+                        showSearch
+                        allowClear
+                        placeholder={t('Select dependent services')}
+                        options={depOptions}
+                        filterOption={(input, option) => (option?.label as string ?? '').toLowerCase().includes(input.toLowerCase())}
+                      />
+                    </Form.Item>
+                  </div>
+                ),
+              },
             ]}
           />
         </Form>
@@ -1267,13 +1357,35 @@ export default function Services() {
                             <Form.Item name="secrets" label={t('Secrets (JSON)')}>
                               <TextArea rows={3} />
                             </Form.Item>
-                            <Form.Item name="sysctls" label={t('Sysctls (JSON or text)')}>
-                              <TextArea rows={2} />
-                            </Form.Item>
-                          </div>
-                        ),
-                      },
-                    ]}
+                    <Form.Item name="sysctls" label={t('Sysctls (JSON or text)')}>
+                      <TextArea rows={2} />
+                    </Form.Item>
+                  </div>
+                ),
+              },
+              {
+                key: 'deps',
+                label: t('Required Services'),
+                children: (
+                  <div>
+                    <Alert
+                      message={t('Dependent services hint')}
+                      type="info" showIcon style={{ marginBottom: 12 }}
+                    />
+                    <Form.Item name="requiredServices" label={t('Dependent Services')} tooltip={t('Select services this service depends on')}>
+                      <Select
+                        mode="multiple"
+                        showSearch
+                        allowClear
+                        placeholder={t('Select dependent services')}
+                        options={depOptions}
+                        filterOption={(input, option) => (option?.label as string ?? '').toLowerCase().includes(input.toLowerCase())}
+                      />
+                    </Form.Item>
+                  </div>
+                ),
+              },
+            ]}
                   />
                 </Form>
               ),

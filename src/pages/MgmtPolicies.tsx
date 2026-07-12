@@ -8,6 +8,7 @@ import { Table, Button, Space, Typography, message, Modal, Form, Input, Select, 
 import { SearchOutlined, ReloadOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, ImportOutlined, EditOutlined, DownloadOutlined } from '@ant-design/icons';
 import { MgmtPolicyAPI, MgmtPolicy } from '../api/policies';
 import { ServiceAPI, ExchangeService } from '../api/services';
+import { OrgAPI } from '../api/organizations';
 import { getConfig } from '../api/config';
 import { useT } from '../i18n/context';
 import { useScreenSize } from '../hooks/useIsMobile';
@@ -32,8 +33,12 @@ export default function MgmtPolicies() {
   const { t, fmtTime } = useT();
   const [data, setData] = useState<Record<string, MgmtPolicy>>({});
   const [loading, setLoading] = useState(true);
-  const [createOpen, setCreateOpen] = useState(false);
+const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [importOrg, setImportOrg] = useState<string>('');
+  const [createOrg, setCreateOrg] = useState<string>('');
+  const [pageOrg, setPageOrg] = useState<string>(getConfig().role === 'platform' ? '' : (getConfig().orgId || ''));
+  const [allOrgs, setAllOrgs] = useState<string[]>([]);
   const [editOpen, setEditOpen] = useState(false);
   const [editingId, setEditingId] = useState('');
   const [creating, setCreating] = useState(false);
@@ -62,6 +67,11 @@ export default function MgmtPolicies() {
 
   useEffect(() => {
     load();
+    if (getConfig().role === 'platform') {
+      OrgAPI.list()
+        .then((r) => setAllOrgs(Object.keys(r?.orgs ?? {}).filter((o) => o !== 'root')))
+        .catch(() => {});
+    }
   }, []);
 
   usePolling(async () => {
@@ -106,6 +116,7 @@ export default function MgmtPolicies() {
 
   const openCreate = async () => {
     setCreateOpen(true);
+    setCreateOrg(pageOrg);
     setServiceSearch('');
     setSelectedServices([]);
     form.resetFields();
@@ -121,6 +132,10 @@ export default function MgmtPolicies() {
   const handleCreate = async () => {
     try {
       const values = await form.validateFields();
+      if (getConfig().role === 'platform' && !createOrg) {
+        message.error(t('Please select an organization'));
+        return;
+      }
       setCreating(true);
       // Normalize constraint variables to include $ prefix
       const vconstraints: string[] = [];
@@ -148,7 +163,7 @@ export default function MgmtPolicies() {
         // Service-targeted management policy uses properties/constraints (no `service` field in Exchange API)
         body.properties = [
           { name: 'openhorizon.service.name', value: values.serviceName },
-          { name: 'openhorizon.service.org', value: getConfig().orgId || '' },
+          { name: 'openhorizon.service.org', value: createOrg },
           { name: 'openhorizon.service.arch', value: 'amd64' },
           { name: 'openhorizon.service.version', value: '1.0.0' },
         ];
@@ -160,12 +175,12 @@ export default function MgmtPolicies() {
       if (selectedServices.length > 0) {
         body.dataServices = selectedServices.map((svcId) => ({
           serviceUrl: services[svcId].url || '',
-          serviceOrgid: getConfig().orgId || '',
+          serviceOrgid: createOrg,
           serviceArch: services[svcId].arch || 'amd64',
           serviceVersions: [{ version: services[svcId].version || '1.0.0', priority: {}, upgrade: {} }],
         }));
       }
-      await MgmtPolicyAPI.create(values.name, body);
+      await MgmtPolicyAPI.create(values.name, body, createOrg);
       message.success(t('Management policy created successfully'));
       setCreateOpen(false);
       form.resetFields();
@@ -248,7 +263,11 @@ export default function MgmtPolicies() {
         return;
       }
       const name = values.name || parsed.id || parsed.label?.replace(/\s+/g, '-').toLowerCase() || 'imported-mgmt-policy';
-      await MgmtPolicyAPI.create(name, parsed);
+      if (getConfig().role === 'platform' && !importOrg) {
+        message.error(t('Please select an organization'));
+        return;
+      }
+      await MgmtPolicyAPI.create(name, parsed, importOrg);
       message.success(t('Management policy imported successfully'));
       setImportOpen(false);
       importForm.resetFields();
@@ -346,7 +365,7 @@ export default function MgmtPolicies() {
             style={{ width: 200 }}
           />
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('Create Management Policy')}</Button>
-          <Button icon={<ImportOutlined />} onClick={() => setImportOpen(true)}>{t('Import')}</Button>
+          <Button icon={<ImportOutlined />} onClick={() => { setImportOpen(true); setImportOrg(pageOrg); importForm.resetFields(); }}>{t('Import')}</Button>
           <Button icon={<ReloadOutlined />} onClick={load}>{t('Refresh')}</Button>
         </div>
       </div>
@@ -421,6 +440,18 @@ export default function MgmtPolicies() {
           <Form.Item name="constraints" label={t('Constraints (one per line, supports variables like ${var})')}>
             <TextArea rows={3} placeholder={t('e.g. a == b')} />
           </Form.Item>
+          {getConfig().role === 'platform' && (
+            <Form.Item label={t('Organization')} required tooltip={t('Management policy will be created in this organization')}>
+              <Select
+                showSearch
+                placeholder={t('Select organization')}
+                value={createOrg || undefined}
+                onChange={(v) => setCreateOrg(v)}
+                options={allOrgs.map((o) => ({ label: o, value: o }))}
+                filterOption={(input, option) => (option?.label as string ?? '').toLowerCase().includes(input.toLowerCase())}
+              />
+            </Form.Item>
+          )}
         </Form>
 
         <div style={{ marginBottom: 8 }}>
@@ -485,6 +516,18 @@ export default function MgmtPolicies() {
           <Form.Item name="name" label={t('Management policy name (optional, leave empty to auto-generate)')}>
             <Input placeholder="my-imported-mgmt-policy" />
           </Form.Item>
+          {getConfig().role === 'platform' && (
+            <Form.Item label={t('Organization')} required tooltip={t('Policy will be created in this organization')}>
+              <Select
+                showSearch
+                placeholder={t('Select organization')}
+                value={importOrg || undefined}
+                onChange={(v) => setImportOrg(v)}
+                options={allOrgs.map((o) => ({ label: o, value: o }))}
+                filterOption={(input, option) => (option?.label as string ?? '').toLowerCase().includes(input.toLowerCase())}
+              />
+            </Form.Item>
+          )}
           <Form.Item name="json" label={t('Management policy JSON')} rules={[{ required: true, message: t('Please enter management policy JSON') }]}>
             <TextArea rows={10} placeholder='{\n  "label": "...",\n  "constraints": [...],\n  "service": {...}\n}' />
           </Form.Item>

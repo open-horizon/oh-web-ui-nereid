@@ -67,8 +67,9 @@ export const MgmtPolicyAPI = {
   list() {
     return get<{ managementPolicy: Record<string, MgmtPolicy> }>('/mgmtpolicies');
   },
-  create(name: string, data: Partial<MgmtPolicy>) {
-    return post('/mgmtpolicies', { name, ...data });
+  create(name: string, data: Partial<MgmtPolicy>, org?: string) {
+    const qs = org ? `?org=${encodeURIComponent(org)}` : '';
+    return post(`/mgmtpolicies${qs}`, { name, ...data });
   },
   update(policyId: string, data: Partial<MgmtPolicy>) {
     return put(mgmtUrl(policyId), data);

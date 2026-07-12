@@ -176,11 +176,11 @@ export default function AppLayout() {
               value={lang}
               onChange={(val) => setLang(val)}
               options={[
-                { value: 'zh', label: t('Chinese') },
-                { value: 'en', label: 'EN' },
+                { value: 'zh', label: '中文' },
+                { value: 'en', label: 'English' },
               ]}
               size="small"
-              style={{ width: 80 }}
+              style={{ width: 92 }}
               variant="borderless"
             />
             <Tag color={config.role === 'platform' ? 'red' : 'blue'}>

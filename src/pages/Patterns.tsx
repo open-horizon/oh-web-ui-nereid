@@ -36,6 +36,7 @@ export default function Patterns() {
   const [createOpen, setCreateOpen] = useState(false);
   const [createOrg, setCreateOrg] = useState<string>('');
   const [importOpen, setImportOpen] = useState(false);
+  const [importOrg, setImportOrg] = useState<string>('');
   const [editModelOpen, setEditModelOpen] = useState(false);
   const [editModelTarget, setEditModelTarget] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -239,6 +240,7 @@ export default function Patterns() {
 
   const openImport = () => {
     setImportOpen(true);
+    setImportOrg(pageOrg);
     importForm.resetFields();
   };
 
@@ -253,7 +255,11 @@ export default function Patterns() {
         return;
       }
       const name = values.name || parsed.id || parsed.label?.replace(/\s+/g, '-').toLowerCase() || 'imported-pattern';
-      await PatternAPI.create(name, parsed);
+      if (getConfig().role === 'platform' && !importOrg) {
+        message.error(t('Please select an organization'));
+        return;
+      }
+      await PatternAPI.create(name, parsed, importOrg);
       message.success(t('Pattern imported successfully'));
       setImportOpen(false);
       importForm.resetFields();
@@ -501,6 +507,18 @@ export default function Patterns() {
           <Form.Item name="name" label={t('Pattern name (optional, leave empty to auto-generate)')}>
             <Input placeholder="my-imported-pattern" />
           </Form.Item>
+          {getConfig().role === 'platform' && (
+            <Form.Item label={t('Organization')} required tooltip={t('Pattern will be created in this organization')}>
+              <Select
+                showSearch
+                placeholder={t('Select organization')}
+                value={importOrg || undefined}
+                onChange={(v) => setImportOrg(v)}
+                options={allOrgs.map((o) => ({ label: o, value: o }))}
+                filterOption={(input, option) => (option?.label as string ?? '').toLowerCase().includes(input.toLowerCase())}
+              />
+            </Form.Item>
+          )}
           <Form.Item name="json" label={t('Pattern JSON')} rules={[{ required: true, message: t('Please enter pattern JSON') }]}>
             <TextArea rows={10} placeholder='{\n  "label": "...",\n  "services": [...]\n}' />
           </Form.Item>

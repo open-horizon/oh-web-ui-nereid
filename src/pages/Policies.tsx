@@ -25,6 +25,7 @@ export default function Policies() {
   const [createOpen, setCreateOpen] = useState(false);
   const [createOrg, setCreateOrg] = useState<string>('');
   const [importOpen, setImportOpen] = useState(false);
+  const [importOrg, setImportOrg] = useState<string>('');
   const [creating, setCreating] = useState(false);
   const [form] = Form.useForm();
   const [importForm] = Form.useForm();
@@ -248,6 +249,18 @@ export default function Policies() {
     setEditTarget(id);
     const policy = data[id];
     if (!policy) return;
+    // Ensure the services list is loaded BEFORE matching, so the Select has
+    // both options and a correct pre-selected value on the very first open.
+    let svcMap = services;
+    if (Object.keys(svcMap).length === 0) {
+      try {
+        const svcRes = await ServiceAPI.list();
+        svcMap = svcRes?.services ?? {};
+        setServices(svcMap);
+      } catch (err: any) {
+        message.error(err.message);
+      }
+    }
     setEditOpen(true);
     editForm.resetFields();
     // Pre-fill form with current values
@@ -258,15 +271,8 @@ export default function Policies() {
     });
     // Find matching service
     const svcName = policy.service?.name || '';
-    const svcMatch = Object.keys(services).find((s) => s.includes(svcName));
+    const svcMatch = Object.keys(svcMap).find((s) => s.includes(svcName));
     setEditSelectedServiceId(svcMatch || '');
-    // Ensure services list is loaded
-    try {
-      const svcRes = await ServiceAPI.list();
-      setServices(svcRes?.services ?? {});
-    } catch (err: any) {
-      message.error(err.message);
-    }
   };
 
   const handleEdit = async () => {
@@ -356,7 +362,11 @@ export default function Policies() {
         return;
       }
       const name = values.name || parsed.id || parsed.label?.replace(/\s+/g, '-').toLowerCase() || 'imported-policy';
-      await DeploymentPolicyAPI.create(name, parsed);
+      if (getConfig().role === 'platform' && !importOrg) {
+        message.error(t('Please select an organization'));
+        return;
+      }
+      await DeploymentPolicyAPI.create(name, parsed, importOrg);
       message.success(t('Policy imported successfully'));
       setImportOpen(false);
       importForm.resetFields();
@@ -407,7 +417,7 @@ export default function Policies() {
             style={{ width: 200 }}
           />
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('Create Policy')}</Button>
-          <Button icon={<ImportOutlined />} onClick={() => { setImportOpen(true); importForm.resetFields(); }}>{t('Import')}</Button>
+          <Button icon={<ImportOutlined />} onClick={() => { setImportOpen(true); setImportOrg(pageOrg); importForm.resetFields(); }}>{t('Import')}</Button>
           <Button icon={<ReloadOutlined />} onClick={() => load()}>{t('Refresh')}</Button>
         </div>
       </div>
@@ -506,6 +516,18 @@ export default function Policies() {
           <Form.Item name="name" label={t('Policy name (optional, leave empty to auto-generate)')}>
             <Input placeholder="my-imported-policy" />
           </Form.Item>
+          {getConfig().role === 'platform' && (
+            <Form.Item label={t('Organization')} required tooltip={t('Policy will be created in this organization')}>
+              <Select
+                showSearch
+                placeholder={t('Select organization')}
+                value={importOrg || undefined}
+                onChange={(v) => setImportOrg(v)}
+                options={allOrgs.map((o) => ({ label: o, value: o }))}
+                filterOption={(input, option) => (option?.label as string ?? '').toLowerCase().includes(input.toLowerCase())}
+              />
+            </Form.Item>
+          )}
           <Form.Item name="json" label={t('Policy JSON (must contain businessPolicy wrapper)')} rules={[{ required: true, message: t('Please enter policy JSON') }]}>
             <TextArea rows={10} placeholder='{\n  "businessPolicy": { ... }\n}' />
           </Form.Item>
