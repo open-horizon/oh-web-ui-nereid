@@ -401,6 +401,19 @@ Left-side menu with two tabs:
 
 Read/written via `GET/PUT /api/settings`.
 
+### 12.8 Edge Nodes — User Input Management
+
+The node detail drawer includes a **User Input** tab for managing environment variables passed to edge service containers via `userInput`.
+
+- On first drawer open, the available Exchange services are loaded for the service selector
+- Each service entry has a `<Select>` dropdown listing known services; selecting one auto-fills `serviceOrgid`, `serviceUrl`, `serviceArch`
+- `inputs` are displayed as editable key:value rows (add / modify / delete)
+- Multiple service entries can be added, each with its own set of variables
+- **Save** calls `PATCH /api/nodes/{id}` to update only the `userInput` field, leaving other node attributes (pattern, registeredServices, etc.) untouched
+- Under the hood, the BFF proxies `PATCH /orgs/{org}/nodes/{nodeId}` to the Exchange API for in-place partial updates
+
+Frontend API: `NodeAPI.updateUserInput(nodeId, userInput, org?)` defined in `src/api/nodes.ts`.
+
 ---
 
 ## 13. Code Structure

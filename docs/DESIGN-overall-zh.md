@@ -372,6 +372,19 @@ Open Horizon 要求服务 `deployment` 字段附带 RSA-PSS SHA-256 签名。
 
 通过 `GET/PUT /api/settings` 接口读写。
 
+### 11.8 边缘节点 — 用户输入管理
+
+在节点详情抽屉中新增 **User Input** 标签页，用于管理 edge 服务容器的环境变量（userInput）。
+
+- 首次打开抽屉时加载 Exchange 可用服务列表，供选择
+- 每个服务条目标题使用 `<Select>` 从已知服务中选择，自动填充 `serviceOrgid`、`serviceUrl`、`serviceArch`
+- `inputs` 以 key:value 行展示，支持增删改
+- 支持添加多个服务条目，每个条目可独立配置变量
+- **Save** 按钮调用 `PATCH /api/nodes/{id}` 仅更新 `userInput` 字段，不影响节点其他属性（pattern、registeredServices 等）
+- 底层通过 BFF 代理 `PATCH /orgs/{org}/nodes/{nodeId}` 到 Exchange API，实现原地部分更新
+
+前端 API：`NodeAPI.updateUserInput(nodeId, userInput, org?)` → `src/api/nodes.ts`。
+
 ## 12. 部署
 
 ### 12.1 docker-compose

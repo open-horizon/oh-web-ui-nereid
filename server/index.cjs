@@ -768,8 +768,7 @@ app.put('/api/bff-users/:username/password', requireAuth, async (req, res) => {
   // Verify old password when user changes their own password.
   if (isOwn) {
     if (!oldPassword) return res.status(400).json({ msg: 'Missing old password' });
-    const hash = crypto.createHash('sha256').update(u.salt + oldPassword).digest('hex');
-    if (hash !== u.password_hash) return res.status(403).json({ msg: 'Old password is incorrect' });
+    if (!verifyPassword(oldPassword, u.hash, u.salt)) return res.status(403).json({ msg: 'Old password is incorrect' });
   }
   const { hash, salt } = hashPassword(newPassword);
   await db.updatePassword(req.params.username, hash, salt, u.org);

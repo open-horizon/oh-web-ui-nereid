@@ -4,10 +4,11 @@
 
 import { useEffect, useState } from 'react';
 import { usePolling } from '../hooks/usePolling';
-import { Table, Button, Space, Typography, message, Modal, Tag, Badge, Select, Alert, Drawer, Descriptions, List, Input, Switch, Tabs } from 'antd';
-import { SearchOutlined, ReloadOutlined, EyeOutlined, NodeIndexOutlined, CheckCircleOutlined, CloseCircleOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
-import { NodeAPI, ExchangeNode, NodeServiceStatus, NodePolicy } from '../api/nodes';
+import { Table, Button, Space, Typography, message, Modal, Tag, Badge, Select, Alert, Drawer, Descriptions, List, Input, Switch, Tabs, Card } from 'antd';
+import { SearchOutlined, ReloadOutlined, EyeOutlined, NodeIndexOutlined, CheckCircleOutlined, CloseCircleOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, PlusCircleOutlined } from '@ant-design/icons';
+import { NodeAPI, ExchangeNode, NodeServiceStatus, NodePolicy, OneUserInputService } from '../api/nodes';
 import { PatternAPI, ExchangePattern } from '../api/patterns';
+import { ServiceAPI } from '../api/services';
 import { OrgAPI } from '../api/organizations';
 import { getConfig } from '../api/config';
 import { useT } from '../i18n/context';
@@ -32,6 +33,29 @@ export default function Nodes() {
   const [drawerNodeId, setDrawerNodeId] = useState<string>('');
   const [nodeServices, setNodeServices] = useState<NodeServiceStatus[]>([]);
   const [servicesLoading, setServicesLoading] = useState(false);
+
+  const [userInputData, setUserInputData] = useState<OneUserInputService[]>([]);
+  const [userInputSaving, setUserInputSaving] = useState(false);
+  const [availableSvcMap, setAvailableSvcMap] = useState<Record<string, any>>({});
+
+  useEffect(() => {
+    if (drawerNode?.userInput) {
+      setUserInputData(Array.isArray(drawerNode.userInput) ? drawerNode.userInput : []);
+    } else {
+      setUserInputData([]);
+    }
+  }, [drawerNode]);
+
+  const fetchServices = async () => {
+    try {
+      const res = await ServiceAPI.list(pageOrg || undefined);
+      setAvailableSvcMap(res?.services ?? {});
+    } catch {}
+  };
+
+  useEffect(() => {
+    if (drawerOpen) fetchServices();
+  }, [drawerOpen]);
 
   const [policyEditOpen, setPolicyEditOpen] = useState(false);
   const [policyEditCustomProps, setPolicyEditCustomProps] = useState<{ name: string; value: string }[]>([]);
@@ -194,6 +218,61 @@ export default function Nodes() {
     setPolicyEditCustomProps(customProps.map((p: any) => ({ name: p.name, value: String(p.value) })));
     setPolicyEditConstraints((pol?.constraints || []).join('\n'));
     setPolicyEditOpen(true);
+  };
+
+  const saveUserInput = async () => {
+    if (!drawerNodeId) return;
+    setUserInputSaving(true);
+    try {
+      const nOrg = drawerNodeId.includes('/') ? drawerNodeId.split('/')[0] : pageOrg;
+      await NodeAPI.updateUserInput(localNodeId(drawerNodeId), userInputData, nOrg);
+      message.success(t('User input updated'));
+      if (drawerNode) {
+        setDrawerNode({ ...drawerNode, userInput: userInputData });
+      }
+    } catch (err: any) {
+      message.error(err.message);
+    } finally {
+      setUserInputSaving(false);
+    }
+  };
+
+  const addUserInputService = () => {
+    setUserInputData([...userInputData, {
+      serviceOrgid: pageOrg || sessionOrg,
+      serviceUrl: '',
+      serviceArch: '',
+      serviceVersionRange: '',
+      inputs: [],
+    }]);
+  };
+
+  const removeUserInputService = (idx: number) => {
+    setUserInputData(userInputData.filter((_, i) => i !== idx));
+  };
+
+  const updateUserInputService = (idx: number, field: string, value: string) => {
+    const next = [...userInputData];
+    (next[idx] as any)[field] = value;
+    setUserInputData(next);
+  };
+
+  const addInputToService = (svcIdx: number) => {
+    const next = [...userInputData];
+    next[svcIdx].inputs.push({ name: '', value: '' });
+    setUserInputData(next);
+  };
+
+  const removeInputFromService = (svcIdx: number, inpIdx: number) => {
+    const next = [...userInputData];
+    next[svcIdx].inputs = next[svcIdx].inputs.filter((_, i) => i !== inpIdx);
+    setUserInputData(next);
+  };
+
+  const updateInputInService = (svcIdx: number, inpIdx: number, field: 'name' | 'value', val: string) => {
+    const next = [...userInputData];
+    (next[svcIdx].inputs[inpIdx] as any)[field] = val;
+    setUserInputData(next);
   };
 
   const saveEditPolicy = async () => {
@@ -720,6 +799,81 @@ export default function Nodes() {
                     </List.Item>
                   )}
                 />
+              ),
+            },
+            {
+              key: 'userinput',
+              label: t('User Input'),
+              children: (
+                <div>
+                  {userInputData.length === 0 && (
+                    <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>{t('No user input')}</Text>
+                  )}
+                  {userInputData.map((svc, sIdx) => (
+                    <Card
+                      key={sIdx}
+                      size="small"
+                      style={{ marginBottom: 12 }}
+                      title={
+                        <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                          <Select
+                            size="small"
+                            showSearch
+                            style={{ minWidth: 300 }}
+                            placeholder={t('Select a service')}
+                            value={svc.serviceUrl ? Object.keys(availableSvcMap).find(k =>
+                              k.startsWith(svc.serviceOrgid + '/') && availableSvcMap[k].url === svc.serviceUrl && availableSvcMap[k].arch === svc.serviceArch
+                            ) : undefined}
+                            onChange={(val: any) => {
+                              if (!val) return;
+                              const s = availableSvcMap[val as string];
+                              if (s) {
+                                const next = [...userInputData];
+                                const org = (val as string).includes('/') ? (val as string).split('/')[0] : (getConfig().orgId || '');
+                                next[sIdx].serviceOrgid = org;
+                                next[sIdx].serviceUrl = s.url || '';
+                                next[sIdx].serviceArch = s.arch || '';
+                                setUserInputData(next);
+                              }
+                            }}
+                            filterOption={(input, option) =>
+                              (option?.label as string ?? '').toLowerCase().includes(input.toLowerCase())
+                            }
+                            options={Object.keys(availableSvcMap).map((id) => ({ label: id, value: id }))}
+                          />
+                          <Button type="text" danger size="small" icon={<CloseCircleOutlined />} onClick={() => removeUserInputService(sIdx)} />
+                        </Space>
+                      }
+                    >
+                      {svc.inputs.map((inp, iIdx) => (
+                        <Space key={iIdx} style={{ display: 'flex', marginBottom: 6 }} align="baseline">
+                          <Input
+                            size="small"
+                            style={{ width: 180 }}
+                            placeholder={t('Name')}
+                            value={inp.name}
+                            onChange={(e) => updateInputInService(sIdx, iIdx, 'name', e.target.value)}
+                          />
+                          <Input
+                            size="small"
+                            style={{ width: 180 }}
+                            placeholder={t('Value')}
+                            value={String(inp.value ?? '')}
+                            onChange={(e) => updateInputInService(sIdx, iIdx, 'value', e.target.value)}
+                          />
+                          <Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => removeInputFromService(sIdx, iIdx)} />
+                        </Space>
+                      ))}
+                      <Button type="dashed" size="small" onClick={() => addInputToService(sIdx)} icon={<PlusCircleOutlined />}>
+                        {t('Add input')}
+                      </Button>
+                    </Card>
+                  ))}
+                  <Space style={{ marginTop: 8 }}>
+                    <Button onClick={addUserInputService} icon={<PlusCircleOutlined />}>{t('Add service')}</Button>
+                    <Button type="primary" onClick={saveUserInput} loading={userInputSaving}>{t('Save')}</Button>
+                  </Space>
+                </div>
               ),
             },
           ]}

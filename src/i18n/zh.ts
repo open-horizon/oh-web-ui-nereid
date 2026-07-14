@@ -630,6 +630,11 @@ const dict: Record<string, string> = {
   'Add': '添加',
 
   // Pattern Node Health
+  'User Input (Node)': '用户输入（节点）',
+  'No user input': '暂无用户输入',
+  'User input updated': '用户输入已更新',
+  'Add input': '添加变量',
+  'Add service': '添加服务',
   'No node health data': '暂无节点健康数据',
   'Node Health': '节点健康',
   'Last Seen: ': '最后可见: ',

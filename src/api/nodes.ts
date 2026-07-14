@@ -8,11 +8,12 @@ export interface ExchangeNode {
   name?: string;
   nodeType?: string;
   architecture?: string;
-  pattern?: string;         // Pattern assigned to node (or null for policy-based)
+  pattern?: string;
   token?: string;
   owner?: string;
   lastHeartbeat?: string;
   publicKey?: string;
+  userInput?: OneUserInputService[];
   [key: string]: any;
 }
 
@@ -20,6 +21,19 @@ export interface NodePolicy {
   properties?: Record<string, any>[];
   constraints?: string[];
   [key: string]: any;
+}
+
+export interface OneUserInputValue {
+  name: string;
+  value: any;
+}
+
+export interface OneUserInputService {
+  serviceOrgid: string;
+  serviceUrl: string;
+  serviceArch?: string;
+  serviceVersionRange?: string;
+  inputs: OneUserInputValue[];
 }
 
 export interface NodeServiceStatus {
@@ -95,6 +109,12 @@ export const NodeAPI = {
     const orgQ = org || s.org;
     const qs = orgQ ? `?org=${encodeURIComponent(orgQ)}` : '';
     return get<{ errors: any[] }>(`/nodes/${encodeURIComponent(s.name)}/errors${qs}`);
+  },
+  updateUserInput(nodeId: string, userInput: any[], org?: string) {
+    const s = splitOrg(nodeId);
+    const orgQ = org || s.org;
+    const qs = orgQ ? `?org=${encodeURIComponent(orgQ)}` : '';
+    return patch(`/nodes/${encodeURIComponent(s.name)}${qs}`, { userInput });
   },
   managementStatus(nodeId: string, org?: string) {
     const s = splitOrg(nodeId);

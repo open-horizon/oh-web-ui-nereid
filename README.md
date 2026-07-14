@@ -51,7 +51,7 @@ It provides an intuitive visual interface to simplify the service lifecycle and 
 
 - **Frontend**: React 18, Vite 5, React Router v6, Ant Design v5, TypeScript
 - **Backend (BFF Proxy)**: Express 5, Node.js (Crypto API), ioredis (Redis client)
-- **Session Store**: Redis (AES-256-GCM encrypted credentials at rest)
+- **Session Store**: Redis (optional; falls back to in-memory), AES-256-GCM encrypted credentials at rest
 - **Deployment**: Docker & Docker Compose, Nginx (TLS reverse proxy)
 
 ---
@@ -79,9 +79,10 @@ NereidAI/
 ├── docs/                   # Documentation and API specs (openapi.yaml)
 ├── nginx.conf              # Nginx TLS + reverse-proxy + security headers
 ├── Dockerfile              # Multi-stage: backend runtime + nginx frontend
-├── docker-compose.yaml     # backend + frontend + redis services
+├── docker-compose.yaml     # Production compose (ghcr.io images, redis + postgres)
+├── docker-compose.dev.yaml # Dev override: local build instead of ghcr pull
+├── Makefile                # Build, dev, docker helpers
 ├── scripts/                # Offline image export/load helpers
-├── docs/                   # Documentation (openapi.yaml, PRODUCTION.md)
 ├── .github/                # CI (ci.yml), publish (publish.yml), dependabot, templates
 ├── LICENSE                 # Apache License 2.0
 ├── NOTICE                  # Third-party attribution
@@ -122,22 +123,37 @@ npm install
 
 ## 🐳 Docker Deployment
 
-The project ships a multi-stage `Dockerfile` and a `docker-compose.yaml` that runs three services behind an Nginx TLS reverse proxy:
+The project ships a multi-stage `Dockerfile` and two Compose files. Choose your mode:
+
+| Mode | Command | Images |
+|---|---|---|
+| **Production** (pull) | `make docker-up` | Pulls from `ghcr.io/nereidai/*` |
+| **Development** (build) | `make docker-dev-up` | Builds locally from source |
+
+Services:
 
 | Service | Image | Purpose | Port |
 |---|---|---|---|
-| `redis` | `redis:6.2.2-alpine` | Encrypted session store (TTL) | internal |
-| `open-horizon-exchangeui-backend` | local build | BFF API proxy | `3001` (internal) |
-| `open-horizon-exchangeui-frontend` | local build | Nginx + static assets + TLS | `8090` (HTTP→HTTPS), `8443` (HTTPS) |
+| `redis` | `redis:6.2.2-alpine` | Encrypted session store (TTL, optional) | internal |
+| `postgres` | `postgres:16-alpine` | Database for BFF (audit, settings, users) | internal |
+| `open-horizon-exchangeui-backend` | ghcr or local | BFF API proxy | `3001` (internal) |
+| `open-horizon-exchangeui-frontend` | ghcr or local | Nginx + static assets + TLS | `8090` (HTTP→HTTPS), `8443` (HTTPS) |
 
 ### Build & Launch
 
+**Local build (development)**:
 ```bash
-docker compose up --build -d
+make docker-dev-up
+```
+
+**Pull from GHCR (production)**:
+```bash
+make docker-up
 ```
 
 - Open **https://&lt;host&gt;:8443/** (HTTP on `8090` redirects to HTTPS).
 - The first launch auto-generates a self-signed certificate at `/etc/nginx/ssl`. For production, mount real certificates there instead (see below).
+- First-time start requires visiting the UI to complete the **Setup** form (create admin account + Exchange connection).
 
 ### Backend Environment Variables
 
@@ -201,7 +217,7 @@ docker pull ghcr.io/nereidai/open-horizon-exchangeui-backend:latest
 docker pull ghcr.io/nereidai/open-horizon-exchangeui-frontend:latest
 ```
 
-To run directly from GHCR, override the images in `docker-compose.yaml` or use an override file. For fully offline/air-gapped deployment, export the images locally with `make images-export` and transfer them (see `docs/PRODUCTION.md`).
+To run directly from GHCR (production), use `make docker-up` — this pulls the published images. For local development with your source changes, use `make docker-dev-up`, which builds locally via `docker-compose.dev.yaml`. For fully offline/air-gapped deployment, export the images locally with `make images-export` and transfer them (see `docs/PRODUCTION.md`).
 
 ---
 
@@ -210,14 +226,16 @@ To run directly from GHCR, override the images in `docker-compose.yaml` or use a
 A `Makefile` is provided to speed up common workflows.
 
 | Command | Description |
-|---|---|
+|---|---|---|
 | `make install` | Install npm packages locally |
 | `make build` | Compile and build the React app to `dist/` |
 | `make dev-backend`| Run backend BFF in development mode |
 | `make dev-frontend`| Run frontend Vite in development mode |
-| `make docker-build`| Build production Docker images for frontend and backend |
-| `make docker-up` | Build and run containers in background with docker-compose |
-| `make docker-down` | Stop and remove running containers |
+| `make docker-up` | Pull GHCR images & start containers (production) |
+| `make docker-down` | Stop and remove production containers |
+| `make docker-dev-build`| Build Docker images from local source |
+| `make docker-dev-up` | Build (if needed) & start containers from local source |
+| `make docker-dev-down` | Stop and remove local containers |
 | `make clean` | Delete temporary files, `dist/`, and `node_modules/` |
 
 ---

@@ -1,0 +1,12 @@
+services:
+  open-horizon-exchangeui-backend:
+    build:
+      context: .
+      target: backend
+    image: nereid-exchangeui-backend:latest
+
+  open-horizon-exchangeui-frontend:
+    build:
+      context: .
+      target: frontend
+    image: nereid-exchangeui-frontend:latest

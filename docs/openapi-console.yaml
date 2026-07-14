@@ -1025,9 +1025,13 @@ paths:
   /api/nodes/{id}:
     patch:
       tags: [Nodes]
-      summary: Update node (set pattern)
+      summary: Update node fields (pattern, userInput, etc.)
       description: |
+        Partial update of node attributes. Only the supplied fields are changed.
         If `pattern` field does not contain `/`, `{orgId}/` prefix is prepended.
+        `userInput` is an array of service user-input definitions, each containing
+        service identification (`serviceOrgid`, `serviceUrl`, `serviceArch`,
+        `serviceVersionRange`) and an `inputs` array of `{name, value}` pairs.
       operationId: patchNode
       security:
         - SessionCookie: []
@@ -1057,6 +1061,35 @@ paths:
                   type: string
                 name:
                   type: string
+                userInput:
+                  type: array
+                  description: Service user-input definitions
+                  items:
+                    type: object
+                    properties:
+                      serviceOrgid:
+                        type: string
+                        example: yiqisoft
+                      serviceUrl:
+                        type: string
+                        example: busybox
+                      serviceArch:
+                        type: string
+                        example: amd64
+                      serviceVersionRange:
+                        type: string
+                        example: 1.0.0
+                      inputs:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            name:
+                              type: string
+                              example: myvar
+                            value:
+                              type: string
+                              example: myvalue
       responses:
         '200':
           description: Operation result
