@@ -576,6 +576,8 @@ app.get('/api/setup-status', async (req, res) => {
 
 // First-time setup: create the initial platform account and persist the shared
 // Exchange connection. Only allowed when no local users exist yet.
+// The Exchange account MUST be a hub-level superuser (e.g. root/root) that can
+// list all organizations. Regular org accounts cannot manage the hub.
 app.post('/api/setup', async (req, res) => {
   try {
     if ((await db.loadUsers()).length > 0) return res.status(400).json({ msg: 'Already initialized, cannot re-setup' });
@@ -585,12 +587,22 @@ app.post('/api/setup', async (req, res) => {
     }
     const auth = `${user}:${password}`;
     const b64 = Buffer.from(auth).toString('base64');
-    const url = `${baseURL.replace(/\/+$/, '')}/v1/admin/version`;
-    const r = await fetch(url, { headers: { Authorization: `Basic ${b64}` } });
-    if (!r.ok && r.status !== 404) return res.status(401).json({ msg: 'Exchange connection failed' });
-    const version = (await r.text()).replace(/"/g, '');
+    const headers = { Authorization: `Basic ${b64}` };
+    const base = baseURL.replace(/\/+$/, '');
+    // 1) Verify the Exchange is reachable
+    const vr = await fetch(`${base}/v1/admin/version`, { headers });
+    if (!vr.ok) return res.status(401).json({ msg: 'Exchange connection failed — check URL and credentials' });
+    // 2) Verify the account has hub-level admin access (can list all orgs)
+    const or = await fetch(`${base}/v1/orgs`, { headers });
+    if (!or.ok) return res.status(403).json({ msg: 'Exchange account lacks hub-level admin privileges — use root/root or equivalent superuser' });
+    let orgData;
+    try { orgData = await or.json(); } catch { orgData = {}; }
+    if (!orgData.orgs || typeof orgData.orgs !== 'object' || Object.keys(orgData.orgs).length === 0) {
+      return res.status(403).json({ msg: 'Exchange account cannot list organizations — not a hub-level superuser' });
+    }
+    const version = (await vr.text()).replace(/"/g, '');
     const orgId = user.includes('/') ? user.split('/')[0] : user;
-    const cfg = { configured: true, baseURL: baseURL.replace(/\/+$/, ''), auth: b64, orgId, version };
+    const cfg = { configured: true, baseURL: base, auth: b64, orgId, version };
     await db.saveExchangeConfig(cfg, adminUser);
     exchangeConfig = cfg;
     const { hash, salt } = hashPassword(adminPassword);
