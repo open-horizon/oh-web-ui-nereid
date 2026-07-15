@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@ant-design/icons": "^6.3.2",
-    "antd": "^6.5.0",
+    "antd": "^6.5.1",
     "express": "^5.2.1",
     "ioredis": "^5.11.1",
     "pg": "^8.22.0",
