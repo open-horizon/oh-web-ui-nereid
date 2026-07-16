@@ -98,4 +98,13 @@ export const AgbotAPI = {
   listAgreements(id: string, org?: string) {
     return get<{ agreements: Record<string, any> }>(agbotUrl(id, '/agreements', org));
   },
+  heartbeat(id: string, org?: string) {
+    return post<{ code: string; msg: string }>(agbotUrl(id, '/heartbeat', org), {});
+  },
+  listMsgs(id: string, org?: string) {
+    return get<{ msgs: any[] }>(agbotUrl(id, '/msgs', org));
+  },
+  sendMsg(id: string, body: any, org?: string) {
+    return post<{ code: string; msg: string }>(agbotUrl(id, '/msgs', org), body);
+  },
 };

@@ -18,7 +18,7 @@ import HelpButton from '../components/HelpButton';
 const { Text } = Typography;
 
 export default function BffUsers() {
-  const { t } = useT();
+  const { t, fmtTime } = useT();
   const config = getConfig();
   const [data, setData] = useState<BffUser[]>([]);
   const [loading, setLoading] = useState(true);
@@ -79,7 +79,7 @@ export default function BffUsers() {
       const values = await form.validateFields();
       setCreating(true);
       await BffUserAPI.create(values);
-      message.success(t('User created successfully'));
+      message.success(t('user-created-successfully'));
       setCreateOpen(false);
       form.resetFields();
       load();
@@ -100,7 +100,7 @@ export default function BffUsers() {
         { role: values.role, org: values.org || undefined, newPassword: values.newPassword || undefined },
         editUser.org || undefined,
       );
-      message.success(t('Updated'));
+      message.success(t('updated'));
       setEditOpen(false);
       editForm.resetFields();
       load();
@@ -119,16 +119,16 @@ export default function BffUsers() {
   const handleDelete = (username: string, org?: string | null) => {
     let div: HTMLDivElement | null = null;
     Modal.confirm({
-      title: t('Confirm deletion') + ': ' + username + (org ? ` (${org})` : ''),
+      title: t('confirm-deletion') + ': ' + username + (org ? ` (${org})` : ''),
       content: org ? (
         <div ref={(el) => { div = el; }}>
-          <p>{t('Are you sure you want to delete this user?')}</p>
+          <p>{t('are-you-sure-you-want-to-delete-this-user')}</p>
           <Checkbox
             onChange={(e) => {
               if (div) div.dataset.deleteExchange = e.target.checked ? 'true' : 'false';
             }}
           >
-            {t('Also delete Exchange user')}
+            {t('also-delete-exchange-user')}
           </Checkbox>
         </div>
       ) : null,
@@ -136,7 +136,7 @@ export default function BffUsers() {
         try {
           const delExchange = div?.dataset.deleteExchange === 'true';
           await BffUserAPI.delete(username, org || undefined, delExchange);
-          message.success(t('Deleted'));
+          message.success(t('deleted'));
           load();
         } catch (err: any) {
           message.error(err.message);
@@ -146,46 +146,46 @@ export default function BffUsers() {
   };
 
   const columns = [
-    { title: t('Username'), dataIndex: 'username', key: 'username' },
+    { title: t('username'), dataIndex: 'username', key: 'username' },
     {
-      title: t('Role'),
+      title: t('role'),
       dataIndex: 'role',
       key: 'role',
       render: (role: string) => (
         <Tag color={role === 'platform' ? 'red' : 'blue'}>
-          {role === 'platform' ? t('Platform') : t('Partner')}
+          {role === 'platform' ? t('platform') : t('partner')}
         </Tag>
       ),
     },
-    { title: t('Organization'), dataIndex: 'org', key: 'org', render: (v: string | null) => v || '—' },
+    { title: t('organization'), dataIndex: 'org', key: 'org', render: (v: string | null) => v || '—' },
     {
-      title: t('Created'),
+      title: t('created'),
       dataIndex: 'createdAt',
       key: 'createdAt',
-      render: (v: string) => (v ? new Date(v).toLocaleString() : ''),
+      render: (v: string) => (v ? fmtTime(v) : ''),
     },
     {
-      title: t('Action'),
+      title: t('action'),
       key: 'action',
       render: (_: any, row: BffUser) => {
         const isSelf = row.username === config.username && (!row.org || row.org === config.userOrg);
         return (
           <Space>
             <Button size="small" icon={<InfoCircleOutlined />} onClick={() => { setDetailUser(row); setDetailOpen(true); }}>
-              {t('Details')}
+              {t('details')}
             </Button>
             <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(row)}>
-              {t('Edit')}
+              {t('edit')}
             </Button>
               {!isSelf && (
                 <Button danger size="small" icon={<DeleteOutlined />} onClick={() => {
                   if (row.username === config.username && (!row.org || row.org === config.userOrg)) {
-                    message.warning(t('Cannot delete yourself'));
+                    message.warning(t('cannot-delete-yourself'));
                     return;
                   }
                   handleDelete(row.username, row.org);
                 }}>
-                  {t('Delete')}
+                  {t('delete')}
                 </Button>
               )}
               {isSelf && <Text type="secondary">—</Text>}
@@ -201,22 +201,24 @@ export default function BffUsers() {
         <Space>
           <UserOutlined style={{ fontSize: 18 }} />
           <Typography.Title level={4} style={{ margin: 0 }}>
-            {t('BFF Users')}
+            {t('bff-users')}
           </Typography.Title>
           <HelpButton module="bffUsers" />
         </Space>
         <Space>
-          <Button icon={<ReloadOutlined />} onClick={load}>{t('Refresh')}</Button>
+          <Button icon={<ReloadOutlined />} onClick={load}>{t('refresh')}</Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-            {t('Create')}
+            {t('create')}
           </Button>
         </Space>
       </Space>
+      <Text type="secondary">{t('manage-backend-for-frontend-user-accounts-and-roles')}</Text>
+      <br /><br />
 
       <Table rowKey={(r: BffUser) => `${r.username}::${r.org || ''}`} loading={loading} columns={columns} dataSource={data} pagination={{ pageSize: 10 }} size="middle" />
 
       <Modal
-        title={t('Create BFF User')}
+        title={t('create-bff-user')}
         open={createOpen}
         onCancel={() => setCreateOpen(false)}
         onOk={handleCreate}
@@ -224,10 +226,10 @@ export default function BffUsers() {
         destroyOnClose
       >
         <Form form={form} layout="vertical">
-          <Form.Item name="username" label={t('Username')} rules={[{ required: true, message: t('Required') }]}>
+          <Form.Item name="username" label={t('username')} rules={[{ required: true, message: t('required') }]}>
             <Input />
           </Form.Item>
-          <Form.Item name="password" label={t('Password')} rules={[{ required: true, message: t('Required') }]}>
+          <Form.Item name="password" label={t('password')} rules={[{ required: true, message: t('required') }]}>
             <Input.Password
               addonAfter={
                 <Button type="link" size="small" icon={<KeyOutlined />} onClick={() => fillGeneratedPassword(form, 'password')}
@@ -237,35 +239,35 @@ export default function BffUsers() {
           </Form.Item>
           <Form.Item
             name="passwordConfirm"
-            label={t('Confirm Password')}
+            label={t('confirm-password')}
             dependencies={['password']}
             rules={[
-              { required: true, message: t('Required') },
+              { required: true, message: t('required') },
               ({ getFieldValue }) => ({
                 validator(_, value) {
                   if (!value || value === getFieldValue('password')) return Promise.resolve();
-                  return Promise.reject(new Error(t('Passwords do not match')));
+                  return Promise.reject(new Error(t('passwords-do-not-match')));
                 },
               }),
             ]}
           >
             <Input.Password />
           </Form.Item>
-          <Form.Item name="role" label={t('Role')} rules={[{ required: true, message: t('Required') }]} initialValue="partner">
+          <Form.Item name="role" label={t('role')} rules={[{ required: true, message: t('required') }]} initialValue="partner">
             <Select
               options={[
-                { value: 'platform', label: t('Platform') },
-                { value: 'partner', label: t('Partner') },
+                { value: 'platform', label: t('platform') },
+                { value: 'partner', label: t('partner') },
               ]}
             />
           </Form.Item>
           <Form.Item noStyle shouldUpdate={(p, c) => p.role !== c.role}>
             {({ getFieldValue }) =>
               getFieldValue('role') === 'partner' ? (
-                <Form.Item name="org" label={t('Organization')} rules={[{ required: true, message: t('Required') }]}>
+                <Form.Item name="org" label={t('organization')} rules={[{ required: true, message: t('required') }]}>
                   <Select
                     showSearch
-                    placeholder={t('Select organization')}
+                    placeholder={t('select-organization')}
                     options={orgs.map((o) => ({ value: o, label: o }))}
                     filterOption={(input, option) =>
                       (option?.label as string ?? '').toLowerCase().includes(input.toLowerCase())
@@ -276,13 +278,13 @@ export default function BffUsers() {
             }
           </Form.Item>
           <Form.Item name="createExchangeUser" valuePropName="checked" initialValue={true}>
-            <Checkbox>{t('Create Exchange user')}</Checkbox>
+            <Checkbox>{t('create-exchange-user')}</Checkbox>
           </Form.Item>
         </Form>
       </Modal>
 
       <Modal
-        title={t('Edit BFF User') + (editUser ? `: ${editUser.username}` : '')}
+        title={t('edit-bff-user') + (editUser ? `: ${editUser.username}` : '')}
         open={editOpen}
         onCancel={() => setEditOpen(false)}
         onOk={handleEditSubmit}
@@ -290,22 +292,22 @@ export default function BffUsers() {
         destroyOnClose
       >
         <Form form={editForm} layout="vertical" preserve={false} initialValues={editUser ? { role: editUser.role, org: editUser.org } : undefined}>
-          <Form.Item name="role" label={t('Role')} rules={[{ required: true, message: t('Required') }]}>
+          <Form.Item name="role" label={t('role')} rules={[{ required: true, message: t('required') }]}>
             <Select
               disabled={editUser?.username === config.username && (!editUser?.org || editUser?.org === config.userOrg)}
               options={[
-                { value: 'platform', label: t('Platform') },
-                { value: 'partner', label: t('Partner') },
+                { value: 'platform', label: t('platform') },
+                { value: 'partner', label: t('partner') },
               ]}
             />
           </Form.Item>
           <Form.Item noStyle shouldUpdate={(p, c) => p.role !== c.role}>
             {({ getFieldValue }) =>
               getFieldValue('role') === 'partner' ? (
-                <Form.Item name="org" label={t('Organization')}>
+                <Form.Item name="org" label={t('organization')}>
                   <Select
                     showSearch
-                    placeholder={t('Select organization')}
+                    placeholder={t('select-organization')}
                     options={orgs.map((o) => ({ value: o, label: o }))}
                     filterOption={(input, option) =>
                       (option?.label as string ?? '').toLowerCase().includes(input.toLowerCase())
@@ -316,54 +318,54 @@ export default function BffUsers() {
               ) : null
             }
           </Form.Item>
-          <Form.Item name="newPassword" label={t('New Password')} dependencies={['newPasswordConfirm']}>
+          <Form.Item name="newPassword" label={t('new-password')} dependencies={['newPasswordConfirm']}>
             <Input.Password
               addonAfter={
                 <Button type="link" size="small" icon={<KeyOutlined />} onClick={() => fillGeneratedPassword(editForm, 'newPassword')}
                   style={{ padding: 0, height: 'auto' }} />
               }
-              placeholder={t('Leave blank to keep current')}
+              placeholder={t('leave-blank-to-keep-current')}
             />
           </Form.Item>
           <Form.Item
             name="newPasswordConfirm"
-            label={t('Confirm Password')}
+            label={t('confirm-password')}
             dependencies={['newPassword']}
             rules={[
               ({ getFieldValue }) => ({
                 validator(_, value) {
                   const pw = getFieldValue('newPassword');
                   if (!pw) return Promise.resolve(); // leave blank = no change
-                  if (!value) return Promise.reject(new Error(t('Required')));
-                  if (value !== pw) return Promise.reject(new Error(t('Passwords do not match')));
+                  if (!value) return Promise.reject(new Error(t('required')));
+                  if (value !== pw) return Promise.reject(new Error(t('passwords-do-not-match')));
                   return Promise.resolve();
                 },
               }),
             ]}
           >
-            <Input.Password placeholder={t('Repeat new password')} />
+            <Input.Password placeholder={t('repeat-new-password')} />
           </Form.Item>
         </Form>
       </Modal>
 
       <Modal
-        title={t('User Details') + (detailUser ? `: ${detailUser.username}` : '')}
+        title={t('user-details') + (detailUser ? `: ${detailUser.username}` : '')}
         open={detailOpen}
         onCancel={() => setDetailOpen(false)}
-        footer={<Button onClick={() => setDetailOpen(false)}>{t('Close')}</Button>}
+        footer={<Button onClick={() => setDetailOpen(false)}>{t('close')}</Button>}
         destroyOnClose
       >
         {detailUser && (
           <Descriptions column={1} bordered size="small">
-            <Descriptions.Item label={t('Username')}>{detailUser.username}</Descriptions.Item>
-            <Descriptions.Item label={t('Role')}>
+            <Descriptions.Item label={t('username')}>{detailUser.username}</Descriptions.Item>
+            <Descriptions.Item label={t('role')}>
               <Tag color={detailUser.role === 'platform' ? 'red' : 'blue'}>
-                {detailUser.role === 'platform' ? t('Platform') : t('Partner')}
+                {detailUser.role === 'platform' ? t('platform') : t('partner')}
               </Tag>
             </Descriptions.Item>
-            <Descriptions.Item label={t('Organization')}>{detailUser.org || '—'}</Descriptions.Item>
-            <Descriptions.Item label={t('Created')}>
-              {detailUser.createdAt ? new Date(detailUser.createdAt).toLocaleString() : '—'}
+            <Descriptions.Item label={t('organization')}>{detailUser.org || '—'}</Descriptions.Item>
+            <Descriptions.Item label={t('created')}>
+              {detailUser.createdAt ? fmtTime(detailUser.createdAt) : '—'}
             </Descriptions.Item>
           </Descriptions>
         )}

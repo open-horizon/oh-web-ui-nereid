@@ -47,7 +47,7 @@ export default function Catalog() {
 
   const showDetail = (item: any) => {
     Modal.info({ maskClosable: true,
-      title: t('Catalog Item Details'),
+      title: t('catalog-item-details'),
       width: 700,
       content: (
         <pre style={{ background: '#f5f5f5', padding: 16, borderRadius: 6, overflow: 'auto', maxHeight: 500 }}>
@@ -60,7 +60,7 @@ export default function Catalog() {
 
   const renderGrid = (items: Record<string, any>) => {
     const entries = Object.entries(items);
-    if (entries.length === 0) return <Text type="secondary">{t('Catalog is empty')}</Text>;
+    if (entries.length === 0) return <Text type="secondary">{t('catalog-is-empty')}</Text>;
     return (
       <Row gutter={[12, 12]}>
         {entries.map(([id, item]) => (
@@ -85,16 +85,16 @@ export default function Catalog() {
   }
 
   const tabItems = [
-    { key: 'services', label: t('Service'), children: renderGrid(services) },
-    { key: 'patterns', label: t('Pattern'), children: renderGrid(patterns) },
+    { key: 'services', label: t('service'), children: renderGrid(services) },
+    { key: 'patterns', label: t('pattern-2'), children: renderGrid(patterns) },
   ];
 
   return (
     <div>
       <div style={{ marginBottom: 24 }}>
-        <Text strong style={{ fontSize: 20 }}>{t('Catalog (Catalog)')}</Text>
+        <Text strong style={{ fontSize: 20 }}>{t('catalog-catalog')}</Text>
         <HelpButton module="catalog" />
-        <br /><Text type="secondary">{t('Browse available services and patterns from Hub and remote orgs')}</Text>
+        <br /><Text type="secondary">{t('browse-available-services-and-patterns-from-hub-and-remote-orgs')}</Text>
       </div>
       <Tabs items={tabItems} />
     </div>

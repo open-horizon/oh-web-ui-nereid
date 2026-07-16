@@ -46,4 +46,9 @@ export const PatternAPI = {
     const qs = s.org ? `?org=${encodeURIComponent(s.org)}` : '';
     return get<{ nodeHealth: any[] }>(`/patterns/${encodeURIComponent(s.name)}/nodehealth${qs}`);
   },
+  search(patternId: string, org?: string) {
+    const qs = org ? `?org=${encodeURIComponent(org)}` : '';
+    const s = splitOrg(patternId);
+    return post<any>(`/patterns/${encodeURIComponent(s.name)}/search${qs}`, {});
+  },
 };

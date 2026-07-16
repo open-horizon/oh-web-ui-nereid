@@ -63,11 +63,11 @@ export default function Users() {
     const name = shortName(fullname);
     const org = fullname.includes('/') ? fullname.split('/')[0] : undefined;
     Modal.confirm({
-      title: t('Confirm deletion of user').replace('{0}', fullname),
+      title: t('confirm-deletion-of-user').replace('{0}', fullname),
       onOk: async () => {
         try {
           await ExchangeUserAPI.delete(name, org);
-          message.success(t('Deleted'));
+          message.success(t('deleted'));
           load();
         } catch (err: any) {
           message.error(err.message);
@@ -88,7 +88,7 @@ export default function Users() {
         body.password = values.password;
       }
       await ExchangeUserAPI.create(values.username, body);
-      message.success(t('User created successfully'));
+      message.success(t('user-created-successfully'));
       setCreateOpen(false);
       form.resetFields();
       load();
@@ -104,7 +104,7 @@ export default function Users() {
     try {
       const values = await pwForm.validateFields();
       await ExchangeUserAPI.changePassword(shortName(pwUser), values.newPassword, pwUser.includes('/') ? pwUser.split('/')[0] : undefined);
-      message.success(t('Password changed successfully'));
+      message.success(t('password-changed-successfully'));
       setPwOpen(false);
       pwForm.resetFields();
     } catch (err: any) {
@@ -115,7 +115,7 @@ export default function Users() {
   const showApiKeys = (fullname: string) => {
     const username = shortName(fullname);
     const modal = Modal.info({ maskClosable: true,
-      title: t('API Key - ') + username,
+      title: t('api-key') + username,
       width: 500,
       content: <ApiKeyManager username={username} onClose={() => modal.destroy()} />,
       footer: null,
@@ -124,16 +124,16 @@ export default function Users() {
 
   const allColumns = [
     {
-      title: t('Username'), key: 'name', width: 200,
+      title: t('username'), key: 'name', width: 200,
       render: (_: any, record: any) => record.key,
     },
     {
-      title: t('Admin'), dataIndex: 'admin', key: 'admin', width: 100,
-      render: (v: boolean) => v ? <Tag color="green">{t('Yes')}</Tag> : <Tag>{t('No')}</Tag>,
+      title: t('admin'), dataIndex: 'admin', key: 'admin', width: 100,
+      render: (v: boolean) => v ? <Tag color="green">{t('yes')}</Tag> : <Tag>{t('no')}</Tag>,
     },
-    { title: t('Email'), dataIndex: 'email', key: 'email', render: (v: string) => v || '-' },
+    { title: t('email'), dataIndex: 'email', key: 'email', render: (v: string) => v || '-' },
     {
-      title: t('Actions'), key: 'action', width: 160,
+      title: t('actions'), key: 'action', width: 160,
       render: (_: any, record: any) => {
         const name = record.key;
         return (
@@ -173,27 +173,27 @@ export default function Users() {
     <div>
       <div style={{ marginBottom: 16 }}>
         <div>
-          <Text strong style={{ fontSize: 20 }}>{t('User')}</Text>
+          <Text strong style={{ fontSize: 20 }}>{t('user')}</Text>
           <HelpButton module="users" />
-          <br /><Text type="secondary">{t('Exchange User Management')}</Text>
+          <br /><Text type="secondary">{t('exchange-user-management')}</Text>
         </div>
         <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <Input
             allowClear
-            placeholder={t('Search')}
+            placeholder={t('search')}
             prefix={<SearchOutlined />}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             style={{ width: 200 }}
           />
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>{t('Create User')}</Button>
-          <Button icon={<ReloadOutlined />} onClick={load}>{t('Refresh')}</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>{t('create-user')}</Button>
+          <Button icon={<ReloadOutlined />} onClick={load}>{t('refresh')}</Button>
         </div>
       </div>
-      <Table columns={columns} dataSource={tableData} loading={loading} pagination={{ pageSize: 10, showSizeChanger: true, showQuickJumper: true, showLessItems: false, showTotal: (total) => `${total} ${t('Users')}` }} size="middle" scroll={{ x: 'max-content' }} />
+      <Table columns={columns} dataSource={tableData} loading={loading} pagination={{ pageSize: 10, showSizeChanger: true, showQuickJumper: true, showLessItems: false, showTotal: (total) => `${total} ${t('users')}` }} size="middle" scroll={{ x: 'max-content' }} />
 
       <Modal
-        title={t('Create User')}
+        title={t('create-user')}
         open={createOpen}
         onOk={handleCreate}
         onCancel={() => { setCreateOpen(false); form.resetFields(); }}
@@ -201,10 +201,10 @@ export default function Users() {
         width={480}
       >
         <Form form={form} layout="vertical">
-          <Form.Item name="username" label={t('Username')} rules={[{ required: true, message: t('Please enter username') }]}>
+          <Form.Item name="username" label={t('username')} rules={[{ required: true, message: t('please-enter-username') }]}>
             <Input placeholder="username" />
           </Form.Item>
-          <Form.Item name="password" label={t('Password')} rules={[{ required: true, message: t('Password must be set when creating user') }]}>
+          <Form.Item name="password" label={t('password')} rules={[{ required: true, message: t('password-must-be-set-when-creating-user') }]}>
             <Input.Password
               addonAfter={
                 <Button type="link" size="small" icon={<UserOutlined />} onClick={() => {
@@ -212,37 +212,37 @@ export default function Users() {
                   form.setFieldsValue({ password: pw, passwordConfirm: pw });
                 }} style={{ padding: 0, height: 'auto' }} />
               }
-              placeholder={t('Password')}
+              placeholder={t('password')}
             />
           </Form.Item>
           <Form.Item
             name="passwordConfirm"
-            label={t('Confirm Password')}
+            label={t('confirm-password')}
             dependencies={['password']}
             rules={[
-              { required: true, message: t('Required') },
+              { required: true, message: t('required') },
               ({ getFieldValue }) => ({
                 validator(_, value) {
                   if (!value || value === getFieldValue('password')) return Promise.resolve();
-                  return Promise.reject(new Error(t('Passwords do not match')));
+                  return Promise.reject(new Error(t('passwords-do-not-match')));
                 },
               }),
             ]}
           >
             <Input.Password />
           </Form.Item>
-          <Form.Item name="email" label={t('Email')}>
+          <Form.Item name="email" label={t('email')}>
             <Input placeholder="user@example.com" />
           </Form.Item>
-          <Form.Item name="admin" label={t('Admin')} valuePropName="checked">
+          <Form.Item name="admin" label={t('admin')} valuePropName="checked">
             <Switch />
           </Form.Item>
         </Form>
       </Modal>
 
-      <Modal title={t('Change Password') + ' - ' + shortName(pwUser)} open={pwOpen} onOk={handleChangePw} onCancel={() => { setPwOpen(false); pwForm.resetFields(); }} width={400}>
+      <Modal title={t('change-password') + ' - ' + shortName(pwUser)} open={pwOpen} onOk={handleChangePw} onCancel={() => { setPwOpen(false); pwForm.resetFields(); }} width={400}>
         <Form form={pwForm} layout="vertical">
-          <Form.Item name="newPassword" label={t('New Password')} rules={[{ required: true, message: t('Please enter new password') }]}>
+          <Form.Item name="newPassword" label={t('new-password')} rules={[{ required: true, message: t('please-enter-new-password') }]}>
             <Input.Password
               addonAfter={
                 <Button type="link" size="small" icon={<UserOutlined />} onClick={() => {
@@ -254,14 +254,14 @@ export default function Users() {
           </Form.Item>
           <Form.Item
             name="newPasswordConfirm"
-            label={t('Confirm Password')}
+            label={t('confirm-password')}
             dependencies={['newPassword']}
             rules={[
-              { required: true, message: t('Required') },
+              { required: true, message: t('required') },
               ({ getFieldValue }) => ({
                 validator(_, value) {
                   if (!value || value === getFieldValue('newPassword')) return Promise.resolve();
-                  return Promise.reject(new Error(t('Passwords do not match')));
+                  return Promise.reject(new Error(t('passwords-do-not-match')));
                 },
               }),
             ]}
@@ -297,7 +297,7 @@ function ApiKeyManager({ username, onClose }: { username: string; onClose: () =>
       const res = await ExchangeUserAPI.createApiKey(username, { label: `webui-${Date.now()}` });
       const key = res?.value || '';
       setNewKey(key);
-      message.success(t('API key generated'));
+      message.success(t('api-key-generated'));
       loadKeys();
     } catch (err: any) {
       message.error(err.message);
@@ -306,11 +306,11 @@ function ApiKeyManager({ username, onClose }: { username: string; onClose: () =>
 
   const handleDeleteKey = (keyId: string) => {
     Modal.confirm({
-      title: t('Confirm deletion of this API key?'),
+      title: t('confirm-deletion-of-this-api-key'),
       onOk: async () => {
         try {
           await ExchangeUserAPI.deleteApiKey(username, keyId);
-          message.success(t('Deleted'));
+          message.success(t('deleted'));
           loadKeys();
         } catch (err: any) {
           message.error(err.message);
@@ -322,32 +322,32 @@ function ApiKeyManager({ username, onClose }: { username: string; onClose: () =>
   return (
     <div>
       <Button type="primary" size="small" onClick={handleGenerate}>
-        <PlusOutlined /> {t('Generate New Key')}
+        <PlusOutlined /> {t('generate-new-key')}
       </Button>
       {newKey && (
         <div style={{ marginTop: 12, padding: 12, background: '#fff7e6', borderRadius: 6 }}>
-          <Text type="warning" style={{ display: 'block', marginBottom: 4 }}>{t('API key is only visible once, please save it now')}</Text>
+          <Text type="warning" style={{ display: 'block', marginBottom: 4 }}>{t('api-key-is-only-visible-once-please-save-it-now')}</Text>
           <Input.Search
             value={newKey}
             readOnly
-            enterButton={t('Copy')}
+            enterButton={t('copy')}
             onSearch={() => {
               navigator.clipboard.writeText(newKey);
-              message.success(t('Copied'));
+              message.success(t('copied'));
             }}
           />
         </div>
       )}
       <Divider />
-      {loading && <Text type="secondary">{t('Loading...')}</Text>}
-      {!loading && keys.length === 0 && <Text type="secondary">{t('No API keys')}</Text>}
+      {loading && <Text type="secondary">{t('loading')}</Text>}
+      {!loading && keys.length === 0 && <Text type="secondary">{t('no-api-keys')}</Text>}
       {!loading && keys.length > 0 && keys.map((key: any) => (
         <div key={key.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #f0f0f0' }}>
           <div>
             <div>{key.label || key.id}</div>
             <Text type="secondary" style={{ fontSize: 12 }}>{key.id}</Text>
           </div>
-          <Button size="small" danger onClick={() => handleDeleteKey(key.id)}>{t('Delete')}</Button>
+          <Button size="small" danger onClick={() => handleDeleteKey(key.id)}>{t('delete')}</Button>
         </div>
       ))}
     </div>

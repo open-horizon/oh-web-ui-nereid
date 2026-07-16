@@ -50,8 +50,6 @@ services:
       # SESSION_ENC_KEY is the 32-byte master key (hex) used for AES-256-GCM encryption
       # of Exchange credentials at rest. Override in production via secret/env file.
       - SESSION_ENC_KEY=${SESSION_ENC_KEY:-}
-    ports:
-      - "3001:3001"
     volumes:
       - nereid-logs:/app/logs
     depends_on:

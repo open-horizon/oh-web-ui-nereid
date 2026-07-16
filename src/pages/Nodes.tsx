@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'react';
 import { usePolling } from '../hooks/usePolling';
 import { Table, Button, Space, Typography, message, Modal, Tag, Badge, Select, Alert, Drawer, Descriptions, List, Input, Switch, Tabs, Card } from 'antd';
-import { SearchOutlined, ReloadOutlined, EyeOutlined, NodeIndexOutlined, CheckCircleOutlined, CloseCircleOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, PlusCircleOutlined } from '@ant-design/icons';
+import { SearchOutlined, ReloadOutlined, EyeOutlined, NodeIndexOutlined, CheckCircleOutlined, CloseCircleOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, PlusCircleOutlined, SwapOutlined } from '@ant-design/icons';
 import { NodeAPI, ExchangeNode, NodeServiceStatus, NodePolicy, OneUserInputService } from '../api/nodes';
 import { PatternAPI, ExchangePattern } from '../api/patterns';
 import { ServiceAPI } from '../api/services';
@@ -27,6 +27,15 @@ export default function Nodes() {
   const [availablePatterns, setAvailablePatterns] = useState<string[]>([]);
   const [selectedPattern, setSelectedPattern] = useState<string | null>(null);
   const [settingPattern, setSettingPattern] = useState(false);
+
+  // Bulk operations
+  const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([]);
+  const [bulkPatternOpen, setBulkPatternOpen] = useState(false);
+  const [bulkPattern, setBulkPattern] = useState<string | null>(null);
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [transferNodeId, setTransferNodeId] = useState('');
+  const [transferTargetOrg, setTransferTargetOrg] = useState('');
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerNode, setDrawerNode] = useState<ExchangeNode | null>(null);
@@ -201,9 +210,9 @@ export default function Nodes() {
 
       await NodeAPI.updatePolicy(cleanId, updatedPolicy, nOrg);
       setPolicies((prev) => ({ ...prev, [nodeId]: updatedPolicy }));
-      message.success(t('Privileged container support') + t(newValue ? 'enabled' : 'disabled'));
+      message.success(t('privileged-container-support') + t(newValue ? 'enabled' : 'disabled'));
     } catch (err: any) {
-      message.error(t('Failed to update policy: ') + err.message);
+      message.error(t('failed-to-update-policy') + err.message);
     } finally {
       setPoliciesLoading((prev) => ({ ...prev, [nodeId]: false }));
     }
@@ -226,7 +235,7 @@ export default function Nodes() {
     try {
       const nOrg = drawerNodeId.includes('/') ? drawerNodeId.split('/')[0] : pageOrg;
       await NodeAPI.updateUserInput(localNodeId(drawerNodeId), userInputData, nOrg);
-      message.success(t('User input updated'));
+      message.success(t('user-input-updated'));
       if (drawerNode) {
         setDrawerNode({ ...drawerNode, userInput: userInputData });
       }
@@ -259,19 +268,23 @@ export default function Nodes() {
 
   const addInputToService = (svcIdx: number) => {
     const next = [...userInputData];
-    next[svcIdx].inputs.push({ name: '', value: '' });
+    if (!next[svcIdx]) return;
+    if (!next[svcIdx].inputs) next[svcIdx].inputs = [];
+    next[svcIdx].inputs!.push({ name: '', value: '' });
     setUserInputData(next);
   };
 
   const removeInputFromService = (svcIdx: number, inpIdx: number) => {
     const next = [...userInputData];
-    next[svcIdx].inputs = next[svcIdx].inputs.filter((_, i) => i !== inpIdx);
+    if (!next[svcIdx] || !next[svcIdx].inputs) return;
+    next[svcIdx].inputs = next[svcIdx].inputs!.filter((_: any, i: number) => i !== inpIdx);
     setUserInputData(next);
   };
 
   const updateInputInService = (svcIdx: number, inpIdx: number, field: 'name' | 'value', val: string) => {
     const next = [...userInputData];
-    (next[svcIdx].inputs[inpIdx] as any)[field] = val;
+    if (!next[svcIdx] || !next[svcIdx].inputs) return;
+    (next[svcIdx].inputs![inpIdx] as any)[field] = val;
     setUserInputData(next);
   };
 
@@ -300,7 +313,7 @@ export default function Nodes() {
       };
       await NodeAPI.updatePolicy(cleanId, updatedPolicy, nOrg);
       setPolicies((prev) => ({ ...prev, [drawerNodeId]: updatedPolicy }));
-      message.success(t('Node policy updated'));
+      message.success(t('node-policy-updated'));
       setPolicyEditOpen(false);
     } catch (err: any) {
       message.error(err.message);
@@ -312,6 +325,49 @@ export default function Nodes() {
   useEffect(() => {
     load();
   }, []);
+
+  // Bulk operations handlers
+  const handleBulkDelete = () => {
+    Modal.confirm({
+      title: t('are-you-sure'),
+      content: `${t('delete')} ${selectedRowKeys.length} ${t('nodes')}?`,
+      onOk: async () => {
+        setBulkLoading(true);
+        try {
+          const res = await NodeAPI.bulkDelete(selectedRowKeys, pageOrg || undefined);
+          const ok = (res?.results || []).filter((r: any) => r.ok).length;
+          const fail = selectedRowKeys.length - ok;
+          message.success(`${ok} ${t('deleted')}${fail ? `, ${fail} failed` : ''}`);
+          setSelectedRowKeys([]);
+          load();
+        } catch (e: any) { message.error(e?.message || 'Bulk delete failed'); }
+        setBulkLoading(false);
+      },
+    });
+  };
+
+  const handleBulkSetPattern = async () => {
+    if (!bulkPattern) return message.warning(t('please-select-a-pattern'));
+    setBulkLoading(true);
+    try {
+      const res = await NodeAPI.bulkSetPattern(selectedRowKeys, bulkPattern, pageOrg || undefined);
+      const ok = (res?.results || []).filter((r: any) => r.ok).length;
+      message.success(`${ok} ${t('nodes')} pattern updated`);
+      setBulkPatternOpen(false);
+      setSelectedRowKeys([]);
+    } catch (e: any) { message.error(e?.message || 'Bulk set pattern failed'); }
+    setBulkLoading(false);
+  };
+
+  const handleTransfer = async () => {
+    if (!transferNodeId || !transferTargetOrg) return message.warning(t('please-fill-all-fields'));
+    try {
+      await NodeAPI.transfer(transferNodeId, transferTargetOrg, pageOrg || undefined);
+      message.success(t('node-transferred'));
+      setTransferOpen(false);
+      load();
+    } catch (e: any) { message.error(e?.message || 'Transfer failed'); }
+  };
 
   usePolling(async () => {
     try {
@@ -347,7 +403,7 @@ export default function Nodes() {
     setSettingPattern(true);
     try {
       await NodeAPI.setPattern(patternTarget, selectedPattern || '', pageOrg);
-      message.success(selectedPattern ? t('Node Pattern') + ': ' + selectedPattern : t('Node pattern cleared'));
+      message.success(selectedPattern ? t('node-pattern') + ': ' + selectedPattern : t('node-pattern-cleared'));
       setPatternModalOpen(false);
       if (selectedPattern) {
         const fullPattern = selectedPattern.includes('/') ? selectedPattern : `${getConfig().orgId}/${selectedPattern}`;
@@ -383,35 +439,35 @@ export default function Nodes() {
 
   const allColumns = [
     {
-      title: t('Node ID'), key: 'nodeId', width: 200,
+      title: t('node-id'), key: 'nodeId',
       render: (_: any, record: any) => {
-        return <Text style={{ fontSize: 12 }}>{record.key}</Text>;
+        return <Text style={{ fontSize: 12 }} ellipsis>{record.key}</Text>;
       },
     },
-    { title: t('Name'), dataIndex: 'name', key: 'name', render: (v: string) => v || '-' },
-    { title: t('Type'), dataIndex: 'nodeType', key: 'nodeType', width: 90 },
-    { title: t('Arch'), dataIndex: 'arch', key: 'arch', width: 90 },
+    { title: t('name'), dataIndex: 'name', key: 'name', ellipsis: true, render: (v: string) => v || '-' },
+    { title: t('type'), dataIndex: 'nodeType', key: 'nodeType', width: 70 },
+    { title: t('arch'), dataIndex: 'arch', key: 'arch', width: 70 },
     {
-      title: t('CPU'), key: 'cpu', width: 70,
+      title: t('cpu'), key: 'cpu', width: 55,
       render: (_: any, record: any) => {
         const p = policies[record.key]?.properties?.find((p: any) => p.name === 'openhorizon.cpu');
         return p ? String(p.value) : '-';
       },
     },
     {
-      title: t('Memory'), key: 'memory', width: 80,
+      title: t('memory'), key: 'memory', width: 65,
       render: (_: any, record: any) => {
         const p = policies[record.key]?.properties?.find((p: any) => p.name === 'openhorizon.memory');
         return p ? fmtMemory(Number(p.value)) : '-';
       },
     },
     {
-      title: t('GPU'), key: 'gpu', width: 220,
+      title: t('gpu'), key: 'gpu', ellipsis: true,
       render: (_: any, record: any) => {
         const vendor = policies[record.key]?.properties?.find((p: any) => p.name === 'gpu.vendor');
         const type = policies[record.key]?.properties?.find((p: any) => p.name === 'gpu.type');
         const count = policies[record.key]?.properties?.find((p: any) => p.name === 'gpu.count');
-        if (!count || Number(count.value) === 0 || vendor?.value === 'virtual' || vendor?.value === 'none') return <Tag>{t('None')}</Tag>;
+        if (!count || Number(count.value) === 0 || vendor?.value === 'virtual' || vendor?.value === 'none') return <Tag style={{ margin: 0 }}>{t('none')}</Tag>;
         const parts: string[] = [];
         if (vendor) parts.push(String(vendor.value));
         if (type) parts.push(String(type.value));
@@ -420,25 +476,25 @@ export default function Nodes() {
       },
     },
     {
-      title: t('Deployment'), key: 'deploy', width: 160,
+      title: t('deployment'), key: 'deploy', ellipsis: true,
       render: (_: any, record: any) => {
         return record?.pattern
-          ? <Tag color="blue">{t('Pattern: ')}{record.pattern}</Tag>
-          : <Tag>{t('Policy')}</Tag>;
+          ? <Tag color="blue" style={{ margin: 0 }}>{record.pattern}</Tag>
+          : <Tag style={{ margin: 0 }}>{t('policy')}</Tag>;
       },
     },
     {
-      title: t('Deployed Services'), key: 'services', width: 130,
+      title: t('svc'), key: 'services', width: 50, align: 'center' as const,
       render: (_: any, record: any) => {
         const rs = record?.registeredServices;
         const count = Array.isArray(rs) ? rs.length : 0;
         return count > 0
-          ? <Tag color="green">{count}</Tag>
-          : <Tag>{t('None')}</Tag>;
+          ? <Tag color="green" style={{ margin: 0 }}>{count}</Tag>
+          : <Tag style={{ margin: 0 }}>0</Tag>;
       },
     },
     {
-      title: t('Allow Privileged'), key: 'allowPrivileged', width: 160,
+      title: t('priv'), key: 'allowPrivileged', width: 50, align: 'center' as const,
       render: (_: any, record: any) => {
         const id = record.key;
         const policy = policies[id];
@@ -448,8 +504,7 @@ export default function Nodes() {
 
         return (
           <Switch
-            checkedChildren={t('Allow')}
-            unCheckedChildren={t('Deny')}
+            size="small"
             checked={allowPrivileged}
             loading={polLoading}
             onChange={() => togglePrivileged(id)}
@@ -458,31 +513,31 @@ export default function Nodes() {
       },
     },
     {
-      title: t('Last Heartbeat'), key: 'lastHeartbeat', width: 180,
+      title: t('heartbeat'), key: 'lastHeartbeat', width: 150,
       render: (_: any, record: any) => fmtTime(record?.lastHeartbeat),
     },
     {
-      title: t('Status'), key: 'status', width: 80,
+      title: t('status'), key: 'status', width: 75, align: 'center' as const,
       render: (_: any, record: any) => {
         const alive = isAlive(record?.lastHeartbeat);
-        return <Badge status={alive ? 'success' : 'error'} text={alive ? t('Online') : t('Offline')} />;
+        return <Badge status={alive ? 'success' : 'error'} text={alive ? t('online') : t('offline')} />;
       },
     },
     {
-      title: t('Actions'), key: 'action', width: 140,
+      title: '', key: 'action', width: 90, align: 'center' as const,
       render: (_: any, record: any) => {
         const id = record.key;
         return (
-          <Space>
-            <Button size="small" icon={<NodeIndexOutlined />} onClick={() => openSetPattern(id)}>{t('Set Pattern')}</Button>
+          <Space size={4}>
             <Button size="small" icon={<EyeOutlined />} onClick={() => openDrawer(id)} />
+            <Button size="small" icon={<SwapOutlined />} onClick={() => { setTransferNodeId(id); setTransferTargetOrg(''); setTransferOpen(true); }} />
             <Button size="small" danger icon={<DeleteOutlined />} onClick={() => {
               Modal.confirm({
-                title: t('Confirm deletion of node').replace('{0}', id),
+                title: t('confirm-deletion-of-node').replace('{0}', id),
                 onOk: async () => {
                   try {
                     await NodeAPI.deleteNode(id);
-                    message.success(t('Deleted'));
+                    message.success(t('deleted'));
                     load();
                   } catch (err: any) {
                     message.error(err.message);
@@ -526,9 +581,9 @@ export default function Nodes() {
     <div>
       <div style={{ marginBottom: 16 }}>
         <div>
-          <Text strong style={{ fontSize: 20 }}>{t('Edge Nodes')}</Text>
+          <Text strong style={{ fontSize: 20 }}>{t('edge-nodes')}</Text>
           <HelpButton module="nodes" />
-          <br /><Text type="secondary">{t('Edge Node Management')}</Text>
+          <br /><Text type="secondary">{t('edge-node-management')}</Text>
         </div>
         <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           {getConfig().role === 'platform' && (
@@ -536,10 +591,10 @@ export default function Nodes() {
               style={{ width: 180 }}
               showSearch
               value={pageOrg}
-              placeholder={t('Organization')}
+              placeholder={t('organization')}
               onChange={(org) => { setPageOrg(org); setPage(1); load(org); }}
               options={[
-                { label: t('All Organizations'), value: '' },
+                { label: t('all-organizations'), value: '' },
                 ...allOrgs.map((o) => ({ label: o, value: o }))
               ]}
               filterOption={(input, option) =>
@@ -549,13 +604,23 @@ export default function Nodes() {
           )}
           <Input
             allowClear
-            placeholder={t('Search')}
+            placeholder={t('search')}
             prefix={<SearchOutlined style={{ opacity: 0.4 }} />}
             value={search}
             onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             style={{ width: 220 }}
           />
-          <Button icon={<ReloadOutlined />} onClick={() => load()}>{t('Refresh')}</Button>
+          <Button icon={<ReloadOutlined />} onClick={() => load()}>{t('refresh')}</Button>
+          {selectedRowKeys.length > 0 && (
+            <>
+              <Button danger loading={bulkLoading} onClick={handleBulkDelete}>
+                {t('delete')} ({selectedRowKeys.length})
+              </Button>
+              <Button loading={bulkLoading} onClick={() => setBulkPatternOpen(true)}>
+                {t('set-pattern')} ({selectedRowKeys.length})
+              </Button>
+            </>
+          )}
         </div>
       </div>
       <Table
@@ -565,37 +630,38 @@ export default function Nodes() {
         rowKey="key"
         size="middle"
         scroll={{ x: 'max-content' }}
+        rowSelection={{ selectedRowKeys, onChange: (keys) => setSelectedRowKeys(keys as string[]) }}
         pagination={{
           current: page,
           pageSize,
           pageSizeOptions: [10, 20, 50, 100],
           showSizeChanger: true,
           showQuickJumper: true,
-          showTotal: (total) => `${total} ${t('Nodes')}`,
+          showTotal: (total) => `${total} ${t('nodes')}`,
           onChange: (p) => setPage(p),
           onShowSizeChange: (_c, size) => { setPageSize(size); setPage(1); },
         }}
       />
 
       <Modal
-        title={t('Set Node Pattern - ') + patternTarget}
+        title={t('set-node-pattern') + patternTarget}
         open={patternModalOpen}
         onOk={confirmSetPattern}
         onCancel={() => setPatternModalOpen(false)}
         confirmLoading={settingPattern}
         width={480}
       >
-        <Alert message={t('After selecting a pattern, the node will automatically deploy')} type="info" showIcon style={{ marginBottom: 16 }} />
+        <Alert message={t('after-selecting-a-pattern-the-node-will-automatically-deploy')} type="info" showIcon style={{ marginBottom: 16 }} />
         <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Text>{t('Select pattern (leave empty = clear, use policy):')}</Text>
+          <Text>{t('select-pattern-leave-empty-clear-use-policy')}</Text>
           <Space>
-            <Tag color="blue" style={{ marginRight: 0 }}>{t('Authorized via Exchange admin')}</Tag>
+            <Tag color="blue" style={{ marginRight: 0 }}>{t('authorized-via-exchange-admin')}</Tag>
           </Space>
         </div>
         <Select
           style={{ width: '100%' }}
           allowClear
-          placeholder={t('Select deployment pattern')}
+          placeholder={t('select-deployment-pattern')}
           value={selectedPattern}
           onChange={setSelectedPattern}
           options={availablePatterns.map((p) => ({ label: p, value: p }))}
@@ -603,20 +669,52 @@ export default function Nodes() {
       </Modal>
 
       <Modal
-        title={t('Apply Pattern on Node')}
+        title={t('bulk-set-pattern')}
+        open={bulkPatternOpen}
+        onOk={handleBulkSetPattern}
+        onCancel={() => setBulkPatternOpen(false)}
+        confirmLoading={bulkLoading}
+        width={480}
+      >
+        <Text>{t('set-pattern-for')} {selectedRowKeys.length} {t('nodes')}:</Text>
+        <Select
+          style={{ width: '100%', marginTop: 8 }}
+          allowClear
+          placeholder={t('select-deployment-pattern')}
+          value={bulkPattern}
+          onChange={setBulkPattern}
+          options={availablePatterns.map((p) => ({ label: p, value: p }))}
+        />
+      </Modal>
+
+      <Modal
+        title={t('transfer-node')}
+        open={transferOpen}
+        onOk={handleTransfer}
+        onCancel={() => setTransferOpen(false)}
+        width={480}
+      >
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <Text>{t('node')}: <Text code>{transferNodeId}</Text></Text>
+          <Input placeholder={t('target-organization')} value={transferTargetOrg} onChange={e => setTransferTargetOrg(e.target.value)} />
+        </Space>
+      </Modal>
+
+      <Modal
+        title={t('apply-pattern-on-node')}
         open={!!reRegisterCmd}
         onCancel={() => setReRegisterCmd(null)}
         width={600}
         footer={[
           <Button key="copy" type="primary" onClick={() => {
             navigator.clipboard.writeText(reRegisterCmd || '');
-            message.success(t('Command copied'));
-          }}>{t('Copy & Run')}</Button>,
-          <Button key="close" onClick={() => setReRegisterCmd(null)}>{t('Done')}</Button>,
+            message.success(t('command-copied'));
+          }}>{t('copy-run')}</Button>,
+          <Button key="close" onClick={() => setReRegisterCmd(null)}>{t('done')}</Button>,
         ]}
       >
         <Alert
-          message={t('Pattern updated in Exchange. Run this command on the edge node to activate it:')}
+          message={t('pattern-updated-in-exchange-run-this-command-on-the-edge-node-to-activate-it')}
           type="warning"
           showIcon
           style={{ marginBottom: 16 }}
@@ -628,12 +726,12 @@ export default function Nodes() {
           style={{ fontFamily: 'monospace', fontSize: 13, background: '#f5f5f5' }}
         />
         <Typography.Text type="secondary" style={{ display: 'block', marginTop: 12 }}>
-          {t('This unregisters and re-registers the node to apply the configuration change. Policy settings (allowPrivileged) will be reset and need to be toggled again in the UI afterwards.')}
+          {t('this-unregisters-and-re-registers-the-node-to-apply-the-configuration-change-policy-settings-allowprivileged-will-be-reset-and-need-to-be-toggled-again-in-the-ui-afterwards')}
         </Typography.Text>
       </Modal>
 
       <Drawer
-        title={t('Node Details - ') + drawerNodeId}
+        title={t('node-details') + drawerNodeId}
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         width={640}
@@ -642,27 +740,27 @@ export default function Nodes() {
           items={[
             {
               key: 'info',
-              label: t('Info'),
+              label: t('info'),
               children: (<>
                 {drawerNode && (
                   <Descriptions column={1} size="small" bordered style={{ marginBottom: 24 }}>
-                    <Descriptions.Item label={t('Name')}>{drawerNode.name || '-'}</Descriptions.Item>
-                    <Descriptions.Item label={t('Type')}>{drawerNode.nodeType || '-'}</Descriptions.Item>
-                    <Descriptions.Item label={t('Arch')}>{drawerNode.arch || '-'}</Descriptions.Item>
-                    <Descriptions.Item label={t('Deployment')}>
-                      {drawerNode.pattern ? <Tag color="blue">{t('Pattern: ')}{drawerNode.pattern}</Tag> : <Tag>{t('Policy')}</Tag>}
+                    <Descriptions.Item label={t('name')}>{drawerNode.name || '-'}</Descriptions.Item>
+                    <Descriptions.Item label={t('type')}>{drawerNode.nodeType || '-'}</Descriptions.Item>
+                    <Descriptions.Item label={t('arch')}>{drawerNode.arch || '-'}</Descriptions.Item>
+                    <Descriptions.Item label={t('deployment')}>
+                      {drawerNode.pattern ? <Tag color="blue">{t('pattern')}{drawerNode.pattern}</Tag> : <Tag>{t('policy')}</Tag>}
                     </Descriptions.Item>
-                    <Descriptions.Item label={t('Status')}>
+                    <Descriptions.Item label={t('status')}>
                       <Badge status={isAlive(drawerNode.lastHeartbeat) ? 'success' : 'error'}
-                        text={isAlive(drawerNode.lastHeartbeat) ? t('Online') : t('Offline')} />
+                        text={isAlive(drawerNode.lastHeartbeat) ? t('online') : t('offline')} />
                     </Descriptions.Item>
-                    <Descriptions.Item label={t('Last Heartbeat')}>{fmtTime(drawerNode.lastHeartbeat)}</Descriptions.Item>
+                    <Descriptions.Item label={t('last-heartbeat')}>{fmtTime(drawerNode.lastHeartbeat)}</Descriptions.Item>
                   </Descriptions>
                 )}
                 <Space>
-                  <Text strong style={{ fontSize: 16 }}>{t('Node Policy')}</Text>
+                  <Text strong style={{ fontSize: 16 }}>{t('node-policy')}</Text>
                   {drawerNodeId && policies[drawerNodeId] && (
-                    <Button size="small" icon={<EditOutlined />} onClick={() => openEditPolicy(drawerNodeId)}>{t('Edit')}</Button>
+                    <Button size="small" icon={<EditOutlined />} onClick={() => openEditPolicy(drawerNodeId)}>{t('edit')}</Button>
                   )}
                 </Space>
                 {drawerNodeId && policies[drawerNodeId] ? (
@@ -670,14 +768,14 @@ export default function Nodes() {
                     const pol = policies[drawerNodeId]!;
                     return (
                       <Descriptions column={1} size="small" bordered style={{ marginTop: 12 }}>
-                        <Descriptions.Item label={t('Properties')}>
+                        <Descriptions.Item label={t('properties')}>
                           {pol.properties && pol.properties.length > 0
                             ? pol.properties.map((p: any) => (
                                 <Tag key={p.name} style={{ marginBottom: 4 }}>{p.name}: {String(p.value)}</Tag>
                               ))
                             : '-'}
                         </Descriptions.Item>
-                        <Descriptions.Item label={t('Constraints')}>
+                        <Descriptions.Item label={t('constraints')}>
                           {pol.constraints && pol.constraints.length > 0
                             ? pol.constraints.map((c: string) => <Tag key={c} style={{ marginBottom: 4 }}>{c}</Tag>)
                             : '-'}
@@ -686,18 +784,18 @@ export default function Nodes() {
                     );
                   })()
                 ) : (
-                  <Text type="secondary" style={{ display: 'block', marginTop: 8 }}>{t('No policy data')}</Text>
+                  <Text type="secondary" style={{ display: 'block', marginTop: 8 }}>{t('no-policy-data')}</Text>
                 )}
               </>),
             },
             {
               key: 'services',
-              label: t('Services'),
+              label: t('services'),
               children: (
                 <List
                   loading={servicesLoading}
                   dataSource={nodeServices}
-                  locale={{ emptyText: t('No registered services') }}
+                  locale={{ emptyText: t('no-registered-services') }}
                   renderItem={(svc: NodeServiceStatus) => (
                     <List.Item>
                       <List.Item.Meta
@@ -715,8 +813,8 @@ export default function Nodes() {
                         }
                         description={
                           svc.agreementId
-                            ? t('Agreement: ') + svc.agreementId
-                            : t('Waiting for agreement...')
+                            ? t('agreement') + svc.agreementId
+                            : t('waiting-for-agreement')
                         }
                       />
                     </List.Item>
@@ -726,23 +824,23 @@ export default function Nodes() {
             },
             {
               key: 'agreements',
-              label: t('Agreements'),
+              label: t('agreements'),
               children: (
                 <List
                   loading={subLoading}
                   dataSource={nodeAgreements}
-                  locale={{ emptyText: t('No agreements') }}
+                  locale={{ emptyText: t('no-agreements') }}
                   renderItem={(ag: any, i: number) => (
                     <List.Item>
                       <List.Item.Meta
                         title={<Text code>{ag.current_agreement_id || ag.id || `#${i + 1}`}</Text>}
                         description={
                           <div>
-                            <div>{t('State: ')}{ag.state || ag.agreement_state || '-'}</div>
+                            <div>{t('state')}{ag.state || ag.agreement_state || '-'}</div>
                             {ag.service_specifications?.map((s: any, j: number) => (
                               <Tag key={j} style={{ marginTop: 4 }}>{s.service_url}@{s.service_version_range}</Tag>
                             ))}
-                            {ag.credits && <div>{t('Credits: ')}{ag.credits}</div>}
+                            {ag.credits && <div>{t('credits')}{ag.credits}</div>}
                           </div>
                         }
                       />
@@ -753,45 +851,71 @@ export default function Nodes() {
             },
             {
               key: 'errors',
-              label: t('Errors'),
+              label: t('errors'),
               children: (
-                <List
-                  loading={subLoading}
-                  dataSource={nodeErrors}
-                  locale={{ emptyText: t('No errors') }}
-                  renderItem={(err: any, i: number) => (
-                    <List.Item>
-                      <List.Item.Meta
-                        avatar={<CloseCircleOutlined style={{ fontSize: 20, color: '#ff4d4f' }} />}
-                        title={<Text code>{err.record_id || err.id || `#${i + 1}`}</Text>}
-                        description={
-                          <div>
-                            <div>{err.message || err.error || '-'}</div>
-                            {err.timestamp && <Text type="secondary" style={{ fontSize: 12 }}>{fmtTime(err.timestamp)}</Text>}
-                          </div>
-                        }
-                      />
-                    </List.Item>
+                <div>
+                  {nodeErrors.length > 0 && (
+                    <Button
+                      danger
+                      size="small"
+                      icon={<DeleteOutlined />}
+                      style={{ marginBottom: 8 }}
+                      onClick={async () => {
+                        Modal.confirm({
+                          title: t('confirm-clear-all-errors'),
+                          onOk: async () => {
+                            try {
+                              await NodeAPI.clearErrors(drawerNodeId, drawerNodeId.includes('/') ? drawerNodeId.split('/')[0] : pageOrg);
+                              setNodeErrors([]);
+                              message.success(t('errors-cleared'));
+                            } catch (err: any) {
+                              message.error(err.message);
+                            }
+                          },
+                        });
+                      }}
+                    >
+                      {t('clear-all-errors')}
+                    </Button>
                   )}
-                />
+                  <List
+                    loading={subLoading}
+                    dataSource={nodeErrors}
+                    locale={{ emptyText: t('no-errors') }}
+                    renderItem={(err: any, i: number) => (
+                      <List.Item>
+                        <List.Item.Meta
+                          avatar={<CloseCircleOutlined style={{ fontSize: 20, color: '#ff4d4f' }} />}
+                          title={<Text code>{err.record_id || err.id || `#${i + 1}`}</Text>}
+                          description={
+                            <div>
+                              <div>{err.message || err.error || '-'}</div>
+                              {err.timestamp && <Text type="secondary" style={{ fontSize: 12 }}>{fmtTime(err.timestamp)}</Text>}
+                            </div>
+                          }
+                        />
+                      </List.Item>
+                    )}
+                  />
+                </div>
               ),
             },
             {
               key: 'mgmtStatus',
-              label: t('Mgmt Status'),
+              label: t('mgmt-status'),
               children: (
                 <List
                   loading={subLoading}
                   dataSource={nodeMgmtStatus}
-                  locale={{ emptyText: t('No management status') }}
+                  locale={{ emptyText: t('no-management-status') }}
                   renderItem={(ms: any, i: number) => (
                     <List.Item>
                       <List.Item.Meta
                         title={<Text code>{ms.management_policy_name || ms.name || `#${i + 1}`}</Text>}
                         description={
                           <div>
-                            <div>{t('Status: ')}{ms.status || '-'}</div>
-                            {ms.agent_upgrade_status && <div>{t('Agent: ')}{ms.agent_upgrade_status}</div>}
+                            <div>{t('status-2')}{ms.status || '-'}</div>
+                            {ms.agent_upgrade_status && <div>{t('agent')}{ms.agent_upgrade_status}</div>}
                             {ms.message && <Text type="secondary">{ms.message}</Text>}
                           </div>
                         }
@@ -802,12 +926,68 @@ export default function Nodes() {
               ),
             },
             {
+              key: 'servicesConfig',
+              label: t('services-config-state'),
+              children: (
+                <div>
+                  <Button
+                    size="small"
+                    icon={<EditOutlined />}
+                    onClick={async () => {
+                      const services = drawerNode?.registeredServices;
+                      const svcList = Array.isArray(services) ? services : Object.values(services || {});
+                      if (svcList.length === 0) {
+                        message.warning(t('no-services'));
+                        return;
+                      }
+                      // For each service, set config state to 'active'
+                      for (const svc of svcList) {
+                        const svcName = svc.name || svc.ServiceName || '';
+                        const svcOrg = svc.org || svc.ServiceOrg || pageOrg;
+                        if (svcName) {
+                          try {
+                            await NodeAPI.setServicesConfigState(drawerNodeId, [
+                              { org: svcOrg, service: svcName, configState: 'active' }
+                            ], pageOrg || undefined);
+                          } catch (err: any) {
+                            message.error(err.message);
+                          }
+                        }
+                      }
+                      message.success(t('services-config-updated'));
+                    }}
+                  >
+                    {t('activate-all')}
+                  </Button>
+                  <List
+                    loading={subLoading}
+                    dataSource={Object.values(drawerNode?.registeredServices || {})}
+                    locale={{ emptyText: t('no-services') }}
+                    renderItem={(svc: any) => (
+                      <List.Item>
+                        <List.Item.Meta
+                          title={<Text code>{svc.name || svc.ServiceName || '-'}</Text>}
+                          description={
+                            <div>
+                              <div>{t('org')}: {svc.org || svc.ServiceOrg || '-'}</div>
+                              <div>{t('version')}: {svc.version || '-'}</div>
+                              <div>{t('config-state')}: {svc.configState || 'active'}</div>
+                            </div>
+                          }
+                        />
+                      </List.Item>
+                    )}
+                  />
+                </div>
+              ),
+            },
+            {
               key: 'userinput',
-              label: t('User Input'),
+              label: t('user-input'),
               children: (
                 <div>
                   {userInputData.length === 0 && (
-                    <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>{t('No user input')}</Text>
+                    <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>{t('no-user-input')}</Text>
                   )}
                   {userInputData.map((svc, sIdx) => (
                     <Card
@@ -820,7 +1000,7 @@ export default function Nodes() {
                             size="small"
                             showSearch
                             style={{ minWidth: 300 }}
-                            placeholder={t('Select a service')}
+                            placeholder={t('select-a-service')}
                             value={svc.serviceUrl ? Object.keys(availableSvcMap).find(k =>
                               k.startsWith(svc.serviceOrgid + '/') && availableSvcMap[k].url === svc.serviceUrl && availableSvcMap[k].arch === svc.serviceArch
                             ) : undefined}
@@ -845,19 +1025,19 @@ export default function Nodes() {
                         </Space>
                       }
                     >
-                      {svc.inputs.map((inp, iIdx) => (
+                      {(svc.inputs || []).map((inp: any, iIdx: number) => (
                         <Space key={iIdx} style={{ display: 'flex', marginBottom: 6 }} align="baseline">
                           <Input
                             size="small"
                             style={{ width: 180 }}
-                            placeholder={t('Name')}
+                            placeholder={t('name')}
                             value={inp.name}
                             onChange={(e) => updateInputInService(sIdx, iIdx, 'name', e.target.value)}
                           />
                           <Input
                             size="small"
                             style={{ width: 180 }}
-                            placeholder={t('Value')}
+                            placeholder={t('value')}
                             value={String(inp.value ?? '')}
                             onChange={(e) => updateInputInService(sIdx, iIdx, 'value', e.target.value)}
                           />
@@ -865,13 +1045,13 @@ export default function Nodes() {
                         </Space>
                       ))}
                       <Button type="dashed" size="small" onClick={() => addInputToService(sIdx)} icon={<PlusCircleOutlined />}>
-                        {t('Add input')}
+                        {t('add-input')}
                       </Button>
                     </Card>
                   ))}
                   <Space style={{ marginTop: 8 }}>
-                    <Button onClick={addUserInputService} icon={<PlusCircleOutlined />}>{t('Add service')}</Button>
-                    <Button type="primary" onClick={saveUserInput} loading={userInputSaving}>{t('Save')}</Button>
+                    <Button onClick={addUserInputService} icon={<PlusCircleOutlined />}>{t('add-service')}</Button>
+                    <Button type="primary" onClick={saveUserInput} loading={userInputSaving}>{t('save')}</Button>
                   </Space>
                 </div>
               ),
@@ -880,7 +1060,7 @@ export default function Nodes() {
         />
 
       <Modal
-        title={t('Edit Node Policy')}
+        title={t('edit-node-policy')}
         open={policyEditOpen}
         onOk={saveEditPolicy}
         onCancel={() => setPolicyEditOpen(false)}
@@ -888,7 +1068,7 @@ export default function Nodes() {
         width={600}
       >
         <div style={{ marginBottom: 16 }}>
-          <Text strong>{t('System Properties (read-only)')}</Text>
+          <Text strong>{t('system-properties-read-only')}</Text>
           <div style={{ marginTop: 8, marginBottom: 16 }}>
             {drawerNodeId && policies[drawerNodeId]?.properties?.filter((p: any) =>
               p.name.startsWith('openhorizon.') || p.name.startsWith('horizon.')
@@ -901,11 +1081,11 @@ export default function Nodes() {
           </div>
         </div>
         <div style={{ marginBottom: 16 }}>
-          <Text strong>{t('Custom Properties')}</Text>
+          <Text strong>{t('custom-properties')}</Text>
           {policyEditCustomProps.map((p, i) => (
             <Space key={i} style={{ display: 'flex', marginTop: 8 }} align="baseline">
               <Input
-                placeholder={t('Name')}
+                placeholder={t('name')}
                 value={p.name}
                 onChange={(e: any) => {
                   const next = [...policyEditCustomProps];
@@ -915,7 +1095,7 @@ export default function Nodes() {
                 style={{ width: 200 }}
               />
               <Input
-                placeholder={t('Value')}
+                placeholder={t('value')}
                 value={p.value}
                 onChange={(e: any) => {
                   const next = [...policyEditCustomProps];
@@ -937,11 +1117,11 @@ export default function Nodes() {
             onClick={() => setPolicyEditCustomProps([...policyEditCustomProps, { name: '', value: '' }])}
             style={{ width: '100%', marginTop: 8 }}
           >
-            + {t('Add Property')}
+            + {t('add-property')}
           </Button>
         </div>
         <div>
-          <Text strong>{t('Constraints (one per line)')}</Text>
+          <Text strong>{t('constraints-one-per-line')}</Text>
           <Input.TextArea
             rows={4}
             value={policyEditConstraints}

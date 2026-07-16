@@ -4,11 +4,12 @@
 
 import { useEffect, useState } from 'react';
 import { usePolling } from '../hooks/usePolling';
-import { Table, Button, Space, Typography, message, Modal, Tag, Form, Input, Select, Upload } from 'antd';
-import { SearchOutlined, ReloadOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, ImportOutlined, EditOutlined } from '@ant-design/icons';
+import { Table, Button, Space, Typography, message, Modal, Tag, Form, Input, Select, Upload, Drawer, Descriptions, Collapse } from 'antd';
+import { SearchOutlined, ReloadOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, ImportOutlined, EditOutlined, ClusterOutlined } from '@ant-design/icons';
 
 import { DeploymentPolicyAPI, DeploymentPolicy } from '../api/policies';
 import { ServiceAPI, ExchangeService } from '../api/services';
+import { NodeAPI, ExchangeNode } from '../api/nodes';
 import { OrgAPI } from '../api/organizations';
 import { getConfig } from '../api/config';
 import { useT } from '../i18n/context';
@@ -45,6 +46,10 @@ export default function Policies() {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [nodesDrawerOpen, setNodesDrawerOpen] = useState(false);
+  const [nodesDrawerPolicy, setNodesDrawerPolicy] = useState('');
+  const [matchedNodes, setMatchedNodes] = useState<ExchangeNode[]>([]);
+  const [matchedNodesLoading, setMatchedNodesLoading] = useState(false);
 
   const screenSize = useScreenSize();
 
@@ -150,13 +155,60 @@ export default function Policies() {
     } catch { /* auto-refresh: silent */ }
   }, 30000);
 
+  const showPolicyNodes = async (policyId: string) => {
+    setNodesDrawerPolicy(policyId);
+    setNodesDrawerOpen(true);
+    setMatchedNodesLoading(true);
+    try {
+      const policy = data[policyId];
+      const svcName = policy?.service?.name || '';
+      const svcOrg = policy?.service?.org || pageOrg;
+      if (!svcName) { setMatchedNodes([]); setMatchedNodesLoading(false); return; }
+      // Use server-side search API for efficient matching
+      try {
+        const res = await DeploymentPolicyAPI.search(policyId, pageOrg || undefined);
+        const nodeList = res?.nodes ?? [];
+        setMatchedNodes(Array.isArray(nodeList) ? nodeList.map((n: any) => ({ name: n.name || n, ...n })) : []);
+      } catch {
+        // Fallback to client-side search if server-side search fails
+        const res = await NodeAPI.list(pageOrg || undefined);
+        const allNodes = Object.values(res?.nodes ?? {});
+        const matched: ExchangeNode[] = [];
+        for (const node of allNodes) {
+          let found = false;
+          const rs = (node as any).registeredServices;
+          const svcList = Array.isArray(rs) ? rs : Object.values(rs || {});
+          found = svcList.some((s: any) => {
+            const sName = s.name || s.ServiceName || s.url || s.serviceUrl || '';
+            const sOrg = s.org || s.ServiceOrg || s.serviceOrgid || '';
+            return sName === svcName && (!svcOrg || sOrg === svcOrg);
+          });
+          if (!found && node.name) {
+            try {
+              const svcRes = await NodeAPI.services(node.name, pageOrg || undefined);
+              const nodeSvcs = svcRes?.services ?? [];
+              found = nodeSvcs.some((s: any) => {
+                const sName = s.name || s.ServiceName || s.url || s.serviceUrl || '';
+                const sOrg = s.org || s.ServiceOrg || s.serviceOrgid || '';
+                return sName === svcName && (!svcOrg || sOrg === svcOrg);
+              });
+            } catch { /* skip */ }
+          }
+          if (found) matched.push(node);
+        }
+        setMatchedNodes(matched);
+      }
+    } catch { setMatchedNodes([]); }
+    setMatchedNodesLoading(false);
+  };
+
   const handleDelete = (id: string) => {
     Modal.confirm({
-      title: t('Confirm deletion of policy').replace('{0}', id),
+      title: t('confirm-deletion-of-policy').replace('{0}', id),
       onOk: async () => {
         try {
           await DeploymentPolicyAPI.delete(id);
-          message.success(t('Deleted'));
+          message.success(t('deleted'));
           load();
         } catch (err: any) {
           message.error(err.message);
@@ -166,13 +218,71 @@ export default function Policies() {
   };
 
   const showDetail = (id: string) => {
-    Modal.info({ maskClosable: true,
-      title: t('Deployment Policy') + ' - ' + id,
+    const pol = data[id];
+    const svc = pol?.service || {};
+    const versions = svc?.serviceVersions || [];
+    const constraints = pol?.constraints || [];
+    const userInput = pol?.userInput || [];
+    const secretBinding = pol?.secretBinding || [];
+    const nodeHealth = svc?.nodeHealth || {};
+
+    Modal.info({
+      maskClosable: true,
+      title: t('deployment-policy') + ' - ' + id,
       width: 700,
       content: (
-        <pre style={{ background: '#f5f5f5', padding: 16, borderRadius: 6, overflow: 'auto', maxHeight: 500 }}>
-          {JSON.stringify(data[id], null, 2)}
-        </pre>
+        <div style={{ maxHeight: 500, overflow: 'auto' }}>
+          <Descriptions bordered size="small" column={1}>
+            <Descriptions.Item label={t('label')}>{pol?.label || '-'}</Descriptions.Item>
+            <Descriptions.Item label={t('description')}>{pol?.description || '-'}</Descriptions.Item>
+            <Descriptions.Item label={t('service')}>
+              <Tag color="blue">{svc?.org || ''}/{svc?.name || '-'}</Tag>
+              {svc?.arch && <Tag>{svc.arch}</Tag>}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('version')}>
+              {versions.length > 0 ? versions.map((v: any, i: number) => (
+                <Tag key={i}>{v.version}{v.priority?.priority_value != null ? ` (P${v.priority.priority_value})` : ''}</Tag>
+              )) : '-'}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('constraints')}>
+              {constraints.length > 0 ? constraints.map((c: string, i: number) => (
+                <div key={i} style={{ fontFamily: 'monospace', fontSize: 12, background: '#f5f5f5', padding: '2px 6px', borderRadius: 3, marginBottom: 2 }}>{c}</div>
+              )) : '-'}
+            </Descriptions.Item>
+            {nodeHealth.ping_interval && (
+              <Descriptions.Item label={t('node-health')}>
+                {t('ping-interval')}: {nodeHealth.ping_interval}s
+                {nodeHealth.missing_heartbeat_interval && <> | {t('missing-heartbeat')}: {nodeHealth.missing_heartbeat_interval}s</>}
+              </Descriptions.Item>
+            )}
+          </Descriptions>
+          {userInput.length > 0 && (
+            <Collapse style={{ marginTop: 12 }} items={[{
+              key: '1',
+              label: t('user-input') + ` (${userInput.length})`,
+              children: userInput.map((ui: any, i: number) => (
+                <div key={i} style={{ marginBottom: 8, padding: 8, background: '#fafafa', borderRadius: 4 }}>
+                  <Text strong>{ui.serviceOrgid}/{ui.serviceUrl}</Text>
+                  <Text type="secondary"> ({ui.serviceVersionRange || '*'})</Text>
+                  {ui.inputs?.length > 0 && (
+                    <div style={{ marginTop: 4 }}>
+                      {ui.inputs.map((inp: any, j: number) => (
+                        <div key={j} style={{ fontSize: 12 }}><Text code>{inp.name}</Text> = <Text code>{inp.value}</Text></div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))
+            }]} />
+          )}
+          {secretBinding.length > 0 && (
+            <Collapse style={{ marginTop: 12 }} items={[{
+              key: '2',
+              label: t('secret-binding') + ` (${secretBinding.length})`,
+              children: <pre style={{ fontSize: 12, margin: 0 }}>{JSON.stringify(secretBinding, null, 2)}</pre>
+            }]} />
+          )}
+        </div>
       ),
       footer: null,
     });
@@ -180,28 +290,29 @@ export default function Policies() {
 
   const allColumns = [
     {
-      title: t('Name'), key: 'name', width: 180,
+      title: t('name'), key: 'name', width: 180,
       render: (_: any, record: any) => record.key,
     },
-    { title: t('Label'), dataIndex: 'label', key: 'label', render: (v: string) => v || '-' },
-    { title: t('Service'), key: 'service', render: (_: any, record: any) => {
+    { title: t('label'), dataIndex: 'label', key: 'label', render: (v: string) => v || '-' },
+    { title: t('service'), key: 'service', render: (_: any, record: any) => {
       return record?.service?.name || '-';
     }},
     {
-      title: t('Constraints'), key: 'constraintCount', width: 80,
+      title: t('constraints'), key: 'constraintCount', width: 80,
       render: (_: any, record: any) => record?.constraints?.length ?? 0,
     },
     {
-      title: t('Last Updated'), key: 'lastUpdated', width: 180,
+      title: t('last-updated'), key: 'lastUpdated', width: 180,
       render: (_: any, record: any) => fmtTime(record?.lastUpdated),
     },
     {
-      title: t('Actions'), key: 'action', width: 140,
+      title: t('actions'), key: 'action', width: 200,
       render: (_: any, record: any) => {
         const id = record.key;
         return (
           <Space>
             <Button size="small" icon={<EyeOutlined />} onClick={() => showDetail(id)} />
+            <Button size="small" icon={<ClusterOutlined />} onClick={() => showPolicyNodes(id)}>{t('nodes')}</Button>
             <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(id)} />
             <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(id)} />
           </Space>
@@ -280,7 +391,7 @@ export default function Policies() {
     try {
       const values = await editForm.validateFields();
       if (!editSelectedServiceId) {
-        message.error(t('Please select a service'));
+        message.error(t('please-select-a-service'));
         return;
       }
       const svc = services[editSelectedServiceId];
@@ -300,7 +411,7 @@ export default function Policies() {
         secretBinding: [],
       };
       await DeploymentPolicyAPI.update(editTarget, body);
-      message.success(t('Policy updated'));
+      message.success(t('policy-updated'));
       setEditOpen(false);
       editForm.resetFields();
       load();
@@ -316,11 +427,11 @@ export default function Policies() {
     try {
       const values = await form.validateFields();
       if (!selectedServiceId) {
-        message.error(t('Please select a service'));
+        message.error(t('please-select-a-service'));
         return;
       }
       if (getConfig().role === 'platform' && !createOrg) {
-        message.error(t('Please select an organization'));
+        message.error(t('please-select-an-organization'));
         return;
       }
       const svc = services[selectedServiceId];
@@ -340,7 +451,7 @@ export default function Policies() {
         secretBinding: [],
       };
       await DeploymentPolicyAPI.create(values.name, body, createOrg);
-      message.success(t('Policy created successfully'));
+      message.success(t('policy-created-successfully'));
       setCreateOpen(false);
       form.resetFields();
       load();
@@ -358,16 +469,16 @@ export default function Policies() {
       try {
         parsed = JSON.parse(values.json);
       } catch {
-        message.error(t('JSON format error'));
+        message.error(t('json-format-error'));
         return;
       }
       const name = values.name || parsed.id || parsed.label?.replace(/\s+/g, '-').toLowerCase() || 'imported-policy';
       if (getConfig().role === 'platform' && !importOrg) {
-        message.error(t('Please select an organization'));
+        message.error(t('please-select-an-organization'));
         return;
       }
       await DeploymentPolicyAPI.create(name, parsed, importOrg);
-      message.success(t('Policy imported successfully'));
+      message.success(t('policy-imported-successfully'));
       setImportOpen(false);
       importForm.resetFields();
       load();
@@ -387,9 +498,9 @@ export default function Policies() {
     <div>
       <div style={{ marginBottom: 16 }}>
         <div>
-          <Text strong style={{ fontSize: 20 }}>{t('Deployment Policies')}</Text>
+          <Text strong style={{ fontSize: 20 }}>{t('deployment-policies')}</Text>
           <HelpButton module="policies" />
-          <br /><Text type="secondary">{t('Manage service-to-node binding policy')}</Text>
+          <br /><Text type="secondary">{t('manage-service-to-node-binding-policy')}</Text>
         </div>
         <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           {getConfig().role === 'platform' && (
@@ -397,10 +508,10 @@ export default function Policies() {
             style={{ width: 180 }}
             showSearch
             value={pageOrg}
-            placeholder={t('Organization')}
+            placeholder={t('organization')}
             onChange={(org) => { setPageOrg(org); setPage(1); load(org); }}
             options={[
-              { label: t('All Organizations'), value: '' },
+              { label: t('all-organizations'), value: '' },
               ...allOrgs.map((o) => ({ label: o, value: o }))
             ]}
             filterOption={(input, option) =>
@@ -410,21 +521,21 @@ export default function Policies() {
           )}
           <Input
             allowClear
-            placeholder={t('Search')}
+            placeholder={t('search')}
             prefix={<SearchOutlined />}
             value={search}
             onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             style={{ width: 200 }}
           />
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('Create Policy')}</Button>
-          <Button icon={<ImportOutlined />} onClick={() => { setImportOpen(true); setImportOrg(pageOrg); importForm.resetFields(); }}>{t('Import')}</Button>
-          <Button icon={<ReloadOutlined />} onClick={() => load()}>{t('Refresh')}</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('create-policy')}</Button>
+          <Button icon={<ImportOutlined />} onClick={() => { setImportOpen(true); setImportOrg(pageOrg); importForm.resetFields(); }}>{t('import')}</Button>
+          <Button icon={<ReloadOutlined />} onClick={() => load()}>{t('refresh')}</Button>
         </div>
       </div>
-      <Table columns={columns} dataSource={tableData} loading={loading} rowKey="key" pagination={{ current: page, pageSize, pageSizeOptions: [10, 20, 50, 100], showSizeChanger: true, showQuickJumper: true, showTotal: (total) => `${total} ${t('Deployment Policies')}`, onChange: (p) => setPage(p), onShowSizeChange: (_c, size) => { setPageSize(size); setPage(1); } }} size="middle" scroll={{ x: 'max-content' }} />
+      <Table columns={columns} dataSource={tableData} loading={loading} rowKey="key" pagination={{ current: page, pageSize, pageSizeOptions: [10, 20, 50, 100], showSizeChanger: true, showQuickJumper: true, showTotal: (total) => `${total} ${t('deployment-policies')}`, onChange: (p) => setPage(p), onShowSizeChange: (_c, size) => { setPageSize(size); setPage(1); } }} size="middle" scroll={{ x: 'max-content' }} />
 
       <Modal
-        title={t('Create Deployment Policy')}
+        title={t('create-deployment-policy')}
         open={createOpen}
         onOk={handleCreate}
         onCancel={() => { setCreateOpen(false); setSelectedServiceId(''); }}
@@ -432,14 +543,14 @@ export default function Policies() {
         width={500}
       >
         <Form form={form} layout="vertical">
-          <Form.Item name="name" label={t('Policy Name')} rules={[{ required: true, message: t('Please enter policy name') }]}>
+          <Form.Item name="name" label={t('policy-name')} rules={[{ required: true, message: t('please-enter-policy-name') }]}>
             <Input placeholder="my-policy" />
           </Form.Item>
           {getConfig().role === 'platform' && (
-            <Form.Item label={t('Organization')} required tooltip={t('Policy will be created in this organization')}>
+            <Form.Item label={t('organization')} required tooltip={t('policy-will-be-created-in-this-organization')}>
               <Select
                 showSearch
-                placeholder={t('Select organization')}
+                placeholder={t('select-organization')}
                 value={createOrg || undefined}
                 onChange={(v) => setCreateOrg(v)}
                 options={allOrgs.map((o) => ({ label: o, value: o }))}
@@ -447,31 +558,31 @@ export default function Policies() {
               />
             </Form.Item>
           )}
-          <Form.Item name="label" label={t('Label')} rules={[{ required: true, message: t('Please enter a label') }]}>
-            <Input placeholder={t('Policy display name')} />
+          <Form.Item name="label" label={t('label')} rules={[{ required: true, message: t('please-enter-a-label') }]}>
+            <Input placeholder={t('policy-display-name')} />
           </Form.Item>
-          <Form.Item name="description" label={t('Description')}>
-            <TextArea rows={2} placeholder={t('Optional description')} />
+          <Form.Item name="description" label={t('description')}>
+            <TextArea rows={2} placeholder={t('optional-description')} />
           </Form.Item>
-          <Form.Item label={t('Service')} rules={[{ required: true, message: t('Please select a service') }]}>
+          <Form.Item label={t('service')} rules={[{ required: true, message: t('please-select-a-service') }]}>
             <Select
               showSearch
               value={selectedServiceId || undefined}
-              placeholder={t('Select a service')}
+              placeholder={t('select-a-service')}
               onChange={(val) => setSelectedServiceId(val)}
               filterOption={(input, option) => (option?.label as string || '').toLowerCase().includes(input.toLowerCase())}
               options={Object.entries(services).map(([id]) => ({ label: id, value: id }))}
               style={{ width: '100%' }}
             />
           </Form.Item>
-          <Form.Item name="constraints" label={t('Constraints (one per line)')}>
+          <Form.Item name="constraints" label={t('constraints-one-per-line')}>
             <TextArea rows={3} placeholder={t('e.g. a == b')} />
           </Form.Item>
         </Form>
       </Modal>
 
       <Modal
-        title={t('Edit Deployment Policy') + (editTarget ? ' - ' + editTarget : '')}
+        title={t('edit-deployment-policy') + (editTarget ? ' - ' + editTarget : '')}
         open={editOpen}
         onOk={handleEdit}
         onCancel={() => { setEditOpen(false); editForm.resetFields(); }}
@@ -479,48 +590,48 @@ export default function Policies() {
         width={500}
       >
         <Form form={editForm} layout="vertical">
-          <Form.Item name="label" label={t('Label')} rules={[{ required: true, message: t('Please enter a label') }]}>
-            <Input placeholder={t('Policy display name')} />
+          <Form.Item name="label" label={t('label')} rules={[{ required: true, message: t('please-enter-a-label') }]}>
+            <Input placeholder={t('policy-display-name')} />
           </Form.Item>
-          <Form.Item name="description" label={t('Description')}>
-            <TextArea rows={2} placeholder={t('Optional description')} />
+          <Form.Item name="description" label={t('description')}>
+            <TextArea rows={2} placeholder={t('optional-description')} />
           </Form.Item>
-          <Form.Item label={t('Service')} rules={[{ required: true, message: t('Please select a service') }]}>
+          <Form.Item label={t('service')} rules={[{ required: true, message: t('please-select-a-service') }]}>
             <Select
               showSearch
               value={editSelectedServiceId || undefined}
-              placeholder={t('Select a service')}
+              placeholder={t('select-a-service')}
               onChange={(val) => setEditSelectedServiceId(val)}
               filterOption={(input, option) => (option?.label as string || '').toLowerCase().includes(input.toLowerCase())}
               options={Object.entries(services).map(([id]) => ({ label: id, value: id }))}
               style={{ width: '100%' }}
             />
           </Form.Item>
-          <Form.Item name="constraints" label={t('Constraints (one per line)')}>
+          <Form.Item name="constraints" label={t('constraints-one-per-line')}>
             <TextArea rows={3} placeholder={t('e.g. a == b')} />
           </Form.Item>
         </Form>
       </Modal>
 
       <Modal
-        title={t('Import')}
+        title={t('import')}
         open={importOpen}
         onOk={handleImport}
         onCancel={() => { setImportOpen(false); importForm.resetFields(); }}
         width={640}
       >
         <div style={{ marginBottom: 12 }}>
-          <Button icon={<ImportOutlined />} onClick={() => setImportFromOpen(true)}>{t('Import from example')}</Button>
+          <Button icon={<ImportOutlined />} onClick={() => setImportFromOpen(true)}>{t('import-from-example')}</Button>
         </div>
         <Form form={importForm} layout="vertical">
-          <Form.Item name="name" label={t('Policy name (optional, leave empty to auto-generate)')}>
+          <Form.Item name="name" label={t('policy-name-optional-leave-empty-to-auto-generate')}>
             <Input placeholder="my-imported-policy" />
           </Form.Item>
           {getConfig().role === 'platform' && (
-            <Form.Item label={t('Organization')} required tooltip={t('Policy will be created in this organization')}>
+            <Form.Item label={t('organization')} required tooltip={t('policy-will-be-created-in-this-organization')}>
               <Select
                 showSearch
-                placeholder={t('Select organization')}
+                placeholder={t('select-organization')}
                 value={importOrg || undefined}
                 onChange={(v) => setImportOrg(v)}
                 options={allOrgs.map((o) => ({ label: o, value: o }))}
@@ -528,14 +639,14 @@ export default function Policies() {
               />
             </Form.Item>
           )}
-          <Form.Item name="json" label={t('Policy JSON (must contain businessPolicy wrapper)')} rules={[{ required: true, message: t('Please enter policy JSON') }]}>
+          <Form.Item name="json" label={t('policy-json-must-contain-businesspolicy-wrapper')} rules={[{ required: true, message: t('please-enter-policy-json') }]}>
             <TextArea rows={10} placeholder='{\n  "businessPolicy": { ... }\n}' />
           </Form.Item>
         </Form>
       </Modal>
 
       <Modal
-        title={t('Import from example')}
+        title={t('import-from-example')}
         open={importFromOpen}
         onCancel={() => setImportFromOpen(false)}
         footer={null}
@@ -559,6 +670,30 @@ export default function Policies() {
           </div>
         ))}
       </Modal>
+      <Drawer
+        title={`${t('nodes-using-policy')}: ${nodesDrawerPolicy}`}
+        open={nodesDrawerOpen}
+        onClose={() => setNodesDrawerOpen(false)}
+        width={600}
+        destroyOnClose
+      >
+        {matchedNodesLoading ? <Text type="secondary">{t('loading')}</Text> : (
+          matchedNodes.length === 0 ? <Text type="secondary">{t('no-nodes-using-this-policy')}</Text> : (
+            <Table
+              dataSource={matchedNodes.map((n: any, i: number) => ({ key: n.name || n.nodeId || i, ...n }))}
+              columns={[
+                { title: t('node-id'), dataIndex: 'key', key: 'id', ellipsis: true },
+                { title: t('architecture'), dataIndex: 'arch', key: 'arch', render: (v: string) => v || '-' },
+                { title: t('type'), dataIndex: 'nodeType', key: 'type', render: (v: string) => v || '-' },
+                { title: t('pattern-2'), dataIndex: 'pattern', key: 'pattern', render: (v: string) => v || '-' },
+                { title: t('last-heartbeat'), dataIndex: 'lastHeartbeat', key: 'hb', render: (v: string) => v ? fmtTime(v) : '-' },
+              ]}
+              size="small"
+              pagination={{ pageSize: 20 }}
+            />
+          )
+        )}
+      </Drawer>
     </div>
   );
 }

@@ -1,5 +1,5 @@
-import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { defineConfig } from 'vite'
 
 export default defineConfig({
   appType: 'spa',
@@ -13,5 +13,6 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
+    allowedHosts: ['hzn.t.yiqisoft.cn', 'hzn-dev.t.yiqisoft.cn'],
   },
 })

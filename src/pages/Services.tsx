@@ -5,7 +5,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { usePolling } from '../hooks/usePolling';
 import { Table, Button, Space, Typography, message, Modal, Drawer, Descriptions, Tag, Form, Input, Select, Tabs, Collapse, Alert, Switch, Upload, Tooltip, List } from 'antd';
-import { SearchOutlined, ReloadOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, EditOutlined, DownloadOutlined, ImportOutlined, MinusCircleOutlined } from '@ant-design/icons';
+import { SearchOutlined, ReloadOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, EditOutlined, DownloadOutlined, ImportOutlined, MinusCircleOutlined, InboxOutlined, RiseOutlined } from '@ant-design/icons';
 import { ServiceAPI, ExchangeService } from '../api/services';
 import { OrgAPI } from '../api/organizations';
 import { getConfig } from '../api/config';
@@ -214,17 +214,38 @@ export default function Services() {
 
   const handleDelete = (id: string) => {
     Modal.confirm({
-      title: t('Confirm deletion of service').replace('{0}', id),
+      title: t('confirm-deletion-of-service').replace('{0}', id),
       onOk: async () => {
         try {
           await ServiceAPI.delete(id);
-          message.success(t('Deleted'));
+          message.success(t('deleted'));
           load();
         } catch (err: any) {
           message.error(err.message);
         }
       },
     });
+  };
+
+  const handleArchive = async (id: string, archived: boolean) => {
+    try {
+      if (archived) {
+        await ServiceAPI.unarchive(id);
+        message.success(t('service-unarchived'));
+      } else {
+        await ServiceAPI.archive(id);
+        message.success(t('service-archived'));
+      }
+      load();
+    } catch (e: any) { message.error(e?.message || 'Operation failed'); }
+  };
+
+  const handleUpgrade = async (id: string, auto: boolean) => {
+    try {
+      await ServiceAPI.upgrade(id, { auto_upgrade: auto, active_upgrade: auto });
+      message.success(auto ? t('auto-upgrade-enabled') : t('auto-upgrade-disabled'));
+      load();
+    } catch (e: any) { message.error(e?.message || 'Upgrade config failed'); }
   };
 
   const showDetail = async (id: string) => {
@@ -328,17 +349,17 @@ export default function Services() {
       try {
         parsed = JSON.parse(values.json);
       } catch {
-        message.error(t('JSON format error'));
+        message.error(t('json-format-error'));
         return;
       }
       // Generate name from JSON content or fall back to a default
       const name = values.name || parsed.id || parsed.label?.replace(/\s+/g, '-').toLowerCase() || 'imported-service';
       if (getConfig().role === 'platform' && !importOrg) {
-        message.error(t('Please select an organization'));
+        message.error(t('please-select-an-organization'));
         return;
       }
       await ServiceAPI.create({ name, ...parsed }, importOrg);
-      message.success(t('Service imported successfully'));
+      message.success(t('service-imported-successfully'));
       setImportOpen(false);
       importForm.resetFields();
       load();
@@ -430,7 +451,7 @@ export default function Services() {
         try {
           parsed = JSON.parse(values.serviceJSON);
         } catch {
-          message.error(t('Service JSON format error'));
+          message.error(t('service-json-format-error'));
           setCreating(false);
           return;
         }
@@ -439,7 +460,7 @@ export default function Services() {
           try {
             userInputArr = JSON.parse(values.userInputJSON);
           } catch {
-            message.error(t('User input JSON format error'));
+            message.error(t('user-input-json-format-error'));
             setCreating(false);
             return;
           }
@@ -449,7 +470,7 @@ export default function Services() {
           try {
             deploymentObj = JSON.parse(values.deploymentJSON);
           } catch {
-            message.error(t('Deployment JSON format error'));
+            message.error(t('deployment-json-format-error'));
             setCreating(false);
             return;
           }
@@ -475,7 +496,7 @@ export default function Services() {
         };
         await ServiceAPI.update(editTarget, body);
       }
-      message.success(t('Service updated successfully'));
+      message.success(t('service-updated-successfully'));
       setEditModalOpen(false);
       editForm.resetFields();
       load();
@@ -491,7 +512,7 @@ export default function Services() {
     try {
       const values = await form.validateFields();
       if (getConfig().role === 'platform' && !createOrg) {
-        message.error(t('Please select an organization'));
+        message.error(t('please-select-an-organization'));
         return;
       }
       setCreating(true);
@@ -511,7 +532,7 @@ export default function Services() {
         requiredServices: toRequiredServices(values.requiredServices),
       };
       await ServiceAPI.create({ name: values.name, ...body }, createOrg);
-      message.success(t('Service created successfully'));
+      message.success(t('service-created-successfully'));
       setCreateOpen(false);
       form.resetFields();
       load();
@@ -604,30 +625,36 @@ export default function Services() {
   // Table columns: name derived from data keys, actions inline with icon buttons
   const allColumns = [
     {
-      title: t('Name'), key: 'name', width: 180,
+      title: t('name'), key: 'name', width: 180,
       render: (_: any, record: any) => record.key,
     },
-    { title: t('Version'), dataIndex: 'version', key: 'version', width: 100 },
-    { title: t('Architecture'), dataIndex: 'arch', key: 'arch', width: 80 },
-    { title: t('URL'), dataIndex: 'url', key: 'url', render: (v: string) => v || '-' },
+    { title: t('version'), dataIndex: 'version', key: 'version', width: 100 },
+    { title: t('architecture'), dataIndex: 'arch', key: 'arch', width: 80 },
+    { title: t('url'), dataIndex: 'url', key: 'url', render: (v: string) => v || '-' },
     {
-      title: t('Last Updated'), key: 'lastUpdated', width: 180,
+      title: t('last-updated'), key: 'lastUpdated', width: 180,
       render: (_: any, record: any) => fmtTime(record?.lastUpdated),
     },
     {
-      title: t('Actions'), key: 'action', width: 180,
+      title: t('actions'), key: 'action', width: 180,
       render: (_: any, record: any) => {
         const id = record.key;
         return (
           <Space>
-            <Tooltip title={t('View')}>
+            <Tooltip title={t('view')}>
               <Button size="small" icon={<EyeOutlined />} onClick={() => showDetail(id)} />
             </Tooltip>
-            <Tooltip title={t('Edit')}>
+            <Tooltip title={t('edit')}>
               <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(id)} />
             </Tooltip>
-            <Tooltip title={t('Export')}>
+            <Tooltip title={t('export')}>
               <Button size="small" icon={<DownloadOutlined />} onClick={() => exportService(id)} />
+            </Tooltip>
+            <Tooltip title={record.archived ? t('unarchive') : t('archive')}>
+              <Button size="small" icon={<InboxOutlined />} onClick={() => handleArchive(id, record.archived)} />
+            </Tooltip>
+            <Tooltip title={record.auto_upgrade ? t('disable-auto-upgrade') : t('enable-auto-upgrade')}>
+              <Button size="small" icon={<RiseOutlined />} onClick={() => handleUpgrade(id, !record.auto_upgrade)} />
             </Tooltip>
             <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(id)} />
           </Space>
@@ -663,9 +690,9 @@ export default function Services() {
     <div>
       <div style={{ marginBottom: 16 }}>
         <div>
-          <Text strong style={{ fontSize: 20 }}>{t('Service')} (Services)</Text>
+          <Text strong style={{ fontSize: 20 }}>{t('service')} (Services)</Text>
           <HelpButton module="services" />
-          <br /><Text type="secondary">{t('Manage service definitions, deployment configuration, and version strategy')}</Text>
+          <br /><Text type="secondary">{t('manage-service-definitions-deployment-configuration-and-version-strategy')}</Text>
         </div>
         <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           {getConfig().role === 'platform' && (
@@ -673,10 +700,10 @@ export default function Services() {
             style={{ width: 180 }}
             showSearch
             value={pageOrg}
-            placeholder={t('Organization')}
+            placeholder={t('organization')}
             onChange={(org) => { setPageOrg(org); setPage(1); load(org); }}
             options={[
-              { label: t('All Organizations'), value: '' },
+              { label: t('all-organizations'), value: '' },
               ...allOrgs.map((o) => ({ label: o, value: o }))
             ]}
             filterOption={(input, option) =>
@@ -686,21 +713,21 @@ export default function Services() {
           )}
           <Input
             allowClear
-            placeholder={t('Search')}
+            placeholder={t('search')}
             prefix={<SearchOutlined />}
             value={search}
             onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             style={{ width: 200 }}
           />
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('Create Service')}</Button>
-          <Button icon={<ImportOutlined />} onClick={openImport}>{t('Import')}</Button>
-          <Button icon={<ReloadOutlined />} onClick={() => load()}>{t('Refresh')}</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('create-service')}</Button>
+          <Button icon={<ImportOutlined />} onClick={openImport}>{t('import')}</Button>
+          <Button icon={<ReloadOutlined />} onClick={() => load()}>{t('refresh')}</Button>
         </div>
       </div>
-      <Table columns={columns} dataSource={tableData} loading={loading} rowKey="key" size="middle" scroll={{ x: 'max-content' }} pagination={{ current: page, pageSize, pageSizeOptions: [10, 20, 50, 100], showSizeChanger: true, showQuickJumper: true, showTotal: (total) => `${total} ${t('Services')}`, onChange: (p) => setPage(p), onShowSizeChange: (_c, size) => { setPageSize(size); setPage(1); } }} />
+      <Table columns={columns} dataSource={tableData} loading={loading} rowKey="key" size="middle" scroll={{ x: 'max-content' }} pagination={{ current: page, pageSize, pageSizeOptions: [10, 20, 50, 100], showSizeChanger: true, showQuickJumper: true, showTotal: (total) => `${total} ${t('services')}`, onChange: (p) => setPage(p), onShowSizeChange: (_c, size) => { setPageSize(size); setPage(1); } }} />
 
       <Modal
-        title={t('Import')}
+        title={t('import')}
         open={importOpen}
         onOk={handleImport}
         onCancel={() => { setImportOpen(false); importForm.resetFields(); }}
@@ -709,22 +736,22 @@ export default function Services() {
         <div style={{ marginBottom: 12 }}>
           <Space>
             <Button type={importMode === 'paste' ? 'primary' : 'default'} onClick={() => setImportMode('paste')}>
-              {t('Paste JSON')}
+              {t('paste-json')}
             </Button>
             <Button type={importMode === 'upload' ? 'primary' : 'default'} onClick={() => setImportMode('upload')}>
-              {t('Upload JSON file')}
+              {t('upload-json-file')}
             </Button>
           </Space>
         </div>
         <Form form={importForm} layout="vertical">
-          <Form.Item name="name" label={t('Service name (optional, leave empty to auto-generate)')}>
+          <Form.Item name="name" label={t('service-name-optional-leave-empty-to-auto-generate')}>
             <Input placeholder="my-imported-service" />
           </Form.Item>
           {getConfig().role === 'platform' && (
-            <Form.Item label={t('Organization')} required tooltip={t('Service will be created in this organization')}>
+            <Form.Item label={t('organization')} required tooltip={t('service-will-be-created-in-this-organization')}>
               <Select
                 showSearch
-                placeholder={t('Select organization')}
+                placeholder={t('select-organization')}
                 value={importOrg || undefined}
                 onChange={(v) => setImportOrg(v)}
                 options={allOrgs.map((o) => ({ label: o, value: o }))}
@@ -733,11 +760,11 @@ export default function Services() {
             </Form.Item>
           )}
           {importMode === 'upload' ? (
-            <Form.Item label={t('Upload JSON file')}>
+            <Form.Item label={t('upload-json-file')}>
               <input type="file" accept=".json" onChange={handleFileSelect} />
             </Form.Item>
           ) : null}
-          <Form.Item name="json" label={t('Service definition JSON')} rules={[{ required: true, message: t('Please enter service definition JSON') }]}>
+          <Form.Item name="json" label={t('service-definition-json')} rules={[{ required: true, message: t('please-enter-service-definition-json') }]}>
             <TextArea
               rows={12}
               value={importMode === 'upload' ? importJsonText : undefined}
@@ -749,32 +776,32 @@ export default function Services() {
       </Modal>
 
       <Drawer
-        title={selectedService ? t('Service Detail') + ' - ' + selectedService : t('Service Detail')}
+        title={selectedService ? t('service-detail') + ' - ' + selectedService : t('service-detail')}
         open={detailDrawerOpen}
         onClose={() => setDetailDrawerOpen(false)}
         width={640}
-        extra={<Button icon={<DownloadOutlined />} onClick={() => selectedService && exportService(selectedService)}>{t('Export JSON')}</Button>}
+        extra={<Button icon={<DownloadOutlined />} onClick={() => selectedService && exportService(selectedService)}>{t('export-json')}</Button>}
       >
         {selectedService && data[selectedService] ? (
           <Tabs items={[
             {
               key: 'info',
-              label: t('Info'),
+              label: t('info'),
               children: (
                 <Descriptions column={1} size="small" bordered>
-                  <Descriptions.Item label={t('Name')}>{selectedService}</Descriptions.Item>
-                  <Descriptions.Item label={t('Label')}>{data[selectedService].label || '-'}</Descriptions.Item>
-                  <Descriptions.Item label={t('Version')}>{data[selectedService].version || '-'}</Descriptions.Item>
-                  <Descriptions.Item label={t('Architecture')}>{data[selectedService].arch || '-'}</Descriptions.Item>
-                  <Descriptions.Item label={t('URL')}>{data[selectedService].url || '-'}</Descriptions.Item>
-                  <Descriptions.Item label={t('Description')}>{data[selectedService].description || '-'}</Descriptions.Item>
-                  <Descriptions.Item label={t('Image')}>
+                  <Descriptions.Item label={t('name')}>{selectedService}</Descriptions.Item>
+                  <Descriptions.Item label={t('label')}>{data[selectedService].label || '-'}</Descriptions.Item>
+                  <Descriptions.Item label={t('version')}>{data[selectedService].version || '-'}</Descriptions.Item>
+                  <Descriptions.Item label={t('architecture')}>{data[selectedService].arch || '-'}</Descriptions.Item>
+                  <Descriptions.Item label={t('url')}>{data[selectedService].url || '-'}</Descriptions.Item>
+                  <Descriptions.Item label={t('description')}>{data[selectedService].description || '-'}</Descriptions.Item>
+                  <Descriptions.Item label={t('image')}>
                     {(() => { const d = parseDep(data[selectedService].deployment); const sd = d?.services?.[data[selectedService].url || ''] || {}; return sd.image || '-'; })()}
                   </Descriptions.Item>
-                  <Descriptions.Item label={t('Privileged')}>
+                  <Descriptions.Item label={t('privileged')}>
                     {(() => { const d = parseDep(data[selectedService].deployment); const sd = d?.services?.[data[selectedService].url || ''] || {}; return <Switch checked={!!sd.privileged} disabled />; })()}
                   </Descriptions.Item>
-                  <Descriptions.Item label={t('Deployment Config')}>
+                  <Descriptions.Item label={t('deployment-config')}>
                     <pre style={{ background: '#f5f5f5', padding: 8, borderRadius: 4, maxHeight: 200, overflow: 'auto', margin: 0, fontSize: 12 }}>
                       {safeStringify(parseDep(data[selectedService].deployment))}
                     </pre>
@@ -784,16 +811,16 @@ export default function Services() {
             },
             {
               key: 'keys',
-              label: t('Keys'),
+              label: t('keys'),
               children: (
                 <div>
                   <div style={{ marginBottom: 8 }}>
-                    <Button size="small" icon={<PlusOutlined />} onClick={() => { keyAddForm.resetFields(); setKeyAddModalOpen(true); }}>{t('Add Key')}</Button>
+                    <Button size="small" icon={<PlusOutlined />} onClick={() => { keyAddForm.resetFields(); setKeyAddModalOpen(true); }}>{t('add-key')}</Button>
                   </div>
                   <List
                     loading={svcKeysLoading}
                     dataSource={Array.isArray(svcKeys) ? svcKeys : []}
-                    locale={{ emptyText: t('No keys') }}
+                    locale={{ emptyText: t('no-keys') }}
                     renderItem={(k: string) => (
                       <List.Item
                         actions={[
@@ -802,9 +829,9 @@ export default function Services() {
                             danger
                             onClick={async () => {
                               if (!selectedService) return;
-                              try { await ServiceAPI.deleteKey(selectedService, k); message.success(t('Key deleted')); showDetail(selectedService); } catch (err: any) { message.error(err.message); }
+                              try { await ServiceAPI.deleteKey(selectedService, k); message.success(t('key-deleted')); showDetail(selectedService); } catch (err: any) { message.error(err.message); }
                             }}
-                          >{t('Delete')}</Button>,
+                          >{t('delete')}</Button>,
                         ]}
                       >
                         <Text code>{k}</Text>
@@ -816,16 +843,16 @@ export default function Services() {
             },
             {
               key: 'dockauths',
-              label: t('Docker Auths'),
+              label: t('docker-auths'),
               children: (
                 <div>
                   <div style={{ marginBottom: 8 }}>
-                    <Button size="small" icon={<PlusOutlined />} onClick={() => { dockauthAddForm.resetFields(); setDockauthAddModalOpen(true); }}>{t('Add Docker Auth')}</Button>
+                    <Button size="small" icon={<PlusOutlined />} onClick={() => { dockauthAddForm.resetFields(); setDockauthAddModalOpen(true); }}>{t('add-docker-auth')}</Button>
                   </div>
                   <List
                     loading={svcDockauthsLoading}
                     dataSource={Array.isArray(svcDockauths) ? svcDockauths : []}
-                    locale={{ emptyText: t('No docker auths') }}
+                    locale={{ emptyText: t('no-docker-auths') }}
                     renderItem={(da: any, i: number) => (
                       <List.Item
                         actions={[
@@ -835,9 +862,9 @@ export default function Services() {
                             onClick={async () => {
                               if (!selectedService) return;
                               const id = da._id || da.id || i;
-                              try { await ServiceAPI.deleteDockauth(selectedService, id); message.success(t('Docker auth deleted')); showDetail(selectedService); } catch (err: any) { message.error(err.message); }
+                              try { await ServiceAPI.deleteDockauth(selectedService, id); message.success(t('docker-auth-deleted')); showDetail(selectedService); } catch (err: any) { message.error(err.message); }
                             }}
-                          >{t('Delete')}</Button>,
+                          >{t('delete')}</Button>,
                         ]}
                       >
                         <List.Item.Meta
@@ -851,16 +878,16 @@ export default function Services() {
               ),
             },
           ]} />
-        ) : <Text type="secondary">{t('No data')}</Text>}
+        ) : <Text type="secondary">{t('no-data')}</Text>}
       </Drawer>
 
-      <Modal title={t('Add Key')} open={keyAddModalOpen} onCancel={() => setKeyAddModalOpen(false)} footer={null} width={500}>
+      <Modal title={t('add-key')} open={keyAddModalOpen} onCancel={() => setKeyAddModalOpen(false)} footer={null} width={500}>
         <Form form={keyAddForm} layout="vertical">
-          <Form.Item name="keyId" label={t('Key ID')} rules={[{ required: true }]}>
+          <Form.Item name="keyId" label={t('key-id')} rules={[{ required: true }]}>
             <Input placeholder="my-key" />
           </Form.Item>
-          <Form.Item name="key" label={t('Key Content')} rules={[{ required: true }]}>
-            <TextArea rows={6} placeholder={t('Paste public key content')} />
+          <Form.Item name="key" label={t('key-content')} rules={[{ required: true }]}>
+            <TextArea rows={6} placeholder={t('paste-public-key-content')} />
           </Form.Item>
           <Button
             type="primary"
@@ -871,26 +898,26 @@ export default function Services() {
                 if (!selectedService) return;
                 setKeyAddLoading(true);
                 await ServiceAPI.addKey(selectedService, v.keyId, v.key);
-                message.success(t('Key added'));
+                message.success(t('key-added'));
                 setKeyAddModalOpen(false);
                 showDetail(selectedService);
               } catch (err: any) {
                 if (!err.message?.includes('validate')) message.error(err.message);
               } finally { setKeyAddLoading(false); }
             }}
-          >{t('Add')}</Button>
+          >{t('add')}</Button>
         </Form>
       </Modal>
 
-      <Modal title={t('Add Docker Auth')} open={dockauthAddModalOpen} onCancel={() => setDockauthAddModalOpen(false)} footer={null} width={500}>
+      <Modal title={t('add-docker-auth')} open={dockauthAddModalOpen} onCancel={() => setDockauthAddModalOpen(false)} footer={null} width={500}>
         <Form form={dockauthAddForm} layout="vertical">
-          <Form.Item name="registry" label={t('Registry')} rules={[{ required: true }]}>
+          <Form.Item name="registry" label={t('registry')} rules={[{ required: true }]}>
             <Input placeholder="docker.io" />
           </Form.Item>
-          <Form.Item name="userName" label={t('Username')} rules={[{ required: true }]}>
+          <Form.Item name="userName" label={t('username')} rules={[{ required: true }]}>
             <Input />
           </Form.Item>
-          <Form.Item name="password" label={t('Password / Token')} rules={[{ required: true }]}>
+          <Form.Item name="password" label={t('password-token')} rules={[{ required: true }]}>
             <Input.Password />
           </Form.Item>
           <Button
@@ -902,19 +929,19 @@ export default function Services() {
                 if (!selectedService) return;
                 setDockauthAddLoading(true);
                 await ServiceAPI.addDockauth(selectedService, v);
-                message.success(t('Docker auth added'));
+                message.success(t('docker-auth-added'));
                 setDockauthAddModalOpen(false);
                 showDetail(selectedService);
               } catch (err: any) {
                 if (!err.message?.includes('validate')) message.error(err.message);
               } finally { setDockauthAddLoading(false); }
             }}
-          >{t('Add')}</Button>
+          >{t('add')}</Button>
         </Form>
       </Modal>
 
       <Modal
-        title={t('Create Service Definition')}
+        title={t('create-service-definition')}
         open={createOpen}
         onOk={handleCreate}
         onCancel={() => setCreateOpen(false)}
@@ -922,7 +949,7 @@ export default function Services() {
         width={800}
         style={{ top: 20 }}
       >
-        <Alert message={t('Service will be created via POST in Exchange')} type="info" showIcon style={{ marginBottom: 16 }} />
+        <Alert message={t('service-will-be-created-via-post-in-exchange')} type="info" showIcon style={{ marginBottom: 16 }} />
         <Form form={form} layout="vertical">
           <Collapse
             size="small"
@@ -931,17 +958,17 @@ export default function Services() {
             items={[
               {
                 key: 'basic',
-                label: t('Basic Info'),
+                label: t('basic-info'),
                 children: (
                   <div>
-                    <Form.Item name="name" label={t('Service Name')} rules={[{ required: true, message: t('Please enter service name') }]}>
+                    <Form.Item name="name" label={t('service-name')} rules={[{ required: true, message: t('please-enter-service-name') }]}>
                       <Input placeholder="my-service" />
                     </Form.Item>
                     {getConfig().role === 'platform' && (
-                      <Form.Item label={t('Organization')} required tooltip={t('Service will be created in this organization')}>
+                      <Form.Item label={t('organization')} required tooltip={t('service-will-be-created-in-this-organization')}>
                         <Select
                           showSearch
-                          placeholder={t('Select organization')}
+                          placeholder={t('select-organization')}
                           value={createOrg || undefined}
                           onChange={(v) => setCreateOrg(v)}
                           options={allOrgs.map((o) => ({ label: o, value: o }))}
@@ -949,25 +976,25 @@ export default function Services() {
                         />
                       </Form.Item>
                     )}
-                    <Form.Item name="label" label={t('Label')} rules={[{ required: true, message: t('Please enter a label') }]}>
-                      <Input placeholder={t('Service display name')} />
+                    <Form.Item name="label" label={t('label')} rules={[{ required: true, message: t('please-enter-a-label') }]}>
+                      <Input placeholder={t('service-display-name')} />
                     </Form.Item>
-                    <Form.Item name="description" label={t('Description')}>
-                      <TextArea rows={2} placeholder={t('Optional description')} />
+                    <Form.Item name="description" label={t('description')}>
+                      <TextArea rows={2} placeholder={t('optional-description')} />
                     </Form.Item>
-                    <Form.Item name="version" label={t('Version (semver)')} rules={[{ required: true, message: t('Please enter a version number') }]}>
+                    <Form.Item name="version" label={t('version-semver')} rules={[{ required: true, message: t('please-enter-a-version-number') }]}>
                       <Input placeholder="1.0.0" />
                     </Form.Item>
-                    <Form.Item name="arch" label={t('Architecture')} rules={[{ required: true, message: t('Please select an architecture') }]}>
-                      <Select placeholder={t('Select architecture')} options={archOptions.map((a) => ({ label: a, value: a }))} />
+                    <Form.Item name="arch" label={t('architecture')} rules={[{ required: true, message: t('please-select-an-architecture') }]}>
+                      <Select placeholder={t('select-architecture')} options={archOptions.map((a) => ({ label: a, value: a }))} />
                     </Form.Item>
-                    <Form.Item name="serviceUrl" label={t('Service URL')}>
+                    <Form.Item name="serviceUrl" label={t('service-url')}>
                       <Input placeholder="https://..." />
                     </Form.Item>
-                    <Form.Item name="haMode" label={t('High Availability (HA) Mode')}>
+                    <Form.Item name="haMode" label={t('high-availability-ha-mode')}>
                       <Input placeholder={t('e.g. multiple, single, cluster')} />
                     </Form.Item>
-                    <Form.Item name="sharedBlockDevice" label={t('Shared Block Device')}>
+                    <Form.Item name="sharedBlockDevice" label={t('shared-block-device')}>
                       <Input placeholder="/dev/sdb" />
                     </Form.Item>
                   </div>
@@ -975,42 +1002,42 @@ export default function Services() {
               },
               {
                 key: 'deployImg',
-                label: t('Deployment Images'),
+                label: t('deployment-images'),
                 children: (
                   <div>
-                    <Form.Item name="image" label={t('Image name (image)')} rules={[{ required: true, message: t('Please enter the image name') }]}>
+                    <Form.Item name="image" label={t('image-name-image')} rules={[{ required: true, message: t('please-enter-the-image-name') }]}>
                       <Input placeholder="name:tag" />
                     </Form.Item>
-                    <Form.Item name="imageStore" label={t('Image Registry')}>
+                    <Form.Item name="imageStore" label={t('image-registry')}>
                       <Input placeholder={t('e.g. docker.io')} />
                     </Form.Item>
-                    <Form.Item name="imageRegistryToken" label={t('Image Registry Token')}>
-                      <Input.Password placeholder={t('Optional registry token')} />
+                    <Form.Item name="imageRegistryToken" label={t('image-registry-token')}>
+                      <Input.Password placeholder={t('optional-registry-token')} />
                     </Form.Item>
                   </div>
                 ),
               },
               {
                 key: 'deploySvc',
-                label: t('Deployment Options'),
+                label: t('deployment-options'),
                 children: (
                   <div>
-                    <Form.Item name="privileged" label={t('Privileged Mode')} valuePropName="checked">
+                    <Form.Item name="privileged" label={t('privileged-mode')} valuePropName="checked">
                       <Switch />
                     </Form.Item>
-                    <Form.Item name="user" label={t('User')}>
+                    <Form.Item name="user" label={t('user')}>
                       <Input placeholder={t('e.g. 1000:1000')} />
                     </Form.Item>
-                    <Form.Item name="pid" label={t('PID Namespace')}>
+                    <Form.Item name="pid" label={t('pid-namespace')}>
                       <Input placeholder={t('e.g. host')} />
                     </Form.Item>
-                    <Form.Item name="ipc" label={t('IPC Namespace')}>
+                    <Form.Item name="ipc" label={t('ipc-namespace')}>
                       <Input placeholder={t('e.g. host')} />
                     </Form.Item>
-                    <Form.Item name="maxMemoryMb" label={t('Max Memory (MB)')}>
+                    <Form.Item name="maxMemoryMb" label={t('max-memory-mb')}>
                       <Input type="number" placeholder="256" />
                     </Form.Item>
-                    <Form.Item name="maxCpus" label={t('Max CPUs')}>
+                    <Form.Item name="maxCpus" label={t('max-cpus')}>
                       <Input placeholder={t('e.g. 1, 0.5, 2.0')} />
                     </Form.Item>
                   </div>
@@ -1018,19 +1045,19 @@ export default function Services() {
               },
               {
                 key: 'capabilities',
-                label: t('Capabilities'),
+                label: t('capabilities'),
                 children: (
                   <div>
-                    <Form.Item name="capAdd" label={t('Linux Capabilities (one per line)')}>
+                    <Form.Item name="capAdd" label={t('linux-capabilities-one-per-line')}>
                       <TextArea rows={3} placeholder="NET_ADMIN\nSYS_TIME" />
                     </Form.Item>
-                    <Form.Item name="devices" label={t('Device Mappings (one per line)')}>
+                    <Form.Item name="devices" label={t('device-mappings-one-per-line')}>
                       <TextArea rows={3} placeholder="/dev/ttyUSB0:/dev/ttyUSB0:rwm" />
                     </Form.Item>
-                    <Form.Item name="command" label={t('Command (JSON array or one per line)')}>
+                    <Form.Item name="command" label={t('command-json-array-or-one-per-line')}>
                       <TextArea rows={3} placeholder='["sh", "-c", "echo hello"]' />
                     </Form.Item>
-                    <Form.Item name="entrypoint" label={t('Entrypoint (JSON array or one per line)')}>
+                    <Form.Item name="entrypoint" label={t('entrypoint-json-array-or-one-per-line')}>
                       <TextArea rows={3} placeholder='["/docker-entrypoint.sh"]' />
                     </Form.Item>
                   </div>
@@ -1038,19 +1065,19 @@ export default function Services() {
               },
               {
                 key: 'health',
-                label: t('Health Check'),
+                label: t('health-check'),
                 children: (
                   <div>
-                    <Form.Item name="healthCheckCommand" label={t('Health Check Command')}>
+                    <Form.Item name="healthCheckCommand" label={t('health-check-command')}>
                       <Input placeholder={t('e.g. curl -f http://localhost/health')} />
                     </Form.Item>
-                    <Form.Item name="healthCheckInterval" label={t('Health Check Interval (seconds)')}>
+                    <Form.Item name="healthCheckInterval" label={t('health-check-interval-seconds')}>
                       <Input type="number" placeholder="60" />
                     </Form.Item>
-                    <Form.Item name="healthCheckRetries" label={t('Health Check Retries')}>
+                    <Form.Item name="healthCheckRetries" label={t('health-check-retries')}>
                       <Input type="number" placeholder="3" />
                     </Form.Item>
-                    <Form.Item name="healthCheckMinHealth" label={t('Health Check Minimum Healthy (seconds)')}>
+                    <Form.Item name="healthCheckMinHealth" label={t('health-check-minimum-healthy-seconds')}>
                       <Input type="number" placeholder="10" />
                     </Form.Item>
                   </div>
@@ -1058,25 +1085,25 @@ export default function Services() {
               },
               {
                 key: 'network',
-                label: t('Network Config'),
+                label: t('network-config'),
                 children: (
                   <div>
-                    <Form.Item name="ports" label={t('Port Config')}>
-                      <TextArea rows={3} placeholder={t('Port config (one per line, format: HostPort[:ContainerPort[/Protocol]])')} />
+                    <Form.Item name="ports" label={t('port-config')}>
+                      <TextArea rows={3} placeholder={t('port-config-one-per-line-format-hostportcontainerportprotocol')} />
                     </Form.Item>
-                    <Form.Item name="ephemeralPorts" label={t('Ephemeral Ports (JSON)')}>
+                    <Form.Item name="ephemeralPorts" label={t('ephemeral-ports-json')}>
                       <TextArea rows={2} placeholder='[{"protocol": "tcp", "port_range": "8080-8090"}]' />
                     </Form.Item>
-                    <Form.Item name="network" label={t('Network Config')}>
+                    <Form.Item name="network" label={t('network-config')}>
                       <Input placeholder={t('e.g. host, bridge, default')} />
                     </Form.Item>
-                    <Form.Item name="netOpenPorts" label={t('Network Open Policy')}>
-                      <TextArea rows={2} placeholder={t('One per line')} />
+                    <Form.Item name="netOpenPorts" label={t('network-open-policy')}>
+                      <TextArea rows={2} placeholder={t('one-per-line')} />
                     </Form.Item>
-                    <Form.Item name="netActiveAdapter" label={t('Network Active Adapter')}>
+                    <Form.Item name="netActiveAdapter" label={t('network-active-adapter')}>
                       <Input placeholder={t('e.g. eth0, wlan0')} />
                     </Form.Item>
-                    <Form.Item name="netDefaultInterface" label={t('Default Network Interface')}>
+                    <Form.Item name="netDefaultInterface" label={t('default-network-interface')}>
                       <Input placeholder={t('e.g. eth0')} />
                     </Form.Item>
                   </div>
@@ -1084,13 +1111,13 @@ export default function Services() {
               },
               {
                 key: 'storage',
-                label: t('Storage and Volumes'),
+                label: t('storage-and-volumes'),
                 children: (
                   <div>
-                    <Form.Item name="binds" label={t('Persistent Volumes (one per line, format: /container/path[:NODEDEFAULT])')}>
+                    <Form.Item name="binds" label={t('persistent-volumes-one-per-line-format-containerpathnodedefault')}>
                       <TextArea rows={3} placeholder="/data\n/opt/data:NODEDEFAULT" />
                     </Form.Item>
-                    <Form.Item name="tmpfs" label={t('Temporary Volumes (one per line, format: /path[:size])')}>
+                    <Form.Item name="tmpfs" label={t('temporary-volumes-one-per-line-format-pathsize')}>
                       <TextArea rows={3} placeholder="/tmp\n/var/tmp:100m" />
                     </Form.Item>
                   </div>
@@ -1098,19 +1125,19 @@ export default function Services() {
               },
               {
                 key: 'other',
-                label: t('Other Config'),
+                label: t('other-config'),
                 children: (
                   <div>
-                    <Form.Item name="environment" label={t('Environment Variables')}>
-                      <TextArea rows={3} placeholder={t('One per line, e.g. KEY=VALUE')} />
+                    <Form.Item name="environment" label={t('environment-variables')}>
+                      <TextArea rows={3} placeholder={t('one-per-line-eg-keyvalue')} />
                     </Form.Item>
-                    <Form.Item name="logDriver" label={t('Log Driver')}>
+                    <Form.Item name="logDriver" label={t('log-driver')}>
                       <Input placeholder={t('e.g. json-file, syslog, journald')} />
                     </Form.Item>
-                    <Form.Item name="secrets" label={t('Secrets (JSON)')}>
+                    <Form.Item name="secrets" label={t('secrets-json')}>
                       <TextArea rows={3} placeholder='{"secret1": {"secret": "xxx", "key": "yyy"}}' />
                     </Form.Item>
-                    <Form.Item name="sysctls" label={t('Sysctls (JSON or text)')}>
+                    <Form.Item name="sysctls" label={t('sysctls-json-or-text')}>
                       <TextArea rows={2} placeholder='{"net.core.somaxconn": "1024"}' />
                     </Form.Item>
                   </div>
@@ -1118,19 +1145,19 @@ export default function Services() {
               },
               {
                 key: 'deps',
-                label: t('Required Services'),
+                label: t('required-services'),
                 children: (
                   <div>
                     <Alert
-                      message={t('Dependent services hint')}
+                      message={t('dependent-services-hint')}
                       type="info" showIcon style={{ marginBottom: 12 }}
                     />
-                    <Form.Item name="requiredServices" label={t('Dependent Services')} tooltip={t('Select services this service depends on')}>
+                    <Form.Item name="requiredServices" label={t('dependent-services')} tooltip={t('select-services-this-service-depends-on')}>
                       <Select
                         mode="multiple"
                         showSearch
                         allowClear
-                        placeholder={t('Select dependent services')}
+                        placeholder={t('select-dependent-services')}
                         options={depOptions}
                         filterOption={(input, option) => (option?.label as string ?? '').toLowerCase().includes(input.toLowerCase())}
                       />
@@ -1144,7 +1171,7 @@ export default function Services() {
       </Modal>
 
       <Modal
-        title={t('Edit Service') + ' - ' + (editTarget || '')}
+        title={t('edit-service') + ' - ' + (editTarget || '')}
         open={editModalOpen}
         onOk={handleEditSave}
         onCancel={() => { setEditModalOpen(false); editForm.resetFields(); }}
@@ -1153,9 +1180,9 @@ export default function Services() {
         style={{ top: 20 }}
       >
         {editType === 'update' ? (
-          <Alert message={t('This service already has a deployment configuration. Modifying the deployment will require re-signing.')} type="warning" showIcon style={{ marginBottom: 16 }} />
+          <Alert message={t('this-service-already-has-a-deployment-configuration-modifying-the-deployment-will-require-re-signing')} type="warning" showIcon style={{ marginBottom: 16 }} />
         ) : (
-          <Alert message={t('Service will be updated with new deployment')} type="info" showIcon style={{ marginBottom: 16 }} />
+          <Alert message={t('service-will-be-updated-with-new-deployment')} type="info" showIcon style={{ marginBottom: 16 }} />
         )}
         <Tabs
           activeKey={editTab}
@@ -1163,19 +1190,19 @@ export default function Services() {
           items={[
             {
               key: 'json',
-              label: t('Edit JSON'),
+              label: t('edit-json'),
               children: (
                 <Form form={editForm} layout="vertical">
-                  <Form.Item name="name" label={t('Name')}>
+                  <Form.Item name="name" label={t('name')}>
                     <Input disabled />
                   </Form.Item>
-                  <Form.Item name="serviceJSON" label={t('Service JSON')} rules={[{ required: true }]}>
+                  <Form.Item name="serviceJSON" label={t('service-json')} rules={[{ required: true }]}>
                     <TextArea rows={8} />
                   </Form.Item>
-                  <Form.Item name="userInputJSON" label={t('User Input JSON')}>
+                  <Form.Item name="userInputJSON" label={t('user-input-json-2')}>
                     <TextArea rows={4} />
                   </Form.Item>
-                  <Form.Item name="deploymentJSON" label={t('Deployment JSON')}>
+                  <Form.Item name="deploymentJSON" label={t('deployment-json')}>
                     <TextArea rows={6} />
                   </Form.Item>
                 </Form>
@@ -1183,7 +1210,7 @@ export default function Services() {
             },
             {
               key: 'ui',
-              label: t('Edit UI'),
+              label: t('edit-ui'),
               children: (
                 <Form form={editForm} layout="vertical">
                   <Collapse
@@ -1193,28 +1220,28 @@ export default function Services() {
                     items={[
                       {
                         key: 'basic',
-                        label: t('Basic Info'),
+                        label: t('basic-info'),
                         children: (
                           <div>
-                            <Form.Item name="label" label={t('Label')}>
+                            <Form.Item name="label" label={t('label')}>
                               <Input />
                             </Form.Item>
-                            <Form.Item name="version" label={t('Version')}>
+                            <Form.Item name="version" label={t('version')}>
                               <Input />
                             </Form.Item>
-                            <Form.Item name="arch" label={t('Architecture')}>
+                            <Form.Item name="arch" label={t('architecture')}>
                               <Select options={archOptions.map((a) => ({ label: a, value: a }))} />
                             </Form.Item>
-                            <Form.Item name="serviceUrl" label={t('Service URL')}>
+                            <Form.Item name="serviceUrl" label={t('service-url')}>
                               <Input />
                             </Form.Item>
-                            <Form.Item name="description" label={t('Description')}>
+                            <Form.Item name="description" label={t('description')}>
                               <TextArea rows={2} />
                             </Form.Item>
-                            <Form.Item name="haMode" label={t('High Availability (HA) Mode')}>
+                            <Form.Item name="haMode" label={t('high-availability-ha-mode')}>
                               <Input />
                             </Form.Item>
-                            <Form.Item name="sharedBlockDevice" label={t('Shared Block Device')}>
+                            <Form.Item name="sharedBlockDevice" label={t('shared-block-device')}>
                               <Input />
                             </Form.Item>
                           </div>
@@ -1222,16 +1249,16 @@ export default function Services() {
                       },
                       {
                         key: 'deployImg',
-                        label: t('Deployment Images'),
+                        label: t('deployment-images'),
                         children: (
                           <div>
-                            <Form.Item name="image" label={t('Image name (image)')}>
+                            <Form.Item name="image" label={t('image-name-image')}>
                               <Input />
                             </Form.Item>
-                            <Form.Item name="imageStore" label={t('Image Registry')}>
+                            <Form.Item name="imageStore" label={t('image-registry')}>
                               <Input />
                             </Form.Item>
-                            <Form.Item name="imageRegistryToken" label={t('Image Registry Token')}>
+                            <Form.Item name="imageRegistryToken" label={t('image-registry-token')}>
                               <Input.Password />
                             </Form.Item>
                           </div>
@@ -1239,25 +1266,25 @@ export default function Services() {
                       },
                       {
                         key: 'deploySvc',
-                        label: t('Deployment Options'),
+                        label: t('deployment-options'),
                         children: (
                           <div>
-                            <Form.Item name="privileged" label={t('Privileged Mode')} valuePropName="checked">
+                            <Form.Item name="privileged" label={t('privileged-mode')} valuePropName="checked">
                               <Switch />
                             </Form.Item>
-                            <Form.Item name="user" label={t('User')}>
+                            <Form.Item name="user" label={t('user')}>
                               <Input />
                             </Form.Item>
-                            <Form.Item name="pid" label={t('PID Namespace')}>
+                            <Form.Item name="pid" label={t('pid-namespace')}>
                               <Input />
                             </Form.Item>
-                            <Form.Item name="ipc" label={t('IPC Namespace')}>
+                            <Form.Item name="ipc" label={t('ipc-namespace')}>
                               <Input />
                             </Form.Item>
-                            <Form.Item name="maxMemoryMb" label={t('Max Memory (MB)')}>
+                            <Form.Item name="maxMemoryMb" label={t('max-memory-mb')}>
                               <Input type="number" />
                             </Form.Item>
-                            <Form.Item name="maxCpus" label={t('Max CPUs')}>
+                            <Form.Item name="maxCpus" label={t('max-cpus')}>
                               <Input />
                             </Form.Item>
                           </div>
@@ -1265,19 +1292,19 @@ export default function Services() {
                       },
                       {
                         key: 'capabilities',
-                        label: t('Capabilities'),
+                        label: t('capabilities'),
                         children: (
                           <div>
-                            <Form.Item name="capAdd" label={t('Linux Capabilities (one per line)')}>
+                            <Form.Item name="capAdd" label={t('linux-capabilities-one-per-line')}>
                               <TextArea rows={3} />
                             </Form.Item>
-                            <Form.Item name="devices" label={t('Device Mappings (one per line)')}>
+                            <Form.Item name="devices" label={t('device-mappings-one-per-line')}>
                               <TextArea rows={3} />
                             </Form.Item>
-                            <Form.Item name="command" label={t('Command (JSON array or one per line)')}>
+                            <Form.Item name="command" label={t('command-json-array-or-one-per-line')}>
                               <TextArea rows={3} />
                             </Form.Item>
-                            <Form.Item name="entrypoint" label={t('Entrypoint (JSON array or one per line)')}>
+                            <Form.Item name="entrypoint" label={t('entrypoint-json-array-or-one-per-line')}>
                               <TextArea rows={3} />
                             </Form.Item>
                           </div>
@@ -1285,19 +1312,19 @@ export default function Services() {
                       },
                       {
                         key: 'health',
-                        label: t('Health Check'),
+                        label: t('health-check'),
                         children: (
                           <div>
-                            <Form.Item name="healthCheckCommand" label={t('Health Check Command')}>
+                            <Form.Item name="healthCheckCommand" label={t('health-check-command')}>
                               <Input />
                             </Form.Item>
-                            <Form.Item name="healthCheckInterval" label={t('Health Check Interval (seconds)')}>
+                            <Form.Item name="healthCheckInterval" label={t('health-check-interval-seconds')}>
                               <Input type="number" />
                             </Form.Item>
-                            <Form.Item name="healthCheckRetries" label={t('Health Check Retries')}>
+                            <Form.Item name="healthCheckRetries" label={t('health-check-retries')}>
                               <Input type="number" />
                             </Form.Item>
-                            <Form.Item name="healthCheckMinHealth" label={t('Health Check Minimum Healthy (seconds)')}>
+                            <Form.Item name="healthCheckMinHealth" label={t('health-check-minimum-healthy-seconds')}>
                               <Input type="number" />
                             </Form.Item>
                           </div>
@@ -1305,25 +1332,25 @@ export default function Services() {
                       },
                       {
                         key: 'network',
-                        label: t('Network Config'),
+                        label: t('network-config'),
                         children: (
                           <div>
-                            <Form.Item name="ports" label={t('Port Config')}>
+                            <Form.Item name="ports" label={t('port-config')}>
                               <TextArea rows={3} />
                             </Form.Item>
-                            <Form.Item name="ephemeralPorts" label={t('Ephemeral Ports (JSON)')}>
+                            <Form.Item name="ephemeralPorts" label={t('ephemeral-ports-json')}>
                               <TextArea rows={2} />
                             </Form.Item>
-                            <Form.Item name="network" label={t('Network Config')}>
+                            <Form.Item name="network" label={t('network-config')}>
                               <Input />
                             </Form.Item>
-                            <Form.Item name="netOpenPorts" label={t('Network Open Policy')}>
+                            <Form.Item name="netOpenPorts" label={t('network-open-policy')}>
                               <TextArea rows={2} />
                             </Form.Item>
-                            <Form.Item name="netActiveAdapter" label={t('Network Active Adapter')}>
+                            <Form.Item name="netActiveAdapter" label={t('network-active-adapter')}>
                               <Input />
                             </Form.Item>
-                            <Form.Item name="netDefaultInterface" label={t('Default Network Interface')}>
+                            <Form.Item name="netDefaultInterface" label={t('default-network-interface')}>
                               <Input />
                             </Form.Item>
                           </div>
@@ -1331,13 +1358,13 @@ export default function Services() {
                       },
                       {
                         key: 'storage',
-                        label: t('Storage and Volumes'),
+                        label: t('storage-and-volumes'),
                         children: (
                           <div>
-                            <Form.Item name="binds" label={t('Persistent Volumes (one per line)')}>
+                            <Form.Item name="binds" label={t('persistent-volumes-one-per-line')}>
                               <TextArea rows={3} />
                             </Form.Item>
-                            <Form.Item name="tmpfs" label={t('Temporary Volumes (one per line)')}>
+                            <Form.Item name="tmpfs" label={t('temporary-volumes-one-per-line')}>
                               <TextArea rows={3} />
                             </Form.Item>
                           </div>
@@ -1345,19 +1372,19 @@ export default function Services() {
                       },
                       {
                         key: 'other',
-                        label: t('Other Config'),
+                        label: t('other-config'),
                         children: (
                           <div>
-                            <Form.Item name="environment" label={t('Environment Variables')}>
+                            <Form.Item name="environment" label={t('environment-variables')}>
                               <TextArea rows={3} />
                             </Form.Item>
-                            <Form.Item name="logDriver" label={t('Log Driver')}>
+                            <Form.Item name="logDriver" label={t('log-driver')}>
                               <Input />
                             </Form.Item>
-                            <Form.Item name="secrets" label={t('Secrets (JSON)')}>
+                            <Form.Item name="secrets" label={t('secrets-json')}>
                               <TextArea rows={3} />
                             </Form.Item>
-                    <Form.Item name="sysctls" label={t('Sysctls (JSON or text)')}>
+                    <Form.Item name="sysctls" label={t('sysctls-json-or-text')}>
                       <TextArea rows={2} />
                     </Form.Item>
                   </div>
@@ -1365,19 +1392,19 @@ export default function Services() {
               },
               {
                 key: 'deps',
-                label: t('Required Services'),
+                label: t('required-services'),
                 children: (
                   <div>
                     <Alert
-                      message={t('Dependent services hint')}
+                      message={t('dependent-services-hint')}
                       type="info" showIcon style={{ marginBottom: 12 }}
                     />
-                    <Form.Item name="requiredServices" label={t('Dependent Services')} tooltip={t('Select services this service depends on')}>
+                    <Form.Item name="requiredServices" label={t('dependent-services')} tooltip={t('select-services-this-service-depends-on')}>
                       <Select
                         mode="multiple"
                         showSearch
                         allowClear
-                        placeholder={t('Select dependent services')}
+                        placeholder={t('select-dependent-services')}
                         options={depOptions}
                         filterOption={(input, option) => (option?.label as string ?? '').toLowerCase().includes(input.toLowerCase())}
                       />

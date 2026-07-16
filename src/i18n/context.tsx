@@ -3,15 +3,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
+import { en } from './en';
+import { zh } from './zh';
 
 type Lang = 'zh' | 'en';
 
 interface I18nCtx {
   lang: Lang;
   setLang: (l: Lang) => void;
-  t: (en: string) => string;
+  t: (key: string) => string;
   fmtTime: (iso?: string) => string;
 }
+
+const dicts: Record<Lang, Record<string, string>> = { en, zh };
 
 const Ctx = createContext<I18nCtx>({ lang: 'en', setLang: () => {}, t: (s: string) => s, fmtTime: () => '-' });
 
@@ -23,16 +27,16 @@ function detectLang(): Lang {
   return 'en';
 }
 
-export function LanguageProvider({ children, dict }: { children: ReactNode; dict: Record<string, string> }) {
+export function LanguageProvider({ children }: { children: ReactNode }) {
   const [lang, setLang] = useState<Lang>(detectLang);
   const setLangWithStorage = useCallback((l: Lang) => {
     setLang(l);
     localStorage.setItem('lang', l);
   }, []);
-  const t = useCallback((en: string) => {
-    if (lang === 'zh' && dict[en]) return dict[en];
-    return en;
-  }, [lang, dict]);
+  const t = useCallback((key: string) => {
+    const dict = dicts[lang];
+    return dict[key] ?? key;
+  }, [lang]);
   const fmtTime = useCallback((iso?: string) => {
     if (!iso) return '-';
     const d = new Date(iso);

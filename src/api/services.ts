@@ -81,4 +81,19 @@ export const ServiceAPI = {
     const qs = s.org ? `?org=${encodeURIComponent(s.org)}` : '';
     return del(`/services/${encodeURIComponent(s.name)}/dockauths/${authId}${qs}`);
   },
+  archive(serviceId: string) {
+    const s = splitOrg(serviceId);
+    const qs = s.org ? `?org=${encodeURIComponent(s.org)}` : '';
+    return post(`/services/${encodeURIComponent(s.name)}/archive${qs}`, {});
+  },
+  unarchive(serviceId: string) {
+    const s = splitOrg(serviceId);
+    const qs = s.org ? `?org=${encodeURIComponent(s.org)}` : '';
+    return post(`/services/${encodeURIComponent(s.name)}/unarchive${qs}`, {});
+  },
+  upgrade(serviceId: string, opts: { auto_upgrade?: boolean; active_upgrade?: boolean }) {
+    const s = splitOrg(serviceId);
+    const qs = s.org ? `?org=${encodeURIComponent(s.org)}` : '';
+    return post(`/services/${encodeURIComponent(s.name)}/upgrade${qs}`, opts);
+  },
 };

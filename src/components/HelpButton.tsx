@@ -40,18 +40,18 @@ export default function HelpButton({ module }: Props) {
         style={{ opacity: 0.5 }}
       />
       <Drawer
-        title={entry ? entry.title + ' - ' + t('Help') : t('Help')}
+        title={entry ? entry.title + ' - ' + t('help') : t('help')}
         open={open}
         onClose={() => setOpen(false)}
         width={480}
       >
         {entry ? (
           <div>
-            <Title level={5}>{t('Quick Guide')}</Title>
+            <Title level={5}>{t('quick-guide')}</Title>
             {(lang === 'zh' ? entry.zh : entry.en).map((line, i) => renderLine(line, i))}
           </div>
         ) : (
-          <Text type="secondary">{t('No help content for this page')}</Text>
+          <Text type="secondary">{t('no-help-content-for-this-page')}</Text>
         )}
       </Drawer>
     </>

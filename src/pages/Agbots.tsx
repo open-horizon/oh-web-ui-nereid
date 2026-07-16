@@ -5,7 +5,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { usePolling } from '../hooks/usePolling';
 import { Table, Button, Space, Typography, message, Modal, Drawer, Descriptions, Tag, Input, Select, Tabs, Tooltip, List, Form } from 'antd';
-import { SearchOutlined, ReloadOutlined, DeleteOutlined, EyeOutlined, LinkOutlined, PlusOutlined, KeyOutlined } from '@ant-design/icons';
+import { SearchOutlined, ReloadOutlined, DeleteOutlined, EyeOutlined, LinkOutlined, PlusOutlined, KeyOutlined, HeartOutlined, MessageOutlined } from '@ant-design/icons';
 import { AgbotAPI, ExchangeAgbot } from '../api/agbots';
 import { PatternAPI, ExchangePattern } from '../api/patterns';
 import { DeploymentPolicyAPI, DeploymentPolicy } from '../api/policies';
@@ -48,6 +48,9 @@ export default function Agbots() {
   const [creating, setCreating] = useState(false);
   const [createOrg, setCreateOrg] = useState('');
   const [createForm] = Form.useForm();
+  const [messagesDrawerOpen, setMessagesDrawerOpen] = useState(false);
+  const [messagesLoading, setMessagesLoading] = useState(false);
+  const [agbotMessages, setAgbotMessages] = useState<any[]>([]);
   const screenSize = useScreenSize();
 
   const tableData = [...data]
@@ -111,7 +114,7 @@ export default function Agbots() {
     const patName = parts.slice(1).join('/');
     try {
       await AgbotAPI.addPattern(agbotId, patOrg, patName);
-      message.success(t('Pattern bound successfully'));
+      message.success(t('pattern-bound-successfully'));
       setPatternPickerOpen(false);
       load();
     } catch (err: any) {
@@ -127,7 +130,7 @@ export default function Agbots() {
     const bpName = parts.slice(1).join('/');
     try {
       await AgbotAPI.addBusinessPol(agbotId, bpOrg, bpName);
-      message.success(t('Policy bound successfully'));
+      message.success(t('policy-bound-successfully'));
       setPolicyPickerOpen(false);
       load();
     } catch (err: any) {
@@ -219,11 +222,11 @@ export default function Agbots() {
   const handleDelete = (agbotId: string) => {
     const owner = agbotId.includes('/') ? agbotId.split('/')[0] : sessionOrg || 'myorg';
     Modal.confirm({
-      title: t('Confirm deletion of agbot').replace('{0}', agbotId),
+      title: t('confirm-deletion-of-agbot').replace('{0}', agbotId),
       onOk: async () => {
         try {
           await AgbotAPI.remove(agbotId, owner);
-          message.success(t('Deleted'));
+          message.success(t('deleted'));
           load();
         } catch (err: any) {
           message.error(err.message);
@@ -248,12 +251,12 @@ export default function Agbots() {
       const targetOrg = values.org || createOrg || sessionOrg;
       // Platform must not silently create in the root org — require an explicit organization.
       if (isPlatform && (!targetOrg || targetOrg === 'root')) {
-        message.error(t('Please select an organization'));
+        message.error(t('please-select-an-organization'));
         return;
       }
       setCreating(true);
       await AgbotAPI.create(agbotId, { token: values.token, name: agbotId, publicKey: '' }, targetOrg);
-      message.success(t('Agbot created'));
+      message.success(t('agbot-created'));
       setCreateOpen(false);
       createForm.resetFields();
       load();
@@ -266,11 +269,11 @@ export default function Agbots() {
 
   const handleUnlinkPattern = async (agbotId: string, pattern: string) => {
     Modal.confirm({
-      title: t('Confirm removing pattern from agbot').replace('{0}', pattern),
+      title: t('confirm-removing-pattern-from-agbot').replace('{0}', pattern),
       onOk: async () => {
         try {
           await AgbotAPI.removePattern(agbotId, pattern);
-          message.success(t('Pattern removed'));
+          message.success(t('pattern-removed'));
           load();
           if (selectedAgbot) showDetail(selectedAgbot);
         } catch (err: any) {
@@ -282,11 +285,11 @@ export default function Agbots() {
 
   const handleUnlinkPolicy = async (agbotId: string, policy: string) => {
     Modal.confirm({
-      title: t('Confirm removing policy from agbot').replace('{0}', policy),
+      title: t('confirm-removing-policy-from-agbot').replace('{0}', policy),
       onOk: async () => {
         try {
           await AgbotAPI.removeBusinessPol(agbotId, policy);
-          message.success(t('Policy removed'));
+          message.success(t('policy-removed'));
           load();
           if (selectedAgbot) showDetail(selectedAgbot);
         } catch (err: any) {
@@ -298,35 +301,41 @@ export default function Agbots() {
 
   const allColumns = [
     {
-      title: t('Agbot ID'), key: 'id', width: 200,
+      title: t('agbot-id'), key: 'id', width: 200,
       render: (_: any, record: ExchangeAgbot) => record.id,
     },
     {
-      title: t('Patterns'), key: 'patterns', width: 120,
+      title: t('patterns'), key: 'patterns', width: 120,
       render: (_: any, record: ExchangeAgbot) => patternCounts[record.id] ?? '-',
     },
     {
-      title: t('Business Policies'), key: 'policies', width: 120,
+      title: t('business-policies'), key: 'policies', width: 120,
       render: (_: any, record: ExchangeAgbot) => policyCounts[record.id] ?? '-',
     },
     {
-      title: t('Last Heartbeat'), dataIndex: 'lastHeartbeat', key: 'lastHeartbeat', width: 180,
+      title: t('last-heartbeat'), dataIndex: 'lastHeartbeat', key: 'lastHeartbeat', width: 180,
       render: (v: string) => fmtTime(v),
     },
     {
-      title: t('Actions'), key: 'action', width: 180,
+      title: t('actions'), key: 'action', width: 240,
       render: (_: any, record: ExchangeAgbot) => (
         <Space>
-          <Tooltip title={t('View associations')}>
+          <Tooltip title={t('view-associations')}>
             <Button size="small" icon={<EyeOutlined />} onClick={() => showDetail(record)} />
           </Tooltip>
           {(!record.id.startsWith('IBM/') || isPlatform) && (
             <>
-              <Tooltip title={t('Link pattern')}>
+              <Tooltip title={t('link-pattern')}>
                 <Button size="small" icon={<LinkOutlined />} onClick={() => { setCurrentAgbotId(record.id); pickPattern(sessionOrg); }} />
               </Tooltip>
-              <Tooltip title={t('Link policy')}>
+              <Tooltip title={t('link-policy')}>
                 <Button size="small" icon={<LinkOutlined />} onClick={() => { setCurrentAgbotId(record.id); pickPolicy(sessionOrg); }} />
+              </Tooltip>
+              <Tooltip title={t('send-heartbeat')}>
+                <Button size="small" icon={<HeartOutlined />} onClick={() => sendHeartbeat(record.id)} />
+              </Tooltip>
+              <Tooltip title={t('view-messages')}>
+                <Button size="small" icon={<MessageOutlined />} onClick={() => showMessages(record.id)} />
               </Tooltip>
               {!record.id.startsWith('IBM/') && (
                 <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(record.id)} />
@@ -342,26 +351,50 @@ export default function Agbots() {
     ? allColumns.filter((c) => ['id', 'action'].includes(c.key as string))
     : allColumns;
 
+  const sendHeartbeat = async (agbotId: string) => {
+    try {
+      await AgbotAPI.heartbeat(agbotId);
+      message.success(t('heartbeat-sent'));
+    } catch (err: any) {
+      message.error(err.message);
+    }
+  };
+
+  const showMessages = async (agbotId: string) => {
+    setMessagesDrawerOpen(true);
+    setMessagesLoading(true);
+    try {
+      const res = await AgbotAPI.listMsgs(agbotId);
+      const msgs = res?.msgs ?? [];
+      setAgbotMessages(Array.isArray(msgs) ? msgs : Object.values(msgs));
+    } catch (err: any) {
+      message.error(err.message);
+      setAgbotMessages([]);
+    } finally {
+      setMessagesLoading(false);
+    }
+  };
+
   return (
     <div>
       <div style={{ marginBottom: 16 }}>
         <div>
-          <Text strong style={{ fontSize: 20 }}>{t('Agbot (Agreement Bot)')}</Text>
+          <Text strong style={{ fontSize: 20 }}>{t('agbot-agreement-bot')}</Text>
           <HelpButton module="agbots" />
-          <br /><Text type="secondary">{t('Manage pattern and policy associations for agbots')}</Text>
+          <br /><Text type="secondary">{t('manage-pattern-and-policy-associations-for-agbots')}</Text>
         </div>
         <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <Input
             allowClear
-            placeholder={t('Search')}
+            placeholder={t('search')}
             prefix={<SearchOutlined />}
             value={search}
             onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             style={{ width: 200 }}
           />
-          <Button icon={<ReloadOutlined />} onClick={() => load()}>{t('Refresh')}</Button>
+          <Button icon={<ReloadOutlined />} onClick={() => load()}>{t('refresh')}</Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => { createForm.resetFields(); setCreateOrg(isPlatform ? pageOrg : sessionOrg); setCreateOpen(true); }}>
-            {t('Create Agbot')}
+            {t('create-agbot-2')}
           </Button>
         </div>
       </div>
@@ -370,14 +403,14 @@ export default function Agbots() {
         columns={columns}
         dataSource={tableData}
         loading={loading}
-        pagination={{ current: page, pageSize, pageSizeOptions: [10, 20, 50, 100], showSizeChanger: true, showQuickJumper: true, showTotal: (total) => `${total} ${t('Agreement Bots')}`, onChange: (p) => setPage(p), onShowSizeChange: (_c, size) => { setPageSize(size); setPage(1); } }}
+        pagination={{ current: page, pageSize, pageSizeOptions: [10, 20, 50, 100], showSizeChanger: true, showQuickJumper: true, showTotal: (total) => `${total} ${t('agreement-bots')}`, onChange: (p) => setPage(p), onShowSizeChange: (_c, size) => { setPageSize(size); setPage(1); } }}
         size="middle"
         scroll={{ x: 'max-content' }}
         rowKey="id"
       />
 
       <Drawer
-        title={selectedAgbot ? selectedAgbot.id : t('Agbot Detail')}
+        title={selectedAgbot ? selectedAgbot.id : t('agbot-detail')}
         open={detailDrawerOpen}
         onClose={() => setDetailDrawerOpen(false)}
         width={640}
@@ -386,24 +419,24 @@ export default function Agbots() {
           <Tabs items={[
             {
               key: 'patterns',
-              label: t('Patterns'),
+              label: t('patterns'),
               children: (
                   <div>
                     <div style={{ marginBottom: 8 }}>
                       <Button size="small" icon={<LinkOutlined />} onClick={() => { setCurrentAgbotId(selectedAgbot.id); pickPattern(sessionOrg); }}>
-                        {t('Add Pattern')}
+                        {t('add-pattern')}
                       </Button>
                     </div>
                     {detailLoading ? (
-                      <Text type="secondary">{t('Loading...')}</Text>
+                      <Text type="secondary">{t('loading')}</Text>
                     ) : detailPatterns.length === 0 ? (
-                      <Text type="secondary">{t('No patterns')}</Text>
+                      <Text type="secondary">{t('no-patterns')}</Text>
                     ) : (
                       detailPatterns.map((p, i) => (
                         <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', borderBottom: '1px solid #f0f0f0' }}>
                           <Text>{p.patternOrgid}/{p.pattern}</Text>
                           <Button size="small" danger onClick={() => handleUnlinkPattern(selectedAgbot.id, p.key)}>
-                            {t('Remove')}
+                            {t('remove')}
                           </Button>
                         </div>
                       ))
@@ -413,24 +446,24 @@ export default function Agbots() {
             },
             {
               key: 'policies',
-              label: t('Business Policies'),
+              label: t('business-policies'),
               children: (
                   <div>
                     <div style={{ marginBottom: 8 }}>
                       <Button size="small" icon={<LinkOutlined />} onClick={() => { setCurrentAgbotId(selectedAgbot.id); pickPolicy(sessionOrg); }}>
-                        {t('Add Business Policy')}
+                        {t('add-business-policy')}
                       </Button>
                     </div>
                     {detailLoading ? (
-                      <Text type="secondary">{t('Loading...')}</Text>
+                      <Text type="secondary">{t('loading')}</Text>
                     ) : detailPols.length === 0 ? (
-                      <Text type="secondary">{t('No business policies')}</Text>
+                      <Text type="secondary">{t('no-business-policies')}</Text>
                     ) : (
                       detailPols.map((p, i) => (
                         <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', borderBottom: '1px solid #f0f0f0' }}>
                           <Text>{p.businessPolOrgid}/{p.businessPol}</Text>
                           <Button size="small" danger onClick={() => handleUnlinkPolicy(selectedAgbot.id, p.key)}>
-                            {t('Remove')}
+                            {t('remove')}
                           </Button>
                         </div>
                       ))
@@ -440,23 +473,23 @@ export default function Agbots() {
             },
             {
               key: 'agreements',
-              label: t('Agreements'),
+              label: t('agreements'),
               children: (
                 <List
                   loading={agbotAgreementsLoading}
                   dataSource={agbotAgreements}
-                  locale={{ emptyText: t('No agreements') }}
+                  locale={{ emptyText: t('no-agreements') }}
                   renderItem={(ag: any, i: number) => (
                     <List.Item>
                       <List.Item.Meta
                         title={<Text code>{ag.current_agreement_id || ag.id || `#${i + 1}`}</Text>}
                         description={
                           <div>
-                            <div>{t('State: ')}{ag.state || ag.agreement_state || '-'}</div>
+                            <div>{t('state')}{ag.state || ag.agreement_state || '-'}</div>
                             {ag.service_specifications?.map((s: any, j: number) => (
                               <Tag key={j} style={{ marginTop: 4 }}>{s.service_url}@{s.service_version_range}</Tag>
                             ))}
-                            <div>{t('Node: ')}{ag.node_id || ag.nodeOrgid ? `${ag.nodeOrgid}/${ag.node_id}` : '-'}</div>
+                            <div>{t('node-2')}{ag.node_id || ag.nodeOrgid ? `${ag.nodeOrgid}/${ag.node_id}` : '-'}</div>
                           </div>
                         }
                       />
@@ -467,14 +500,14 @@ export default function Agbots() {
             },
             {
               key: 'info',
-              label: t('Agbot Info'),
+              label: t('agbot-info'),
               children: (
                 <Descriptions column={1} size="small" bordered>
-                  <Descriptions.Item label={t('ID')}>{selectedAgbot.id}</Descriptions.Item>
-                  <Descriptions.Item label={t('Last Heartbeat')}>
+                  <Descriptions.Item label={t('id')}>{selectedAgbot.id}</Descriptions.Item>
+                  <Descriptions.Item label={t('last-heartbeat')}>
                     {fmtTime(selectedAgbot.lastHeartbeat)}
                   </Descriptions.Item>
-                  <Descriptions.Item label={t('Public Key')}>
+                  <Descriptions.Item label={t('public-key')}>
                     <Text ellipsis style={{ maxWidth: 400 }}>{selectedAgbot.publicKey || '-'}</Text>
                   </Descriptions.Item>
                 </Descriptions>
@@ -485,7 +518,7 @@ export default function Agbots() {
       </Drawer>
 
       <Modal
-        title={t('Select Pattern to bind')}
+        title={t('select-pattern-to-bind')}
         open={patternPickerOpen}
         onCancel={() => setPatternPickerOpen(false)}
         footer={null}
@@ -494,24 +527,24 @@ export default function Agbots() {
         <div style={{ marginBottom: 8, display: 'flex', gap: 8 }}>
           <Select
             style={{ width: 200 }}
-            placeholder={t('Organization')}
+            placeholder={t('organization')}
             showSearch
             value={pickerOrg || undefined}
             onChange={(org) => pickPattern(org || '')}
             options={allOrgs.map((o: string) => ({ label: o, value: o }))}
           />
           <Input
-            placeholder={t('Or enter org ID')}
+            placeholder={t('or-enter-org-id')}
             defaultValue={pickerOrg}
             onPressEnter={(e) => pickPattern((e.target as HTMLInputElement).value)}
             style={{ width: 180 }}
           />
         </div>
         {pickerLoading ? (
-          <Text type="secondary">{t('Loading...')}</Text>
+          <Text type="secondary">{t('loading')}</Text>
         ) : (
           Object.keys(patterns).length === 0 ? (
-            <Text type="secondary">{t('No patterns available')}</Text>
+            <Text type="secondary">{t('no-patterns-available')}</Text>
           ) : (
             Object.keys(patterns).map((id) => (
               <div
@@ -531,7 +564,7 @@ export default function Agbots() {
       </Modal>
 
       <Modal
-        title={t('Select Policy to bind')}
+        title={t('select-policy-to-bind')}
         open={policyPickerOpen}
         onCancel={() => setPolicyPickerOpen(false)}
         footer={null}
@@ -540,24 +573,24 @@ export default function Agbots() {
         <div style={{ marginBottom: 8, display: 'flex', gap: 8 }}>
           <Select
             style={{ width: 200 }}
-            placeholder={t('Organization')}
+            placeholder={t('organization')}
             showSearch
             value={pickerOrg || undefined}
             onChange={(org) => pickPolicy(org || '')}
             options={allOrgs.map((o: string) => ({ label: o, value: o }))}
           />
           <Input
-            placeholder={t('Or enter org ID')}
+            placeholder={t('or-enter-org-id')}
             defaultValue={pickerOrg}
             onPressEnter={(e) => pickPolicy((e.target as HTMLInputElement).value)}
             style={{ width: 180 }}
           />
         </div>
         {pickerLoading ? (
-          <Text type="secondary">{t('Loading...')}</Text>
+          <Text type="secondary">{t('loading')}</Text>
         ) : (
           Object.keys(policies).length === 0 ? (
-            <Text type="secondary">{t('No policies available')}</Text>
+            <Text type="secondary">{t('no-policies-available')}</Text>
           ) : (
             Object.keys(policies).map((id) => (
               <div
@@ -577,7 +610,7 @@ export default function Agbots() {
       </Modal>
 
       <Modal
-        title={t('Create Agbot')}
+        title={t('create-agbot-2')}
         open={createOpen}
         onCancel={() => setCreateOpen(false)}
         onOk={handleCreate}
@@ -586,14 +619,14 @@ export default function Agbots() {
         width={480}
       >
         <Form form={createForm} layout="vertical" preserve={false}>
-          <Form.Item name="name" label={t('Agbot Name')} rules={[{ required: true, message: t('Required') }]}>
+          <Form.Item name="name" label={t('agbot-name')} rules={[{ required: true, message: t('required') }]}>
             <Input placeholder="myagbot" />
           </Form.Item>
-          <Form.Item name="org" label={t('Organization')} initialValue={isPlatform ? pageOrg : sessionOrg}>
+          <Form.Item name="org" label={t('organization')} initialValue={isPlatform ? pageOrg : sessionOrg}>
             <Select
               showSearch
               disabled={!isPlatform}
-              placeholder={isPlatform ? t('Select organization') : sessionOrg}
+              placeholder={isPlatform ? t('select-organization') : sessionOrg}
               options={allOrgs.length > 0 ? allOrgs.map((o) => ({ value: o, label: o })) : [{ value: sessionOrg, label: sessionOrg }]}
               onChange={(val) => setCreateOrg(val)}
               filterOption={(input, option) =>
@@ -601,7 +634,7 @@ export default function Agbots() {
               }
             />
           </Form.Item>
-          <Form.Item name="token" label={t('Token')} rules={[{ required: true, message: t('Required') }]}>
+          <Form.Item name="token" label={t('token')} rules={[{ required: true, message: t('required') }]}>
             <Input.Password
               addonAfter={
                 <Button type="link" size="small" icon={<KeyOutlined />} onClick={() => {
@@ -613,14 +646,14 @@ export default function Agbots() {
           </Form.Item>
           <Form.Item
             name="tokenConfirm"
-            label={t('Confirm Token')}
+            label={t('confirm-token')}
             dependencies={['token']}
             rules={[
-              { required: true, message: t('Required') },
+              { required: true, message: t('required') },
               ({ getFieldValue }: { getFieldValue: (name: string) => any }) => ({
                 validator(_: any, value: any) {
                   if (!value || value === getFieldValue('token')) return Promise.resolve();
-                  return Promise.reject(new Error(t('Tokens do not match')));
+                  return Promise.reject(new Error(t('tokens-do-not-match')));
                 },
               }),
             ]}
@@ -629,6 +662,33 @@ export default function Agbots() {
           </Form.Item>
         </Form>
       </Modal>
+
+      <Drawer
+        title={t('agbot-messages')}
+        open={messagesDrawerOpen}
+        onClose={() => setMessagesDrawerOpen(false)}
+        width={500}
+      >
+        <List
+          loading={messagesLoading}
+          dataSource={agbotMessages}
+          locale={{ emptyText: t('no-messages') }}
+          renderItem={(msg: any) => (
+            <List.Item>
+              <List.Item.Meta
+                title={<Text code>{msg.messageId || msg.id || '-'}</Text>}
+                description={
+                  <div>
+                    <div>{msg.message || '-'}</div>
+                    {msg.info && <Text type="secondary">{msg.info}</Text>}
+                    {msg.timestamp && <Text type="secondary" style={{ fontSize: 12 }}>{fmtTime(msg.timestamp)}</Text>}
+                  </div>
+                }
+              />
+            </List.Item>
+          )}
+        />
+      </Drawer>
     </div>
   );
 }

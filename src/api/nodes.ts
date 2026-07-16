@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { get, patch, put, del } from './client';
+import { get, patch, put, del, post } from './client';
 
 export interface ExchangeNode {
   name?: string;
@@ -121,5 +121,49 @@ export const NodeAPI = {
     const orgQ = org || s.org;
     const qs = orgQ ? `?org=${encodeURIComponent(orgQ)}` : '';
     return get<{ managementStatus: Record<string, any> }>(`/nodes/${encodeURIComponent(s.name)}/managementStatus${qs}`);
+  },
+  bulkDelete(nodeIds: string[], org?: string) {
+    const qs = org ? `?org=${encodeURIComponent(org)}` : '';
+    return post<any>(`/nodes/bulk/delete${qs}`, { nodeIds });
+  },
+  bulkSetPattern(nodeIds: string[], pattern: string, org?: string) {
+    const qs = org ? `?org=${encodeURIComponent(org)}` : '';
+    return post<any>(`/nodes/bulk/set-pattern${qs}`, { nodeIds, pattern });
+  },
+  transfer(nodeId: string, targetOrg: string, org?: string) {
+    const s = splitOrg(nodeId);
+    const orgQ = org || s.org;
+    const qs = orgQ ? `?org=${encodeURIComponent(orgQ)}` : '';
+    return post<any>(`/nodes/${encodeURIComponent(s.name)}/transfer${qs}`, { targetOrg });
+  },
+  getStatus(nodeId: string, org?: string) {
+    const s = splitOrg(nodeId);
+    const orgQ = org || s.org;
+    const qs = orgQ ? `?org=${encodeURIComponent(orgQ)}` : '';
+    return get<any>(`/nodes/${encodeURIComponent(s.name)}/status${qs}`);
+  },
+  deleteStatus(nodeId: string, org?: string) {
+    const s = splitOrg(nodeId);
+    const orgQ = org || s.org;
+    const qs = orgQ ? `?org=${encodeURIComponent(orgQ)}` : '';
+    return del(`/nodes/${encodeURIComponent(s.name)}/status${qs}`);
+  },
+  clearErrors(nodeId: string, org?: string) {
+    const s = splitOrg(nodeId);
+    const orgQ = org || s.org;
+    const qs = orgQ ? `?org=${encodeURIComponent(orgQ)}` : '';
+    return del(`/nodes/${encodeURIComponent(s.name)}/errors${qs}`);
+  },
+  setServicesConfigState(nodeId: string, body: any, org?: string) {
+    const s = splitOrg(nodeId);
+    const orgQ = org || s.org;
+    const qs = orgQ ? `?org=${encodeURIComponent(orgQ)}` : '';
+    return post(`/nodes/${encodeURIComponent(s.name)}/services_configstate${qs}`, body);
+  },
+  heartbeat(nodeId: string, org?: string) {
+    const s = splitOrg(nodeId);
+    const orgQ = org || s.org;
+    const qs = orgQ ? `?org=${encodeURIComponent(orgQ)}` : '';
+    return post(`/nodes/${encodeURIComponent(s.name)}/heartbeat${qs}`, {});
   },
 };

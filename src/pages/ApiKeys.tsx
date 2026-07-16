@@ -11,6 +11,7 @@ import {
 } from '@ant-design/icons';
 import { get, post, del } from '../api/client';
 import { getConfig } from '../api/config';
+import { OrgAPI } from '../api/organizations';
 import { useT } from '../i18n/context';
 import HelpButton from '../components/HelpButton';
 
@@ -28,7 +29,7 @@ interface ApiKeyRow {
 }
 
 export default function ApiKeys() {
-  const { t } = useT();
+  const { t, fmtTime } = useT();
   const config = getConfig();
   const isPlatform = config.role === 'platform';
   const [data, setData] = useState<ApiKeyRow[]>([]);
@@ -36,6 +37,7 @@ export default function ApiKeys() {
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [recentKey, setRecentKey] = useState<{ key: string; org: string; label: string } | null>(null);
+  const [allOrgs, setAllOrgs] = useState<string[]>([]);
   const [form] = Form.useForm();
 
   const load = async () => {
@@ -52,6 +54,12 @@ export default function ApiKeys() {
 
   useEffect(() => {
     load();
+    // Fetch organizations for platform users
+    if (isPlatform) {
+      OrgAPI.list().then((res) => {
+        setAllOrgs(Object.keys(res?.orgs ?? {}).filter((o) => o !== 'root'));
+      }).catch(() => {});
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -68,7 +76,7 @@ export default function ApiKeys() {
         body,
       );
       setRecentKey({ key: res.key, org: res.org, label: values.label });
-      message.success(t('API Key Created'));
+      message.success(t('api-key-created'));
       setCreateOpen(false);
       form.resetFields();
       load();
@@ -81,12 +89,12 @@ export default function ApiKeys() {
 
   const handleRevoke = (row: ApiKeyRow) => {
     Modal.confirm({
-      title: t('Confirm') + ': ' + t('Revoke') + ' ' + row.label,
+      title: t('confirm') + ': ' + t('revoke') + ' ' + row.label,
       onOk: async () => {
         try {
           if (isPlatform) await post(`/apikeys/${row.id}/revoke`, {});
           else await post(`/my-apikeys/${row.id}/revoke`, {});
-          message.success(t('API Key Revoked'));
+          message.success(t('api-key-revoked'));
           load();
         } catch (err: any) {
           message.error(err.message);
@@ -97,12 +105,12 @@ export default function ApiKeys() {
 
   const handleDelete = (row: ApiKeyRow) => {
     Modal.confirm({
-      title: t('Confirm') + ': ' + t('Delete') + ' ' + row.label,
+      title: t('confirm') + ': ' + t('delete') + ' ' + row.label,
       onOk: async () => {
         try {
           if (isPlatform) await del(`/apikeys/${row.id}`);
           else await del(`/my-apikeys/${row.id}`);
-          message.success(t('API Key Deleted'));
+          message.success(t('api-key-deleted'));
           load();
         } catch (err: any) {
           message.error(err.message);
@@ -116,7 +124,7 @@ export default function ApiKeys() {
       const path = isPlatform ? `/apikeys/${row.id}/renew` : `/my-apikeys/${row.id}/renew`;
       const res = await post<{ id: string; key: string }>(path, {});
       setRecentKey({ key: res.key, org: row.org, label: row.label });
-      message.success(t('API Key Renewed'));
+      message.success(t('api-key-renewed'));
       load();
     } catch (err: any) {
       message.error(err.message);
@@ -127,7 +135,7 @@ export default function ApiKeys() {
     if (!recentKey) return;
     try {
       await navigator.clipboard.writeText(recentKey.key);
-      message.success(t('Copied'));
+      message.success(t('copied'));
     } catch {
       try {
         const ta = document.createElement('textarea');
@@ -138,9 +146,9 @@ export default function ApiKeys() {
         ta.select();
         document.execCommand('copy');
         document.body.removeChild(ta);
-        message.success(t('Copied'));
+        message.success(t('copied'));
       } catch {
-        message.warning(t('Copy failed'));
+        message.warning(t('copy-failed'));
       }
     }
   };
@@ -149,41 +157,41 @@ export default function ApiKeys() {
   const [testing, setTesting] = useState(false);
 
   const columns = [
-    { title: t('Label'), dataIndex: 'label', key: 'label' },
+    { title: t('label'), dataIndex: 'label', key: 'label' },
     ...(isPlatform
-      ? [{ title: t('Organization'), dataIndex: 'org', key: 'org' }]
+      ? [{ title: t('organization'), dataIndex: 'org', key: 'org' }]
       : []),
     {
-      title: t('Status'),
+      title: t('status'),
       dataIndex: 'revoked',
       key: 'revoked',
       render: (revoked: boolean) =>
-        revoked ? <Tag color="default">{t('Revoked')}</Tag> : <Tag color="green">{t('Active')}</Tag>,
+        revoked ? <Tag color="default">{t('revoked')}</Tag> : <Tag color="green">{t('active')}</Tag>,
     },
     {
-      title: t('Expires'),
+      title: t('expires'),
       dataIndex: 'expiresAt',
       key: 'expiresAt',
       render: (v: string | null) =>
-        v ? new Date(v).toLocaleString() : <Text type="secondary">—</Text>,
+        v ? fmtTime(v) : <Text type="secondary">—</Text>,
     },
     {
-      title: t('Created'),
+      title: t('created'),
       dataIndex: 'createdAt',
       key: 'createdAt',
-      render: (v: string) => (v ? new Date(v).toLocaleString() : ''),
+      render: (v: string) => (v ? fmtTime(v) : ''),
     },
     {
-      title: t('Action'),
+      title: t('action'),
       key: 'action',
       render: (_: any, row: ApiKeyRow) =>
         row.revoked ? (
           <Space>
             <Button type="link" icon={<KeyOutlined />} onClick={() => handleRenew(row)}>
-              {t('Renew')}
+              {t('renew')}
             </Button>
             <Button danger size="small" onClick={() => handleDelete(row)}>
-              {t('Delete')}
+              {t('delete')}
             </Button>
           </Space>
         ) : (
@@ -196,7 +204,7 @@ export default function ApiKeys() {
                 try {
                   const path = isPlatform ? `/apikeys/${row.id}/key` : `/my-apikeys/${row.id}/key`;
                   const res = await get<{ key: string }>(path);
-                  if (!res?.key) { message.info(t('Key only visible once')); return; }
+                  if (!res?.key) { message.info(t('key-only-visible-once')); return; }
                   try {
                     await navigator.clipboard.writeText(res.key);
                   } catch {
@@ -209,21 +217,21 @@ export default function ApiKeys() {
                     document.execCommand('copy');
                     document.body.removeChild(ta);
                   }
-                  message.success(t('Copied'));
+                  message.success(t('copied'));
                 } catch (e: any) {
                   const msg = (e.message || '').replace(/^\[\d+\]\s*/, '');
                   if (msg.includes('plaintext not available')) {
-                    message.info(t('Key only visible once'));
+                    message.info(t('key-only-visible-once'));
                   } else {
-                    message.warning(t('Copy failed'));
+                    message.warning(t('copy-failed'));
                   }
                 }
               }}
             >
-              {t('Copy')}
+              {t('copy')}
             </Button>
             <Button danger size="small" icon={<StopOutlined />} onClick={() => handleRevoke(row)}>
-              {t('Revoke')}
+              {t('revoke')}
             </Button>
           </Space>
         ),
@@ -236,19 +244,21 @@ export default function ApiKeys() {
         <Space>
           <KeyOutlined style={{ fontSize: 18 }} />
           <Typography.Title level={4} style={{ margin: 0 }}>
-            {isPlatform ? t('Platform API Keys') : t('Partner API Keys')}
+            {isPlatform ? t('platform-api-keys') : t('partner-api-keys')}
           </Typography.Title>
           <HelpButton module="apikeys" />
         </Space>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={load}>
-            {t('Refresh')}
+            {t('refresh')}
           </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-            {t('Create')}
+            {t('create')}
           </Button>
         </Space>
       </Space>
+      <Text type="secondary">{t('manage-api-keys-for-programmatic-access-to-the-exchange')}</Text>
+      <br /><br />
 
       <Table
         rowKey="id"
@@ -260,7 +270,7 @@ export default function ApiKeys() {
       />
 
       <Modal
-        title={t('Create') + ' ' + t('API Keys')}
+        title={t('create') + ' ' + t('api-keys')}
         open={createOpen}
         onCancel={() => setCreateOpen(false)}
         onOk={handleCreate}
@@ -270,21 +280,29 @@ export default function ApiKeys() {
         <Form form={form} layout="vertical" initialValues={{ neverExpire: true }}>
           <Form.Item
             name="label"
-            label={t('Key Label')}
-            rules={[{ required: true, message: t('Required') }]}
+            label={t('key-label')}
+            rules={[{ required: true, message: t('required') }]}
           >
-            <Input placeholder={t('Key Label')} />
+            <Input placeholder={t('key-label')} />
           </Form.Item>
           {isPlatform && (
-            <Form.Item name="org" label={t('Organization')} rules={[{ required: true, message: t('Required') }]}>
-              <Input placeholder={t('Organization')} defaultValue={config.orgId} />
+            <Form.Item name="org" label={t('organization')} rules={[{ required: true, message: t('required') }]}>
+              <Select
+                placeholder={t('select-organization')}
+                allowClear
+                options={allOrgs.map((o) => ({ label: o, value: o }))}
+                showSearch
+                filterOption={(input, option) =>
+                  (option?.label as string)?.toLowerCase().includes(input.toLowerCase())
+                }
+              />
             </Form.Item>
           )}
-          <Form.Item name="neverExpire" label={t('Never Expire')} valuePropName="checked">
+          <Form.Item name="neverExpire" label={t('never-expire')} valuePropName="checked">
             <Select
               options={[
-                { value: true, label: t('Never Expire') },
-                { value: false, label: t('Expires In Days') },
+                { value: true, label: t('never-expire') },
+                { value: false, label: t('expires-in-days') },
               ]}
             />
           </Form.Item>
@@ -293,8 +311,8 @@ export default function ApiKeys() {
               getFieldValue('neverExpire') === false ? (
                 <Form.Item
                   name="expiresInDays"
-                  label={t('Expires In Days')}
-                  rules={[{ required: true, message: t('Required') }]}
+                  label={t('expires-in-days')}
+                  rules={[{ required: true, message: t('required') }]}
                 >
                   <InputNumber min={1} max={3650} style={{ width: '100%' }} />
                 </Form.Item>
@@ -313,12 +331,12 @@ export default function ApiKeys() {
           message={
             <Space.Compact style={{ width: '100%' }}>
               <Input value={recentKey.key} readOnly style={{ fontFamily: 'monospace' }} />
-              <Button icon={<CopyOutlined />} onClick={copyRecentKey}>{t('Copy')}</Button>
+              <Button icon={<CopyOutlined />} onClick={copyRecentKey}>{t('copy')}</Button>
             </Space.Compact>
           }
           description={
             <Text type="secondary">
-              {t('Organization')}: {recentKey.org} | {t('Label')}: {recentKey.label} | {t('Key only visible once')}
+              {t('organization')}: {recentKey.org} | {t('label')}: {recentKey.label} | {t('key-only-visible-once')}
             </Text>
           }
           action={
@@ -334,7 +352,7 @@ export default function ApiKeys() {
                 .catch((e) => setTestResult(`Error: ${e.message}`))
                 .finally(() => setTesting(false));
             }}>
-              {t('Test')}
+              {t('test')}
             </Button>
           }
           style={{ marginBottom: 16 }}

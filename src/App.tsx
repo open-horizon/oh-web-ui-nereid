@@ -23,9 +23,11 @@ import AgentFileVersion from './pages/AgentFileVersion';
 import Help from './pages/Help';
 import AuditLog from './pages/AuditLog';
 import ApiKeys from './pages/ApiKeys';
+import Secrets from './pages/Secrets';
+import ServiceInstances from './pages/ServiceInstances';
+import NodeSearch from './pages/NodeSearch';
 import { isAuthenticated, saveSession, clearSession } from './api/config';
 import { LanguageProvider, useT } from './i18n/context';
-import dict from './i18n/zh';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   if (!isAuthenticated()) {
@@ -82,6 +84,9 @@ function Root() {
             <Route path="/catalog" element={<Catalog />} />
             <Route path="/hagroups" element={<HaGroups />} />
             <Route path="/agentfileversion" element={<AgentFileVersion />} />
+            <Route path="/secrets" element={<Secrets />} />
+            <Route path="/service-instances" element={<ServiceInstances />} />
+            <Route path="/node-search" element={<NodeSearch />} />
             <Route path="/help" element={<Help />} />
             <Route path="/audit" element={<AuditLog />} />
             <Route path="/apikeys" element={<ApiKeys />} />
@@ -96,7 +101,7 @@ function Root() {
 
 export default function App() {
   return (
-    <LanguageProvider dict={dict}>
+    <LanguageProvider>
       <SessionBootstrap>
         <Root />
       </SessionBootstrap>

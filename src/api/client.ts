@@ -41,18 +41,19 @@ async function request<T = any>(
       if (res.status === 404 && data && typeof data === 'object' && !data.msg && !data.message && !data.error) {
         return data as T;
       }
-      const errMsg = data?.msg || data?.message || data?.error || `HTTP ${res.status}`;
+      const errMsg = data?.msg || data?.message || data?.error || `请求失败 (${res.status})`;
       if (res.status === 401) {
         const { clearSession } = await import('./config');
         clearSession();
         window.location.href = '/login';
       }
-      throw new Error(`[${res.status}] ${errMsg}`);
+      throw new Error(errMsg);
     }
     return data as T;
   } catch (err) {
     if (err instanceof TypeError) {
       console.error(`[API] network error: ${err.message}`);
+      throw new Error('Cannot connect to server, please check if backend is running');
     }
     throw err;
   }

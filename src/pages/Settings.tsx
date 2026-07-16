@@ -26,8 +26,8 @@ interface SystemSettings {
 export default function Settings() {
   const { t } = useT();
   const menuItems = [
-    { key: 'connection', label: t('Connection Config') },
-    { key: 'session', label: t('Session & Audit') },
+    { key: 'connection', label: t('connection-config') },
+    { key: 'session', label: t('session-audit') },
   ];
   const [active, setActive] = useState('connection');
   const [loading, setLoading] = useState(false);
@@ -79,7 +79,7 @@ export default function Settings() {
         user: values.user,
         password: values.password,
       });
-      message.success(t('Updated') + ' / ' + (res.orgId || ''));
+      message.success(t('updated') + ' / ' + (res.orgId || ''));
       loadConfig();
     } catch (e: any) {
       message.error(e.message);
@@ -92,7 +92,7 @@ export default function Settings() {
     setLoading(true);
     try {
       await apiPut('/settings', values);
-      message.success(t('Updated'));
+      message.success(t('updated'));
       loadSettings();
     } catch (e: any) {
       message.error(e.message);
@@ -114,33 +114,33 @@ export default function Settings() {
       </Sider>
       <Content style={{ padding: '0 24px' }}>
         {active === 'connection' && (
-          <Card title={t('Exchange Connection')} loading={loading}>
+          <Card title={t('exchange-connection')} loading={loading}>
             {config && (
               <>
                 <Descriptions column={1} bordered size="small" style={{ marginBottom: 24 }}>
-                  <Descriptions.Item label={t('Organization')}>{config.orgId}</Descriptions.Item>
-                  <Descriptions.Item label={t('Exchange Version')}>
+                  <Descriptions.Item label={t('organization')}>{config.orgId}</Descriptions.Item>
+                  <Descriptions.Item label={t('exchange-version')}>
                     <Tag color={config.configured ? 'green' : 'red'}>{config.version || '-'}</Tag>
                   </Descriptions.Item>
-                  <Descriptions.Item label={t('Status')}>
+                  <Descriptions.Item label={t('status')}>
                     <Tag color={config.configured ? 'green' : 'red'}>
-                      {config.configured ? t('Connected') : t('Not configured')}
+                      {config.configured ? t('connected') : t('not-configured')}
                     </Tag>
                   </Descriptions.Item>
                 </Descriptions>
-                <Title level={5}>{t('Update Connection')}</Title>
+                <Title level={5}>{t('update-connection')}</Title>
                 <Form form={connForm} layout="vertical" onFinish={handleConnUpdate}>
-                  <Form.Item label={t('Exchange URL')} name="baseURL" rules={[{ required: true, message: t('Please enter Exchange URL') }]}>
+                  <Form.Item label={t('exchange-url')} name="baseURL" rules={[{ required: true, message: t('please-enter-exchange-url') }]}>
                     <Input placeholder="http://host:3090" />
                   </Form.Item>
-                  <Form.Item label={t('Exchange Account')} name="user" rules={[{ required: true, message: t('Please enter exchange account') }]}>
+                  <Form.Item label={t('exchange-account')} name="user" rules={[{ required: true, message: t('please-enter-exchange-account') }]}>
                     <Input placeholder="orgid/username" />
                   </Form.Item>
-                  <Form.Item label={t('Exchange Password')} name="password" rules={[{ required: true, message: t('Please enter exchange password') }]}>
+                  <Form.Item label={t('exchange-password')} name="password" rules={[{ required: true, message: t('please-enter-exchange-password') }]}>
                     <Input.Password placeholder="********" />
                   </Form.Item>
                   <Form.Item>
-                    <Button type="primary" htmlType="submit" loading={loading}>{t('Save')}</Button>
+                    <Button type="primary" htmlType="submit" loading={loading}>{t('save')}</Button>
                   </Form.Item>
                 </Form>
               </>
@@ -148,34 +148,34 @@ export default function Settings() {
           </Card>
         )}
         {active === 'session' && (
-          <Card title={t('Session & Audit')} loading={loading}>
+          <Card title={t('session-audit')} loading={loading}>
             <Form form={sessionForm} layout="vertical" onFinish={handleSessionUpdate}>
               <Form.Item
-                label={t('Idle Timeout (seconds)')}
+                label={t('idle-timeout-seconds')}
                 name="session_ttl"
-                tooltip={t('Session expires after this period of inactivity')}
-                rules={[{ required: true, message: t('Please enter a value') }]}
+                tooltip={t('session-expires-after-this-period-of-inactivity')}
+                rules={[{ required: true, message: t('please-enter-a-value') }]}
               >
                 <InputNumber min={60} max={604800} style={{ width: 240 }} />
               </Form.Item>
               <Form.Item
-                label={t('Absolute Timeout (seconds)')}
+                label={t('absolute-timeout-seconds')}
                 name="session_abs_ttl"
-                tooltip={t('Session expires after this fixed period regardless of activity')}
-                rules={[{ required: true, message: t('Please enter a value') }]}
+                tooltip={t('session-expires-after-this-fixed-period-regardless-of-activity')}
+                rules={[{ required: true, message: t('please-enter-a-value') }]}
               >
                 <InputNumber min={60} max={604800} style={{ width: 240 }} />
               </Form.Item>
               <Form.Item
-                label={t('Audit Retention (days)')}
+                label={t('audit-retention-days')}
                 name="audit_retention_days"
-                tooltip={t('Audit log entries older than this are purged (0 = keep forever)')}
-                rules={[{ required: true, message: t('Please enter a value') }]}
+                tooltip={t('audit-log-entries-older-than-this-are-purged-0-keep-forever')}
+                rules={[{ required: true, message: t('please-enter-a-value') }]}
               >
                 <InputNumber min={0} max={3650} style={{ width: 240 }} />
               </Form.Item>
               <Form.Item>
-                <Button type="primary" htmlType="submit" loading={loading}>{t('Save')}</Button>
+                <Button type="primary" htmlType="submit" loading={loading}>{t('save')}</Button>
               </Form.Item>
             </Form>
           </Card>

@@ -21,7 +21,7 @@ export default function Profile() {
 
   const handleChangePassword = async (values: { oldPassword: string; newPassword: string; confirmPassword: string }) => {
     if (values.newPassword !== values.confirmPassword) {
-      message.error(t('Passwords do not match'));
+      message.error(t('passwords-do-not-match'));
       return;
     }
     setSaving(true);
@@ -33,7 +33,7 @@ export default function Profile() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.msg || 'Password change failed');
-      message.success(t('Password changed'));
+      message.success(t('password-changed'));
       form.resetFields();
     } catch (err: any) {
       const msg = (err.message || '').replace(/^\[\d+\]\s*/, '');
@@ -45,46 +45,46 @@ export default function Profile() {
 
   return (
     <div style={{ maxWidth: 600, margin: '0 auto' }}>
-      <Title level={4}><UserOutlined /> {t('Profile')}</Title>
+      <Title level={4}><UserOutlined /> {t('profile')}</Title>
 
       <Card style={{ marginBottom: 24 }}>
         <Descriptions column={1} size="middle" bordered>
-          <Descriptions.Item label={t('Username')}>{cfg.username}</Descriptions.Item>
-          <Descriptions.Item label={t('Role')}>
+          <Descriptions.Item label={t('username')}>{cfg.username}</Descriptions.Item>
+          <Descriptions.Item label={t('role')}>
             <Tag color={cfg.role === 'platform' ? 'red' : 'blue'}>
-              {cfg.role === 'platform' ? t('Platform') : t('Partner')}
+              {cfg.role === 'platform' ? t('platform') : t('partner')}
             </Tag>
           </Descriptions.Item>
-          <Descriptions.Item label={t('Organization')}>{cfg.orgId || '—'}</Descriptions.Item>
+          <Descriptions.Item label={t('organization')}>{cfg.orgId || '—'}</Descriptions.Item>
         </Descriptions>
       </Card>
 
-      <Card title={<><LockOutlined /> {t('Change Password')}</>}>
+      <Card title={<><LockOutlined /> {t('change-password')}</>}>
         <Form form={form} layout="vertical" onFinish={handleChangePassword}>
           <Form.Item
             name="oldPassword"
-            label={t('Old Password')}
-            rules={[{ required: true, message: t('Required') }]}
+            label={t('old-password')}
+            rules={[{ required: true, message: t('required') }]}
           >
             <Input.Password />
           </Form.Item>
           <Form.Item
             name="newPassword"
-            label={t('New Password')}
-            rules={[{ required: true, message: t('Required') }]}
+            label={t('new-password')}
+            rules={[{ required: true, message: t('required') }]}
           >
             <Input.Password />
           </Form.Item>
           <Form.Item
             name="confirmPassword"
-            label={t('Confirm Password')}
-            rules={[{ required: true, message: t('Required') }]}
+            label={t('confirm-password')}
+            rules={[{ required: true, message: t('required') }]}
           >
             <Input.Password />
           </Form.Item>
           <Form.Item>
             <Button type="primary" htmlType="submit" loading={saving} icon={<LockOutlined />}>
-              {t('Change Password')}
+              {t('change-password')}
             </Button>
           </Form.Item>
         </Form>

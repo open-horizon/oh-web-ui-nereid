@@ -49,8 +49,8 @@ export default function Help() {
   return (
     <div>
       <div style={{ marginBottom: 16 }}>
-        <Text strong style={{ fontSize: 20 }}>{t('Help Center')}</Text>
-        <br /><Text type="secondary">{t('User guides for all modules')}</Text>
+        <Text strong style={{ fontSize: 20 }}>{t('help-center')}</Text>
+        <br /><Text type="secondary">{t('user-guides-for-all-modules')}</Text>
       </div>
       <Space style={{ marginBottom: 16 }}>
         <Select

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useOutlet, useNavigate, useLocation } from 'react-router-dom';
-import { Layout, Menu, Button, Tag, Typography, theme, Select, Drawer } from 'antd';
+import { Layout, Menu, Button, Tag, Typography, theme, Select, Drawer, Dropdown } from 'antd';
 import { MenuOutlined } from '@ant-design/icons';
 import {
   DashboardOutlined,
@@ -20,12 +20,28 @@ import {
   KeyOutlined,
   IdcardOutlined,
   UserOutlined,
+  LockOutlined,
+  CloudServerOutlined,
+  SearchOutlined,
+  DownOutlined,
 } from '@ant-design/icons';
 import { clearSession, getConfig } from '../api/config';
 import { useT } from '../i18n/context';
+import ChangesNotification from './ChangesNotification';
 
 const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
+
+function useExchangeVersion() {
+  const [version, setVersion] = useState('');
+  useEffect(() => {
+    fetch('/api/version')
+      .then((r) => r.json())
+      .then((d) => setVersion(d?.version || ''))
+      .catch(() => {});
+  }, []);
+  return version;
+}
 
 function useIsMobile() {
   const [mobile, setMobile] = useState(window.innerWidth < 768);
@@ -47,45 +63,45 @@ export default function AppLayout() {
   const isMobile = useIsMobile();
   const config = getConfig();
   const { t, lang, setLang } = useT();
+  const exchangeVersion = useExchangeVersion();
 
   const platformMenu = [
-    { key: '/dashboard', icon: <DashboardOutlined />, label: t('Dashboard') },
-    { key: '/organizations', icon: <BuildOutlined />, label: t('Organization Management') },
-    { key: '/catalog', icon: <BookOutlined />, label: t('Catalog') },
-    { key: '/users', icon: <TeamOutlined />, label: t('User Management') },
-    { key: '/bff-users', icon: <IdcardOutlined />, label: t('BFF Users') },
-    { key: '/nodes', icon: <LaptopOutlined />, label: t('Edge Nodes') },
-    { key: '/services', icon: <AppstoreOutlined />, label: t('Services') },
-    { key: '/patterns', icon: <ApartmentOutlined />, label: t('Deployment Patterns') },
-    { key: '/policies', icon: <FileTextOutlined />, label: t('Deployment Policies') },
-    { key: '/mgmtpolicies', icon: <SettingOutlined />, label: t('Management Policies') },
-    { key: '/agbots', icon: <RobotOutlined />, label: t('Agreement Bots') },
-    { key: '/hagroups', icon: <SafetyOutlined />, label: t('HA Groups') },
-    { key: '/agentfileversion', icon: <SettingOutlined />, label: t('Agent File Version') },
-    { key: '/apikeys', icon: <KeyOutlined />, label: t('API Keys') },
-    { key: '/audit', icon: <FileTextOutlined />, label: t('Audit Log') },
-    { type: 'divider' as const },
-    { key: '/profile', icon: <UserOutlined />, label: t('Profile') },
-    { key: '/settings', icon: <SettingOutlined />, label: t('Settings') },
-    { key: '/help', icon: <QuestionCircleOutlined />, label: t('Help') },
+    { key: '/dashboard', icon: <DashboardOutlined />, label: t('dashboard') },
+    { key: '/organizations', icon: <BuildOutlined />, label: t('organization-management') },
+    { key: '/catalog', icon: <BookOutlined />, label: t('catalog') },
+    { key: '/users', icon: <TeamOutlined />, label: t('user-management') },
+    { key: '/bff-users', icon: <IdcardOutlined />, label: t('bff-users') },
+    { key: '/nodes', icon: <LaptopOutlined />, label: t('edge-nodes') },
+    { key: '/node-search', icon: <SearchOutlined />, label: t('node-search') },
+    { key: '/services', icon: <AppstoreOutlined />, label: t('services') },
+    { key: '/patterns', icon: <ApartmentOutlined />, label: t('deployment-patterns') },
+    { key: '/policies', icon: <FileTextOutlined />, label: t('deployment-policies') },
+    { key: '/mgmtpolicies', icon: <SettingOutlined />, label: t('management-policies') },
+    { key: '/agbots', icon: <RobotOutlined />, label: t('agreement-bots') },
+    { key: '/hagroups', icon: <SafetyOutlined />, label: t('ha-groups') },
+    { key: '/secrets', icon: <LockOutlined />, label: t('secrets') },
+    { key: '/service-instances', icon: <CloudServerOutlined />, label: t('service-instances') },
+    { key: '/agentfileversion', icon: <SettingOutlined />, label: t('agent-file-version') },
+    { key: '/apikeys', icon: <KeyOutlined />, label: t('api-keys') },
+    { key: '/audit', icon: <FileTextOutlined />, label: t('audit-log') },
   ];
 
   const partnerMenu = [
-    { key: '/dashboard', icon: <DashboardOutlined />, label: t('Dashboard') },
-    { key: '/nodes', icon: <LaptopOutlined />, label: t('Edge Nodes') },
-    { key: '/services', icon: <AppstoreOutlined />, label: t('Services') },
-    { key: '/patterns', icon: <ApartmentOutlined />, label: t('Deployment Patterns') },
-    { key: '/policies', icon: <FileTextOutlined />, label: t('Deployment Policies') },
-    { key: '/mgmtpolicies', icon: <SettingOutlined />, label: t('Management Policies') },
-    { key: '/hagroups', icon: <SafetyOutlined />, label: t('HA Groups') },
-    { key: '/agbots', icon: <RobotOutlined />, label: t('Agreement Bots') },
-    { key: '/agentfileversion', icon: <SettingOutlined />, label: t('Agent File Version') },
-    { key: '/apikeys', icon: <KeyOutlined />, label: t('API Keys') },
-    { key: '/users', icon: <TeamOutlined />, label: t('Users') },
-    { key: '/audit', icon: <FileTextOutlined />, label: t('Audit Log') },
-    { type: 'divider' as const },
-    { key: '/profile', icon: <UserOutlined />, label: t('Profile') },
-    { key: '/help', icon: <QuestionCircleOutlined />, label: t('Help') },
+    { key: '/dashboard', icon: <DashboardOutlined />, label: t('dashboard') },
+    { key: '/nodes', icon: <LaptopOutlined />, label: t('edge-nodes') },
+    { key: '/node-search', icon: <SearchOutlined />, label: t('node-search') },
+    { key: '/services', icon: <AppstoreOutlined />, label: t('services') },
+    { key: '/patterns', icon: <ApartmentOutlined />, label: t('deployment-patterns') },
+    { key: '/policies', icon: <FileTextOutlined />, label: t('deployment-policies') },
+    { key: '/mgmtpolicies', icon: <SettingOutlined />, label: t('management-policies') },
+    { key: '/hagroups', icon: <SafetyOutlined />, label: t('ha-groups') },
+    { key: '/secrets', icon: <LockOutlined />, label: t('secrets') },
+    { key: '/service-instances', icon: <CloudServerOutlined />, label: t('service-instances') },
+    { key: '/agbots', icon: <RobotOutlined />, label: t('agreement-bots') },
+    { key: '/agentfileversion', icon: <SettingOutlined />, label: t('agent-file-version') },
+    { key: '/apikeys', icon: <KeyOutlined />, label: t('api-keys') },
+    { key: '/users', icon: <TeamOutlined />, label: t('users') },
+    { key: '/audit', icon: <FileTextOutlined />, label: t('audit-log') },
   ];
 
   const menuItems = config.role === 'platform' ? platformMenu : partnerMenu;
@@ -121,15 +137,13 @@ export default function AppLayout() {
   );
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
+    <Layout style={{ height: '100vh', overflow: 'hidden' }}>
       {!isMobile && (
         <Sider
-          collapsible
           collapsed={collapsed}
-          onCollapse={setCollapsed}
           theme="dark"
           width={220}
-          style={{ borderRight: `1px solid ${themeToken.colorBorderSecondary}` }}
+          style={{ borderRight: `1px solid ${themeToken.colorBorderSecondary}`, display: 'flex', flexDirection: 'column', position: 'relative' }}
         >
           <div
             style={{
@@ -148,7 +162,16 @@ export default function AppLayout() {
               </Text>
             )}
           </div>
-          {renderMenu()}
+          <div style={{ flex: 1, overflow: 'hidden' }}>
+            {renderMenu()}
+          </div>
+          {!collapsed && exchangeVersion && (
+            <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '8px 16px', textAlign: 'center', borderTop: `1px solid ${themeToken.colorBorderSecondary}` }}>
+              <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11 }}>
+                Exchange {exchangeVersion}
+              </Text>
+            </div>
+          )}
         </Sider>
       )}
       <Layout>
@@ -164,6 +187,14 @@ export default function AppLayout() {
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {!isMobile && (
+              <Button
+                type="text"
+                icon={collapsed ? <MenuOutlined /> : <MenuOutlined />}
+                onClick={() => setCollapsed(!collapsed)}
+                aria-label="toggle sidebar"
+              />
+            )}
             {isMobile && (
               <Button type="text" icon={<MenuOutlined />} onClick={() => setMobileDrawer(true)} aria-label="menu" />
             )}
@@ -184,12 +215,61 @@ export default function AppLayout() {
               variant="borderless"
             />
             <Tag color={config.role === 'platform' ? 'red' : 'blue'}>
-              {config.role === 'platform' ? t('Platform') : t('Partner')}
+              {config.role === 'platform' ? t('platform') : t('partner')}
             </Tag>
-            <Text type="secondary">{config.username}</Text>
-            <Button type="text" icon={<LogoutOutlined />} onClick={handleLogout} size="small">
-              {t('Logout')}
-            </Button>
+            <ChangesNotification />
+            <Dropdown
+              menu={{
+                items: [
+                  {
+                    key: 'user-info',
+                    label: (
+                      <div style={{ padding: '4px 0' }}>
+                        <Text strong>{config.username}</Text>
+                        <br />
+                        <Text type="secondary" style={{ fontSize: 12 }}>{config.orgId}</Text>
+                      </div>
+                    ),
+                    disabled: true,
+                  },
+                  { type: 'divider' },
+                  {
+                    key: 'profile',
+                    icon: <UserOutlined />,
+                    label: t('profile'),
+                    onClick: () => navigate('/profile'),
+                  },
+                  {
+                    key: 'settings',
+                    icon: <SettingOutlined />,
+                    label: t('settings'),
+                    onClick: () => navigate('/settings'),
+                  },
+                  {
+                    key: 'help',
+                    icon: <QuestionCircleOutlined />,
+                    label: t('help'),
+                    onClick: () => navigate('/help'),
+                  },
+                  { type: 'divider' },
+                  {
+                    key: 'logout',
+                    icon: <LogoutOutlined />,
+                    label: t('logout'),
+                    onClick: handleLogout,
+                  },
+                ],
+              }}
+              trigger={['click']}
+            >
+              <Button type="text" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <UserOutlined />
+                <span style={{ maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {config.username}
+                </span>
+                <DownOutlined />
+              </Button>
+            </Dropdown>
           </div>
         </Header>
         <Content style={{ margin: isMobile ? 12 : 24, overflow: 'auto', paddingRight: isMobile ? 0 : undefined }}>
@@ -202,7 +282,7 @@ export default function AppLayout() {
         open={mobileDrawer}
         onClose={() => setMobileDrawer(false)}
         width={220}
-        styles={{ body: { padding: 0, background: '#001529' }, header: { display: 'none' }, wrapper: { background: '#001529' } }}
+        styles={{ body: { padding: 0, background: '#001529', display: 'flex', flexDirection: 'column' }, header: { display: 'none' }, wrapper: { background: '#001529' } }}
       >
         <div
           style={{
@@ -219,7 +299,16 @@ export default function AppLayout() {
             Nereid Exchange
           </Text>
         </div>
-        {renderMenu(() => setMobileDrawer(false))}
+        <div style={{ flex: 1, overflow: 'auto' }}>
+          {renderMenu(() => setMobileDrawer(false))}
+        </div>
+        {exchangeVersion && (
+          <div style={{ padding: '8px 16px', borderTop: `1px solid ${themeToken.colorBorderSecondary}`, marginTop: 'auto', textAlign: 'center' }}>
+            <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11 }}>
+              Exchange {exchangeVersion}
+            </Text>
+          </div>
+        )}
       </Drawer>
     </Layout>
   );

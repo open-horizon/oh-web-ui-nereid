@@ -5,9 +5,10 @@
 import { useEffect, useState } from 'react';
 import { usePolling } from '../hooks/usePolling';
 import { Table, Button, Space, Typography, message, Modal, Tag, Form, Input, Alert, Select, Checkbox, Drawer, Tabs, List } from 'antd';
-import { ReloadOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, SearchOutlined, ImportOutlined, EditOutlined, DownloadOutlined } from '@ant-design/icons';
+import { ReloadOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, SearchOutlined, ImportOutlined, EditOutlined, DownloadOutlined, ClusterOutlined } from '@ant-design/icons';
 import { PatternAPI, ExchangePattern } from '../api/patterns';
 import { ServiceAPI, ExchangeService } from '../api/services';
+import { NodeAPI, ExchangeNode } from '../api/nodes';
 import { OrgAPI } from '../api/organizations';
 import { getConfig } from '../api/config';
 import { useT } from '../i18n/context';
@@ -48,6 +49,10 @@ export default function Patterns() {
   const [pageOrg, setPageOrg] = useState<string>(getConfig().role === 'platform' ? '' : sessionOrg);
   const [allOrgs, setAllOrgs] = useState<string[]>([]);
   const [search, setSearch] = useState('');
+  const [nodesDrawerOpen, setNodesDrawerOpen] = useState(false);
+  const [nodesDrawerPattern, setNodesDrawerPattern] = useState('');
+  const [matchedNodes, setMatchedNodes] = useState<ExchangeNode[]>([]);
+  const [matchedNodesLoading, setMatchedNodesLoading] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const screenSize = useScreenSize();
@@ -97,13 +102,39 @@ export default function Patterns() {
     } catch { /* auto-refresh: silent */ }
   }, 30000);
 
+  const showPatternNodes = async (patternId: string) => {
+    setNodesDrawerPattern(patternId);
+    setNodesDrawerOpen(true);
+    setMatchedNodesLoading(true);
+    try {
+      // Use server-side search API for efficient matching
+      try {
+        const res = await PatternAPI.search(patternId, pageOrg || undefined);
+        const nodeList = res?.nodes ?? [];
+        setMatchedNodes(Array.isArray(nodeList) ? nodeList.map((n: any) => ({ name: n.name || n, ...n })) : []);
+      } catch {
+        // Fallback to client-side search if server-side search fails
+        const res = await NodeAPI.list(pageOrg || undefined);
+        const allNodes = Object.values(res?.nodes ?? {});
+        const org = patternId.includes('/') ? patternId.split('/')[0] : pageOrg;
+        const name = patternId.includes('/') ? patternId.split('/').slice(1).join('/') : patternId;
+        const matched = allNodes.filter((n: any) => {
+          const np = n.pattern || '';
+          return np === patternId || np === `${org}/${name}` || np === name;
+        });
+        setMatchedNodes(matched);
+      }
+    } catch { setMatchedNodes([]); }
+    setMatchedNodesLoading(false);
+  };
+
   const handleDelete = (id: string) => {
     Modal.confirm({
-      title: t('Confirm deletion of pattern').replace('{0}', id),
+      title: t('confirm-deletion-of-pattern').replace('{0}', id),
       onOk: async () => {
         try {
           await PatternAPI.delete(id);
-          message.success(t('Deleted'));
+          message.success(t('deleted'));
           load();
         } catch (err: any) {
           message.error(err.message);
@@ -192,7 +223,7 @@ export default function Patterns() {
       const values = await editForm.validateFields();
       const servicesArr = editSelectedSvcIds.length > 0 ? buildServicesFromEdit() : [];
       if (servicesArr.length === 0) {
-        message.error(t('At least one service must be selected for a pattern'));
+        message.error(t('at-least-one-service-must-be-selected-for-a-pattern'));
         return;
       }
       setCreating(true);
@@ -201,7 +232,7 @@ export default function Patterns() {
         try {
           userInputArr = JSON.parse(values.userInputJSON);
         } catch {
-          message.error(t('User input JSON format error'));
+          message.error(t('user-input-json-format-error'));
           setCreating(false);
           return;
         }
@@ -213,7 +244,7 @@ export default function Patterns() {
         userInput: userInputArr,
       };
       await PatternAPI.update(editModelTarget, body);
-      message.success(t('Pattern updated successfully'));
+      message.success(t('pattern-updated-successfully'));
       setEditModelOpen(false);
       editForm.resetFields();
       load();
@@ -251,16 +282,16 @@ export default function Patterns() {
       try {
         parsed = JSON.parse(values.json);
       } catch {
-        message.error(t('JSON format error'));
+        message.error(t('json-format-error'));
         return;
       }
       const name = values.name || parsed.id || parsed.label?.replace(/\s+/g, '-').toLowerCase() || 'imported-pattern';
       if (getConfig().role === 'platform' && !importOrg) {
-        message.error(t('Please select an organization'));
+        message.error(t('please-select-an-organization'));
         return;
       }
       await PatternAPI.create(name, parsed, importOrg);
-      message.success(t('Pattern imported successfully'));
+      message.success(t('pattern-imported-successfully'));
       setImportOpen(false);
       importForm.resetFields();
       load();
@@ -274,11 +305,11 @@ export default function Patterns() {
     try {
       const values = await form.validateFields();
       if (selectedServices.length === 0) {
-        message.error(t('At least one service must be selected for a pattern'));
+        message.error(t('at-least-one-service-must-be-selected-for-a-pattern'));
         return;
       }
       if (getConfig().role === 'platform' && !createOrg) {
-        message.error(t('Please select an organization'));
+        message.error(t('please-select-an-organization'));
         return;
       }
       setCreating(true);
@@ -294,7 +325,7 @@ export default function Patterns() {
         })),
       };
       await PatternAPI.create(values.name, body, createOrg);
-      message.success(t('Pattern created successfully'));
+      message.success(t('pattern-created-successfully'));
       setCreateOpen(false);
       form.resetFields();
       load();
@@ -307,25 +338,26 @@ export default function Patterns() {
 
   const allColumns = [
     {
-      title: t('Name'), key: 'name', width: 180,
+      title: t('name'), key: 'name', width: 180,
       render: (_: any, record: any) => record.key,
     },
-    { title: t('Label'), dataIndex: 'label', key: 'label', render: (v: string) => v || '-' },
+    { title: t('label'), dataIndex: 'label', key: 'label', render: (v: string) => v || '-' },
     {
-      title: t('Service Count'), key: 'svcCount', width: 80,
+      title: t('service-count'), key: 'svcCount', width: 80,
       render: (_: any, record: any) => record?.services?.length ?? 0,
     },
     {
-      title: t('Last Updated'), key: 'lastUpdated', width: 180,
+      title: t('last-updated'), key: 'lastUpdated', width: 180,
       render: (_: any, record: any) => fmtTime(record?.lastUpdated),
     },
     {
-      title: t('Actions'), key: 'action', width: 180,
+      title: t('actions'), key: 'action', width: 220,
       render: (_: any, record: any) => {
         const id = record.key;
         return (
           <Space>
             <Button size="small" icon={<EyeOutlined />} onClick={() => showDetail(id)} />
+            <Button size="small" icon={<ClusterOutlined />} onClick={() => showPatternNodes(id)}>{t('nodes')}</Button>
             <Button size="small" icon={<EditOutlined />} onClick={() => openEditModel(id)} />
             <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(id)} />
           </Space>
@@ -360,9 +392,9 @@ export default function Patterns() {
     <div>
       <div style={{ marginBottom: 16 }}>
         <div>
-          <Text strong style={{ fontSize: 20 }}>{t('Pattern (Deployment Patterns)')}</Text>
+          <Text strong style={{ fontSize: 20 }}>{t('pattern-deployment-patterns')}</Text>
           <HelpButton module="patterns" />
-          <br /><Text type="secondary">{t('Define service deployment topology and version strategy')}</Text>
+          <br /><Text type="secondary">{t('define-service-deployment-topology-and-version-strategy')}</Text>
         </div>
         <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           {getConfig().role === 'platform' && (
@@ -370,10 +402,10 @@ export default function Patterns() {
             style={{ width: 180 }}
             showSearch
             value={pageOrg}
-            placeholder={t('Organization')}
+            placeholder={t('organization')}
             onChange={(org) => { setPageOrg(org); setPage(1); load(org); }}
             options={[
-              { label: t('All Organizations'), value: '' },
+              { label: t('all-organizations'), value: '' },
               ...allOrgs.map((o) => ({ label: o, value: o }))
             ]}
             filterOption={(input, option) =>
@@ -383,30 +415,30 @@ export default function Patterns() {
           )}
           <Input
             allowClear
-            placeholder={t('Search')}
+            placeholder={t('search')}
             prefix={<SearchOutlined />}
             value={search}
             onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             style={{ width: 200 }}
           />
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('Create Pattern')}</Button>
-          <Button icon={<ImportOutlined />} onClick={openImport}>{t('Import')}</Button>
-          <Button icon={<ReloadOutlined />} onClick={() => load()}>{t('Refresh')}</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('create-pattern')}</Button>
+          <Button icon={<ImportOutlined />} onClick={openImport}>{t('import')}</Button>
+          <Button icon={<ReloadOutlined />} onClick={() => load()}>{t('refresh')}</Button>
         </div>
       </div>
-      <Table columns={columns} dataSource={tableData} loading={loading} rowKey="key" pagination={{ current: page, pageSize, pageSizeOptions: [10, 20, 50, 100], showSizeChanger: true, showQuickJumper: true, showTotal: (total) => `${total} ${t('Patterns')}`, onChange: (p) => setPage(p), onShowSizeChange: (_c, size) => { setPageSize(size); setPage(1); } }} size="middle" scroll={{ x: 'max-content' }} />
+      <Table columns={columns} dataSource={tableData} loading={loading} rowKey="key" pagination={{ current: page, pageSize, pageSizeOptions: [10, 20, 50, 100], showSizeChanger: true, showQuickJumper: true, showTotal: (total) => `${total} ${t('patterns')}`, onChange: (p) => setPage(p), onShowSizeChange: (_c, size) => { setPageSize(size); setPage(1); } }} size="middle" scroll={{ x: 'max-content' }} />
 
       <Drawer
-        title={t('Pattern Detail - ') + detailPatternId}
+        title={t('pattern-detail') + detailPatternId}
         open={detailDrawerOpen}
         onClose={() => setDetailDrawerOpen(false)}
         width={640}
-        extra={<Button icon={<DownloadOutlined />} onClick={() => detailPatternId && exportPattern(detailPatternId)}>{t('Export JSON')}</Button>}
+        extra={<Button icon={<DownloadOutlined />} onClick={() => detailPatternId && exportPattern(detailPatternId)}>{t('export-json')}</Button>}
       >
         <Tabs items={[
           {
             key: 'info',
-            label: t('Info'),
+            label: t('info'),
             children: (
               <pre style={{ background: '#f5f5f5', padding: 16, borderRadius: 6, overflow: 'auto', maxHeight: 500 }}>
                 {JSON.stringify(data[detailPatternId], null, 2)}
@@ -415,21 +447,21 @@ export default function Patterns() {
           },
           {
             key: 'nodehealth',
-            label: t('Node Health'),
+            label: t('node-health'),
             children: (
               <List
                 loading={nodeHealthLoading}
                 dataSource={patternNodeHealth}
-                locale={{ emptyText: t('No node health data') }}
+                locale={{ emptyText: t('no-node-health-data') }}
                 renderItem={(nh: any, i: number) => (
                   <List.Item>
                     <List.Item.Meta
                       title={<Text code>{nh.node_id || nh.node || `#${i + 1}`}</Text>}
                       description={
                         <div>
-                          <div>{t('Status: ')}{nh.status || nh.health_status || '-'}</div>
-                          {nh.last_seen && <div>{t('Last Seen: ')}{fmtTime(nh.last_seen)}</div>}
-                          {nh.last_health && <div>{t('Last Health: ')}{fmtTime(nh.last_health)}</div>}
+                          <div>{t('status-2')}{nh.status || nh.health_status || '-'}</div>
+                          {nh.last_seen && <div>{t('last-seen')}{fmtTime(nh.last_seen)}</div>}
+                          {nh.last_health && <div>{t('last-health')}{fmtTime(nh.last_health)}</div>}
                         </div>
                       }
                     />
@@ -442,23 +474,23 @@ export default function Patterns() {
       </Drawer>
 
       <Modal
-        title={t('Create Pattern')}
+        title={t('create-pattern')}
         open={createOpen}
         onOk={handleCreate}
         onCancel={() => { setCreateOpen(false); }}
         confirmLoading={creating}
         width={700}
       >
-        <Alert message={t('Pattern will be created via POST')} type="info" showIcon style={{ marginBottom: 16 }} />
+        <Alert message={t('pattern-will-be-created-via-post')} type="info" showIcon style={{ marginBottom: 16 }} />
         <Form form={form} layout="vertical">
-          <Form.Item name="name" label={t('Pattern Name')} rules={[{ required: true, message: t('Please enter pattern name') }]}>
+          <Form.Item name="name" label={t('pattern-name')} rules={[{ required: true, message: t('please-enter-pattern-name') }]}>
             <Input placeholder="my-pattern" />
           </Form.Item>
           {getConfig().role === 'platform' && (
-            <Form.Item label={t('Organization')} required tooltip={t('Pattern will be created in this organization')}>
+            <Form.Item label={t('organization')} required tooltip={t('pattern-will-be-created-in-this-organization')}>
               <Select
                 showSearch
-                placeholder={t('Select organization')}
+                placeholder={t('select-organization')}
                 value={createOrg || undefined}
                 onChange={(v) => setCreateOrg(v)}
                 options={allOrgs.map((o) => ({ label: o, value: o }))}
@@ -466,19 +498,19 @@ export default function Patterns() {
               />
             </Form.Item>
           )}
-          <Form.Item name="label" label={t('Label')} rules={[{ required: true, message: t('Please enter a label') }]}>
-            <Input placeholder={t('Pattern display name')} />
+          <Form.Item name="label" label={t('label')} rules={[{ required: true, message: t('please-enter-a-label') }]}>
+            <Input placeholder={t('pattern-display-name')} />
           </Form.Item>
-          <Form.Item name="description" label={t('Description')}>
-            <TextArea rows={2} placeholder={t('Optional description')} />
+          <Form.Item name="description" label={t('description')}>
+            <TextArea rows={2} placeholder={t('optional-description')} />
           </Form.Item>
         </Form>
 
         <div style={{ marginBottom: 8 }}>
-          <Text strong>{t('Select Service')}</Text>
+          <Text strong>{t('select-service')}</Text>
         </div>
         <Input.Search
-          placeholder={t('Search service...')}
+          placeholder={t('search-service')}
           value={serviceSearch}
           onChange={(e) => setServiceSearch(e.target.value)}
           style={{ marginBottom: 8 }}
@@ -497,21 +529,21 @@ export default function Patterns() {
       </Modal>
 
       <Modal
-        title={t('Import')}
+        title={t('import')}
         open={importOpen}
         onOk={handleImport}
         onCancel={() => { setImportOpen(false); importForm.resetFields(); }}
         width={640}
       >
         <Form form={importForm} layout="vertical">
-          <Form.Item name="name" label={t('Pattern name (optional, leave empty to auto-generate)')}>
+          <Form.Item name="name" label={t('pattern-name-optional-leave-empty-to-auto-generate')}>
             <Input placeholder="my-imported-pattern" />
           </Form.Item>
           {getConfig().role === 'platform' && (
-            <Form.Item label={t('Organization')} required tooltip={t('Pattern will be created in this organization')}>
+            <Form.Item label={t('organization')} required tooltip={t('pattern-will-be-created-in-this-organization')}>
               <Select
                 showSearch
-                placeholder={t('Select organization')}
+                placeholder={t('select-organization')}
                 value={importOrg || undefined}
                 onChange={(v) => setImportOrg(v)}
                 options={allOrgs.map((o) => ({ label: o, value: o }))}
@@ -519,41 +551,41 @@ export default function Patterns() {
               />
             </Form.Item>
           )}
-          <Form.Item name="json" label={t('Pattern JSON')} rules={[{ required: true, message: t('Please enter pattern JSON') }]}>
+          <Form.Item name="json" label={t('pattern-json')} rules={[{ required: true, message: t('please-enter-pattern-json') }]}>
             <TextArea rows={10} placeholder='{\n  "label": "...",\n  "services": [...]\n}' />
           </Form.Item>
         </Form>
       </Modal>
 
       <Modal
-        title={t('Edit Pattern - Service Topology')}
+        title={t('edit-pattern-service-topology')}
         open={editModelOpen}
         onOk={handleEditModel}
         onCancel={() => { setEditModelOpen(false); editForm.resetFields(); }}
         confirmLoading={creating}
         width={800}
       >
-        <Alert message={t('Editing will replace all services')} type="warning" showIcon style={{ marginBottom: 16 }} />
+        <Alert message={t('editing-will-replace-all-services')} type="warning" showIcon style={{ marginBottom: 16 }} />
         <Form form={editForm} layout="vertical">
-          <Form.Item name="label" label={t('Label')}>
+          <Form.Item name="label" label={t('label')}>
             <Input />
           </Form.Item>
-          <Form.Item name="description" label={t('Description')}>
+          <Form.Item name="description" label={t('description')}>
             <TextArea rows={2} />
           </Form.Item>
-          <Form.Item name="servicesJSON" label={t('Service topology (JSON)')}>
+          <Form.Item name="servicesJSON" label={t('service-topology-json')}>
             <TextArea rows={6} />
           </Form.Item>
-          <Form.Item name="userInputJSON" label={t('User Input (JSON)')}>
+          <Form.Item name="userInputJSON" label={t('user-input-json')}>
             <TextArea rows={4} />
           </Form.Item>
         </Form>
 
         <div style={{ marginBottom: 8, marginTop: 16 }}>
-          <Text strong>{t('Or select services')}</Text>
+          <Text strong>{t('or-select-services')}</Text>
         </div>
         <Input.Search
-          placeholder={t('Search service...')}
+          placeholder={t('search-service')}
           value={editServiceSearch}
           onChange={(e) => setEditServiceSearch(e.target.value)}
           style={{ marginBottom: 8 }}
@@ -570,6 +602,29 @@ export default function Patterns() {
             ))}
         </Checkbox.Group>
       </Modal>
+      <Drawer
+        title={`${t('nodes-using-pattern')}: ${nodesDrawerPattern}`}
+        open={nodesDrawerOpen}
+        onClose={() => setNodesDrawerOpen(false)}
+        width={600}
+        destroyOnClose
+      >
+        {matchedNodesLoading ? <Text type="secondary">{t('loading')}</Text> : (
+          matchedNodes.length === 0 ? <Text type="secondary">{t('no-nodes-using-this-pattern')}</Text> : (
+            <Table
+              dataSource={matchedNodes.map((n: any, i: number) => ({ key: n.name || n.nodeId || i, ...n }))}
+              columns={[
+                { title: t('node-id'), dataIndex: 'key', key: 'id', ellipsis: true },
+                { title: t('architecture'), dataIndex: 'arch', key: 'arch', render: (v: string) => v || '-' },
+                { title: t('type'), dataIndex: 'nodeType', key: 'type', render: (v: string) => v || '-' },
+                { title: t('last-heartbeat'), dataIndex: 'lastHeartbeat', key: 'hb', render: (v: string) => v ? fmtTime(v) : '-' },
+              ]}
+              size="small"
+              pagination={{ pageSize: 20 }}
+            />
+          )
+        )}
+      </Drawer>
     </div>
   );
 }

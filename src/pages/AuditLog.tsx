@@ -86,36 +86,36 @@ export default function AuditLog() {
   };
   const actorLabel = (ty: string) => {
     switch (ty) {
-      case 'user': return t('Console User');
-      case 'apikey': return t('Partner API');
-      case 'system': return t('System');
+      case 'user': return t('console-user');
+      case 'apikey': return t('partner-api');
+      case 'system': return t('system');
       default: return ty || '-';
     }
   };
 
   const columns = [
-    { title: t('Time'), key: 'time', width: 180, render: (_: any, r: LogEntry) => fmtTime(r.ts) },
-    { title: t('Actor'), key: 'actor', width: 150, render: (_: any, r: LogEntry) => <Tag color={actorColor(r.actor_type)}>{actorLabel(r.actor_type)}</Tag> },
-    { title: t('User'), dataIndex: 'actor', key: 'actorName', width: 150 },
-    ...(isPlatform ? [{ title: t('Org'), dataIndex: 'org', key: 'org', width: 120, render: (v: string) => v || '-' }] : []),
-    { title: t('Method'), dataIndex: 'method', key: 'method', width: 80, render: (v: string) => v ? <Tag color={methodColor(v)}>{v}</Tag> : '-' },
-    { title: t('Path'), dataIndex: 'path', key: 'path', render: (v: string) => <Text code style={{ fontSize: 12 }}>{v}</Text> },
-    { title: t('Proxied To'), dataIndex: 'proxied_to', key: 'proxied_to', width: 280, render: (v: string) => v ? <Text code style={{ fontSize: 12 }}>{v}</Text> : <Text type="secondary">-</Text> },
-    { title: t('Status'), dataIndex: 'status', key: 'status', width: 80, render: (v: number) => v ? <Tag color={statusColor(v)}>{v}</Tag> : '-' },
-    { title: t('IP'), dataIndex: 'ip', key: 'ip', width: 130, render: (v: string) => v || '-' },
-    { title: t('Ms'), dataIndex: 'ms', key: 'ms', width: 70, render: (v: number) => v ?? '-' },
+    { title: t('time'), key: 'time', width: 180, render: (_: any, r: LogEntry) => fmtTime(r.ts) },
+    { title: t('actor'), key: 'actor', width: 150, render: (_: any, r: LogEntry) => <Tag color={actorColor(r.actor_type)}>{actorLabel(r.actor_type)}</Tag> },
+    { title: t('user'), dataIndex: 'actor', key: 'actorName', width: 150 },
+    ...(isPlatform ? [{ title: t('org'), dataIndex: 'org', key: 'org', width: 120, render: (v: string) => v || '-' }] : []),
+    { title: t('method'), dataIndex: 'method', key: 'method', width: 80, render: (v: string) => v ? <Tag color={methodColor(v)}>{v}</Tag> : '-' },
+    { title: t('path'), dataIndex: 'path', key: 'path', render: (v: string) => <Text code style={{ fontSize: 12 }}>{v}</Text> },
+    { title: t('proxied-to'), dataIndex: 'proxied_to', key: 'proxied_to', width: 280, render: (v: string) => v ? <Text code style={{ fontSize: 12 }}>{v}</Text> : <Text type="secondary">-</Text> },
+    { title: t('status'), dataIndex: 'status', key: 'status', width: 80, render: (v: number) => v ? <Tag color={statusColor(v)}>{v}</Tag> : '-' },
+    { title: t('ip'), dataIndex: 'ip', key: 'ip', width: 130, render: (v: string) => v || '-' },
+    { title: t('ms'), dataIndex: 'ms', key: 'ms', width: 70, render: (v: number) => v ?? '-' },
   ];
 
   return (
     <div>
       <div style={{ marginBottom: 16 }}>
-        <Text strong style={{ fontSize: 20 }}>{t('Audit Log')}</Text>
-        <br /><Text type="secondary">{t('Operation history and audit trail')}</Text>
+        <Text strong style={{ fontSize: 20 }}>{t('audit-log')}</Text>
+        <br /><Text type="secondary">{t('operation-history-and-audit-trail')}</Text>
       </div>
       <div style={{ marginBottom: 12, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <Input
           allowClear
-          placeholder={t('Search by user, path, status...')}
+          placeholder={t('search-by-user-path-status')}
           prefix={<SearchOutlined style={{ opacity: 0.4 }} />}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -125,15 +125,15 @@ export default function AuditLog() {
         {isPlatform && (
           <Select
             allowClear
-            placeholder={t('All orgs')}
+            placeholder={t('all-orgs')}
             value={orgFilter}
             onChange={setOrgFilter}
             options={orgs.map((o) => ({ value: o.id, label: o.id }))}
             style={{ width: 160 }}
           />
         )}
-        <Button icon={<ReloadOutlined />} onClick={load}>{t('Search')}</Button>
-        <Button onClick={() => { setSearch(''); setOrgFilter(undefined); setTimeout(load, 0); }}>{t('Clear')}</Button>
+        <Button icon={<ReloadOutlined />} onClick={load}>{t('search')}</Button>
+        <Button onClick={() => { setSearch(''); setOrgFilter(undefined); setTimeout(load, 0); }}>{t('clear')}</Button>
       </div>
       <Table
         columns={columns}
@@ -153,26 +153,26 @@ export default function AuditLog() {
         }}
       />
       <Drawer
-        title={t('Audit Detail')}
+        title={t('audit-detail')}
         open={!!detail}
         onClose={() => setDetail(null)}
         width={520}
       >
         {detail && (
           <Descriptions column={1} bordered size="small">
-            <Descriptions.Item label={t('Time')}>{fmtTime(detail.ts)}</Descriptions.Item>
-            <Descriptions.Item label={t('Actor')}>{actorLabel(detail.actor_type)} / {detail.actor}</Descriptions.Item>
-            <Descriptions.Item label={t('Org')}>{detail.org || '-'}</Descriptions.Item>
-            <Descriptions.Item label={t('Request')}>{detail.method} {detail.path}</Descriptions.Item>
-            <Descriptions.Item label={t('Status')}>{detail.status}</Descriptions.Item>
-            <Descriptions.Item label={t('IP')}>{detail.ip || '-'}</Descriptions.Item>
-            <Descriptions.Item label={t('Duration')}>{detail.ms} ms</Descriptions.Item>
-            <Descriptions.Item label={t('Proxied To')}>{detail.proxied_to || '-'}</Descriptions.Item>
+            <Descriptions.Item label={t('time')}>{fmtTime(detail.ts)}</Descriptions.Item>
+            <Descriptions.Item label={t('actor')}>{actorLabel(detail.actor_type)} / {detail.actor}</Descriptions.Item>
+            <Descriptions.Item label={t('org')}>{detail.org || '-'}</Descriptions.Item>
+            <Descriptions.Item label={t('request')}>{detail.method} {detail.path}</Descriptions.Item>
+            <Descriptions.Item label={t('status')}>{detail.status}</Descriptions.Item>
+            <Descriptions.Item label={t('ip')}>{detail.ip || '-'}</Descriptions.Item>
+            <Descriptions.Item label={t('duration')}>{detail.ms} ms</Descriptions.Item>
+            <Descriptions.Item label={t('proxied-to')}>{detail.proxied_to || '-'}</Descriptions.Item>
           </Descriptions>
         )}
         {detail?.detail && (
           <Paragraph style={{ marginTop: 16 }}>
-            <Text strong>{t('Detail')}:</Text>
+            <Text strong>{t('detail')}:</Text>
             <pre style={{ background: '#f5f5f5', padding: 12, borderRadius: 4, maxHeight: 320, overflow: 'auto', fontSize: 12, margin: '8px 0 0' }}>
               {JSON.stringify(detail.detail, null, 2)}
             </pre>

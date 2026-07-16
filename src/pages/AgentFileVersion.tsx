@@ -60,7 +60,7 @@ export default function AgentFileVersionPage() {
         body.agentCertVersions = v.agentCertVersions.split('\n').map((l: string) => l.trim()).filter(Boolean);
       }
       await AgentFileVersionAPI.update(body);
-      message.success(t('Agent file version updated'));
+      message.success(t('agent-file-version-updated'));
       setEditOpen(false);
       load();
     } catch (err: any) {
@@ -72,11 +72,11 @@ export default function AgentFileVersionPage() {
 
   const handleDelete = () => {
     Modal.confirm({
-      title: t('Confirm deletion of agent file version'),
+      title: t('confirm-deletion-of-agent-file-version'),
       onOk: async () => {
         try {
           await AgentFileVersionAPI.delete();
-          message.success(t('Deleted'));
+          message.success(t('deleted'));
           setData(null);
         } catch (err: any) {
           message.error(err.message);
@@ -86,7 +86,7 @@ export default function AgentFileVersionPage() {
   };
 
   const renderList = (label: string, items?: string[]) => {
-    if (!items || items.length === 0) return <Text type="secondary">{t('None')}</Text>;
+    if (!items || items.length === 0) return <Text type="secondary">{t('none')}</Text>;
     return items.map((v) => <Tag key={v} style={{ marginBottom: 4 }}>{v}</Tag>);
   };
 
@@ -94,14 +94,14 @@ export default function AgentFileVersionPage() {
     <div>
       <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
         <div>
-          <Text strong style={{ fontSize: 20 }}>{t('Agent File Version')}</Text>
+          <Text strong style={{ fontSize: 20 }}>{t('agent-file-version')}</Text>
           <HelpButton module="agentfileversion" />
-          <br /><Text type="secondary">{t('Manage agent software, config, and certificate versions')}</Text>
+          <br /><Text type="secondary">{t('manage-agent-software-config-and-certificate-versions')}</Text>
         </div>
         <Space>
-          <Button icon={<EditOutlined />} onClick={openEdit}>{t('Edit')}</Button>
-          <Button icon={<DeleteOutlined />} danger onClick={handleDelete}>{t('Delete')}</Button>
-          <Button icon={<ReloadOutlined />} onClick={load}>{t('Refresh')}</Button>
+          <Button icon={<EditOutlined />} onClick={openEdit}>{t('edit')}</Button>
+          <Button icon={<DeleteOutlined />} danger onClick={handleDelete}>{t('delete')}</Button>
+          <Button icon={<ReloadOutlined />} onClick={load}>{t('refresh')}</Button>
         </Space>
       </div>
 
@@ -109,30 +109,30 @@ export default function AgentFileVersionPage() {
         {data ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
             <div>
-              <Text strong>{t('Agent Software Versions')}</Text>
-              <div style={{ marginTop: 8 }}>{renderList(t('Software Versions'), data.agentSoftwareVersions)}</div>
+              <Text strong>{t('agent-software-versions')}</Text>
+              <div style={{ marginTop: 8 }}>{renderList(t('software-versions'), data.agentSoftwareVersions)}</div>
             </div>
             <div>
-              <Text strong>{t('Agent Config Versions')}</Text>
-              <div style={{ marginTop: 8 }}>{renderList(t('Config Versions'), data.agentConfigVersions)}</div>
+              <Text strong>{t('agent-config-versions')}</Text>
+              <div style={{ marginTop: 8 }}>{renderList(t('config-versions'), data.agentConfigVersions)}</div>
             </div>
             <div>
-              <Text strong>{t('Agent Cert Versions')}</Text>
-              <div style={{ marginTop: 8 }}>{renderList(t('Cert Versions'), data.agentCertVersions)}</div>
+              <Text strong>{t('agent-cert-versions')}</Text>
+              <div style={{ marginTop: 8 }}>{renderList(t('cert-versions'), data.agentCertVersions)}</div>
             </div>
             {data.lastUpdated && (
               <div>
-                <Text type="secondary">{t('Last Updated: ')}{fmtTime(data.lastUpdated)}</Text>
+                <Text type="secondary">{t('last-updated-2')}{fmtTime(data.lastUpdated)}</Text>
               </div>
             )}
           </div>
         ) : (
-          <Text type="secondary">{t('No agent file version data')}</Text>
+          <Text type="secondary">{t('no-agent-file-version-data')}</Text>
         )}
       </Card>
 
       <Modal
-        title={t('Edit Agent File Version')}
+        title={t('edit-agent-file-version')}
         open={editOpen}
         onOk={handleSave}
         onCancel={() => setEditOpen(false)}
@@ -140,13 +140,13 @@ export default function AgentFileVersionPage() {
         width={600}
       >
         <Form form={editForm} layout="vertical">
-          <Form.Item name="agentSoftwareVersions" label={t('Software Versions (one per line)')}>
+          <Form.Item name="agentSoftwareVersions" label={t('software-versions-one-per-line')}>
             <TextArea rows={4} placeholder="1.0.0" />
           </Form.Item>
-          <Form.Item name="agentConfigVersions" label={t('Config Versions (one per line)')}>
+          <Form.Item name="agentConfigVersions" label={t('config-versions-one-per-line')}>
             <TextArea rows={4} placeholder="1.0.0" />
           </Form.Item>
-          <Form.Item name="agentCertVersions" label={t('Cert Versions (one per line)')}>
+          <Form.Item name="agentCertVersions" label={t('cert-versions-one-per-line')}>
             <TextArea rows={4} placeholder="1.0.0" />
           </Form.Item>
         </Form>

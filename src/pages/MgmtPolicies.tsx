@@ -51,6 +51,8 @@ const [createOpen, setCreateOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
   const [detailMgmtId, setDetailMgmtId] = useState('');
+  const [nmpStatus, setNmpStatus] = useState<any>(null);
+  const [nmpStatusLoading, setNmpStatusLoading] = useState(false);
   const screenSize = useScreenSize();
 
   const load = async () => {
@@ -83,11 +85,11 @@ const [createOpen, setCreateOpen] = useState(false);
 
   const handleDelete = (id: string) => {
     Modal.confirm({
-      title: t('Confirm deletion of management policy').replace('{0}', id),
+      title: t('confirm-deletion-of-management-policy').replace('{0}', id),
       onOk: async () => {
         try {
           await MgmtPolicyAPI.delete(id);
-          message.success(t('Deleted'));
+          message.success(t('deleted'));
           load();
         } catch (err: any) {
           message.error(err.message);
@@ -109,9 +111,16 @@ const [createOpen, setCreateOpen] = useState(false);
     URL.revokeObjectURL(url);
   };
 
-  const showDetail = (id: string) => {
+  const showDetail = async (id: string) => {
     setDetailMgmtId(id);
     setDetailDrawerOpen(true);
+    setNmpStatus(null);
+    setNmpStatusLoading(true);
+    try {
+      const res = await MgmtPolicyAPI.status(id, pageOrg || undefined);
+      setNmpStatus(res);
+    } catch { setNmpStatus(null); }
+    setNmpStatusLoading(false);
   };
 
   const openCreate = async () => {
@@ -133,7 +142,7 @@ const [createOpen, setCreateOpen] = useState(false);
     try {
       const values = await form.validateFields();
       if (getConfig().role === 'platform' && !createOrg) {
-        message.error(t('Please select an organization'));
+        message.error(t('please-select-an-organization'));
         return;
       }
       setCreating(true);
@@ -181,7 +190,7 @@ const [createOpen, setCreateOpen] = useState(false);
         }));
       }
       await MgmtPolicyAPI.create(values.name, body, createOrg);
-      message.success(t('Management policy created successfully'));
+      message.success(t('management-policy-created-successfully'));
       setCreateOpen(false);
       form.resetFields();
       load();
@@ -240,7 +249,7 @@ const [createOpen, setCreateOpen] = useState(false);
         }));
       }
       await MgmtPolicyAPI.update(editingId, body);
-      message.success(t('Management policy updated successfully'));
+      message.success(t('management-policy-updated-successfully'));
       setEditOpen(false);
       editForm.resetFields();
       setSelectedServices([]);
@@ -259,16 +268,16 @@ const [createOpen, setCreateOpen] = useState(false);
       try {
         parsed = JSON.parse(values.json);
       } catch {
-        message.error(t('JSON format error'));
+        message.error(t('json-format-error'));
         return;
       }
       const name = values.name || parsed.id || parsed.label?.replace(/\s+/g, '-').toLowerCase() || 'imported-mgmt-policy';
       if (getConfig().role === 'platform' && !importOrg) {
-        message.error(t('Please select an organization'));
+        message.error(t('please-select-an-organization'));
         return;
       }
       await MgmtPolicyAPI.create(name, parsed, importOrg);
-      message.success(t('Management policy imported successfully'));
+      message.success(t('management-policy-imported-successfully'));
       setImportOpen(false);
       importForm.resetFields();
       load();
@@ -289,28 +298,28 @@ const [createOpen, setCreateOpen] = useState(false);
 
   const allColumns = [
     {
-      title: t('Name'), key: 'name', width: 180,
+      title: t('name'), key: 'name', width: 180,
       render: (_: any, record: any) => record.key,
     },
-    { title: t('Label'), dataIndex: 'label', key: 'label', render: (v: string) => v || '-' },
+    { title: t('label'), dataIndex: 'label', key: 'label', render: (v: string) => v || '-' },
     {
-      title: t('Type'), key: 'type', width: 140,
+      title: t('type'), key: 'type', width: 140,
       render: (_: any, record: any) => {
-        if (record?.pattern) return <Tag color="blue">{t('Pattern Type')}</Tag>;
-        if (record?.businessPolicy) return <Tag color="green">{t('Business Policy Type')}</Tag>;
-        return <Tag>{t('Service Type')}</Tag>;
+        if (record?.pattern) return <Tag color="blue">{t('pattern-type')}</Tag>;
+        if (record?.businessPolicy) return <Tag color="green">{t('business-policy-type')}</Tag>;
+        return <Tag>{t('service-type')}</Tag>;
       },
     },
     {
-      title: t('Constraints'), key: 'constraints', width: 80,
+      title: t('constraints'), key: 'constraints', width: 80,
       render: (_: any, record: any) => record?.constraints?.length ?? 0,
     },
     {
-      title: t('Last Updated'), key: 'lastUpdated', width: 180,
+      title: t('last-updated'), key: 'lastUpdated', width: 180,
       render: (_: any, record: any) => fmtTime(record?.lastUpdated),
     },
     {
-      title: t('Actions'), key: 'action', width: 140,
+      title: t('actions'), key: 'action', width: 140,
       render: (_: any, record: any) => {
         const id = record.key;
         return (
@@ -351,65 +360,74 @@ const [createOpen, setCreateOpen] = useState(false);
     <div>
       <div style={{ marginBottom: 16 }}>
         <div>
-          <Text strong style={{ fontSize: 20 }}>{t('Management Policy')}</Text>
+          <Text strong style={{ fontSize: 20 }}>{t('management-policy')}</Text>
           <HelpButton module="mgmtpolicies" />
-          <br /><Text type="secondary">{t('Define automatic service deployment pattern (Pattern / Business Policy / Service)')}</Text>
+          <br /><Text type="secondary">{t('define-automatic-service-deployment-pattern-pattern-business-policy-service')}</Text>
         </div>
         <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <Input
             allowClear
-            placeholder={t('Search')}
+            placeholder={t('search')}
             prefix={<SearchOutlined />}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             style={{ width: 200 }}
           />
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('Create Management Policy')}</Button>
-          <Button icon={<ImportOutlined />} onClick={() => { setImportOpen(true); setImportOrg(pageOrg); importForm.resetFields(); }}>{t('Import')}</Button>
-          <Button icon={<ReloadOutlined />} onClick={load}>{t('Refresh')}</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('create-management-policy')}</Button>
+          <Button icon={<ImportOutlined />} onClick={() => { setImportOpen(true); setImportOrg(pageOrg); importForm.resetFields(); }}>{t('import')}</Button>
+          <Button icon={<ReloadOutlined />} onClick={load}>{t('refresh')}</Button>
         </div>
       </div>
-      <Table columns={columns} dataSource={tableData} loading={loading} pagination={{ pageSize: 10, showSizeChanger: true, showQuickJumper: true, showLessItems: false, showTotal: (total) => `${total} ${t('Management Policies')}` }} size="middle" scroll={{ x: 'max-content' }} />
+      <Table columns={columns} dataSource={tableData} loading={loading} pagination={{ pageSize: 10, showSizeChanger: true, showQuickJumper: true, showLessItems: false, showTotal: (total) => `${total} ${t('management-policies')}` }} size="middle" scroll={{ x: 'max-content' }} />
 
       <Drawer
-        title={t('Management Policy Detail - ') + detailMgmtId}
+        title={t('management-policy-detail') + detailMgmtId}
         open={detailDrawerOpen}
         onClose={() => setDetailDrawerOpen(false)}
         width={640}
-        extra={<Button icon={<DownloadOutlined />} onClick={() => detailMgmtId && exportMgmt(detailMgmtId)}>{t('Export JSON')}</Button>}
+        extra={<Button icon={<DownloadOutlined />} onClick={() => detailMgmtId && exportMgmt(detailMgmtId)}>{t('export-json')}</Button>}
       >
         {detailMgmtId && data[detailMgmtId] ? (
-          <pre style={{ background: '#f5f5f5', padding: 16, borderRadius: 6, overflow: 'auto', maxHeight: 500 }}>
-            {JSON.stringify(data[detailMgmtId], null, 2)}
-          </pre>
-        ) : <Text type="secondary">{t('No data')}</Text>}
+          <Tabs items={[
+            { key: 'policy', label: t('policy'), children: (
+              <pre style={{ background: '#f5f5f5', padding: 16, borderRadius: 6, overflow: 'auto', maxHeight: 500 }}>
+                {JSON.stringify(data[detailMgmtId], null, 2)}
+              </pre>
+            )},
+            { key: 'status', label: t('status'), children: nmpStatusLoading ? <Text type="secondary">{t('loading')}</Text> : (
+              <pre style={{ background: '#f5f5f5', padding: 16, borderRadius: 6, overflow: 'auto', maxHeight: 500 }}>
+                {nmpStatus ? JSON.stringify(nmpStatus, null, 2) : t('no-status-data')}
+              </pre>
+            )},
+          ]} />
+        ) : <Text type="secondary">{t('no-data')}</Text>}
       </Drawer>
 
       <Modal
-        title={t('Create Management Policy')}
+        title={t('create-management-policy')}
         open={createOpen}
         onOk={handleCreate}
         onCancel={() => setCreateOpen(false)}
         confirmLoading={creating}
         width={640}
       >
-        <Alert message={t('Create a management policy')} type="info" showIcon style={{ marginBottom: 16 }} />
+        <Alert message={t('create-a-management-policy')} type="info" showIcon style={{ marginBottom: 16 }} />
         <Form form={form} layout="vertical">
-          <Form.Item name="name" label={t('Name')} rules={[{ required: true, message: t('Please enter name') }]}>
+          <Form.Item name="name" label={t('name')} rules={[{ required: true, message: t('please-enter-name') }]}>
             <Input placeholder="my-mgmt-policy" />
           </Form.Item>
-          <Form.Item name="label" label={t('Label')} rules={[{ required: true, message: t('Please enter a label') }]}>
-            <Input placeholder={t('Management policy name')} />
+          <Form.Item name="label" label={t('label')} rules={[{ required: true, message: t('please-enter-a-label') }]}>
+            <Input placeholder={t('management-policy-name')} />
           </Form.Item>
-          <Form.Item name="description" label={t('Description')}>
-            <TextArea rows={2} placeholder={t('Optional description')} />
+          <Form.Item name="description" label={t('description')}>
+            <TextArea rows={2} placeholder={t('optional-description')} />
           </Form.Item>
-          <Form.Item name="patternType" label={t('Policy type')} initialValue="service">
+          <Form.Item name="patternType" label={t('policy-type')} initialValue="service">
             <Select
               options={[
-                { label: t('Service'), value: 'service' },
-                { label: t('Pattern'), value: 'pattern' },
-                { label: t('Business Policy'), value: 'businessPolicy' },
+                { label: t('service'), value: 'service' },
+                { label: t('pattern-2'), value: 'pattern' },
+                { label: t('business-policy'), value: 'businessPolicy' },
               ]}
             />
           </Form.Item>
@@ -418,33 +436,33 @@ const [createOpen, setCreateOpen] = useState(false);
               const ptype = getFieldValue('patternType');
               if (ptype === 'pattern') {
                 return (
-                  <Form.Item name="patternId" label={t('Pattern ID')}>
+                  <Form.Item name="patternId" label={t('pattern-id')}>
                     <Input placeholder="myorg/my-pattern" />
                   </Form.Item>
                 );
               }
               if (ptype === 'businessPolicy') {
                 return (
-                  <Form.Item name="businessPolicyId" label={t('Business Policy ID')}>
+                  <Form.Item name="businessPolicyId" label={t('business-policy-id')}>
                     <Input placeholder="myorg/my-policy" />
                   </Form.Item>
                 );
               }
               return (
-                <Form.Item name="serviceName" label={t('Service Name')}>
+                <Form.Item name="serviceName" label={t('service-name')}>
                   <Input placeholder="my-service" />
                 </Form.Item>
               );
             }}
           </Form.Item>
-          <Form.Item name="constraints" label={t('Constraints (one per line, supports variables like ${var})')}>
+          <Form.Item name="constraints" label={t('constraints-one-per-line-supports-variables-like-var')}>
             <TextArea rows={3} placeholder={t('e.g. a == b')} />
           </Form.Item>
           {getConfig().role === 'platform' && (
-            <Form.Item label={t('Organization')} required tooltip={t('Management policy will be created in this organization')}>
+            <Form.Item label={t('organization')} required tooltip={t('management-policy-will-be-created-in-this-organization')}>
               <Select
                 showSearch
-                placeholder={t('Select organization')}
+                placeholder={t('select-organization')}
                 value={createOrg || undefined}
                 onChange={(v) => setCreateOrg(v)}
                 options={allOrgs.map((o) => ({ label: o, value: o }))}
@@ -455,16 +473,16 @@ const [createOpen, setCreateOpen] = useState(false);
         </Form>
 
         <div style={{ marginBottom: 8 }}>
-          <Text strong>{t('Data Services (optional)')}</Text>
+          <Text strong>{t('data-services-optional')}</Text>
         </div>
         <Input.Search
-          placeholder={t('Search service...')}
+          placeholder={t('search-service')}
           value={serviceSearch}
           onChange={(e) => setServiceSearch(e.target.value)}
           style={{ marginBottom: 8 }}
         />
         <div style={{ maxHeight: 180, overflow: 'auto', border: '1px solid #d9d9d9', borderRadius: 6, padding: 8 }}>
-          {filteredServices.length === 0 && <Text type="secondary">{t('No services available')}</Text>}
+          {filteredServices.length === 0 && <Text type="secondary">{t('no-services-available')}</Text>}
           {filteredServices.map((id) => (
             <div
               key={id}
@@ -485,7 +503,7 @@ const [createOpen, setCreateOpen] = useState(false);
       </Modal>
 
       <Modal
-        title={t('Edit Management Policy')}
+        title={t('edit-management-policy')}
         open={editOpen}
         onOk={handleEdit}
         onCancel={() => { setEditOpen(false); editForm.resetFields(); setSelectedServices([]); }}
@@ -493,34 +511,34 @@ const [createOpen, setCreateOpen] = useState(false);
         width={640}
       >
         <Form form={editForm} layout="vertical">
-          <Form.Item name="label" label={t('Label')} rules={[{ required: true, message: t('Please enter a label') }]}>
+          <Form.Item name="label" label={t('label')} rules={[{ required: true, message: t('please-enter-a-label') }]}>
             <Input />
           </Form.Item>
-          <Form.Item name="description" label={t('Description')}>
+          <Form.Item name="description" label={t('description')}>
             <TextArea rows={2} />
           </Form.Item>
-          <Form.Item name="constraints" label={t('Constraints (one per line, supports variables like ${var})')}>
+          <Form.Item name="constraints" label={t('constraints-one-per-line-supports-variables-like-var')}>
             <TextArea rows={3} />
           </Form.Item>
         </Form>
       </Modal>
 
       <Modal
-        title={t('Import')}
+        title={t('import')}
         open={importOpen}
         onOk={handleImport}
         onCancel={() => { setImportOpen(false); importForm.resetFields(); }}
         width={640}
       >
         <Form form={importForm} layout="vertical">
-          <Form.Item name="name" label={t('Management policy name (optional, leave empty to auto-generate)')}>
+          <Form.Item name="name" label={t('management-policy-name-optional-leave-empty-to-auto-generate')}>
             <Input placeholder="my-imported-mgmt-policy" />
           </Form.Item>
           {getConfig().role === 'platform' && (
-            <Form.Item label={t('Organization')} required tooltip={t('Policy will be created in this organization')}>
+            <Form.Item label={t('organization')} required tooltip={t('policy-will-be-created-in-this-organization')}>
               <Select
                 showSearch
-                placeholder={t('Select organization')}
+                placeholder={t('select-organization')}
                 value={importOrg || undefined}
                 onChange={(v) => setImportOrg(v)}
                 options={allOrgs.map((o) => ({ label: o, value: o }))}
@@ -528,7 +546,7 @@ const [createOpen, setCreateOpen] = useState(false);
               />
             </Form.Item>
           )}
-          <Form.Item name="json" label={t('Management policy JSON')} rules={[{ required: true, message: t('Please enter management policy JSON') }]}>
+          <Form.Item name="json" label={t('management-policy-json')} rules={[{ required: true, message: t('please-enter-management-policy-json') }]}>
             <TextArea rows={10} placeholder='{\n  "label": "...",\n  "constraints": [...],\n  "service": {...}\n}' />
           </Form.Item>
         </Form>

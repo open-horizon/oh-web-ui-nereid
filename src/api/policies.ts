@@ -60,6 +60,11 @@ export const DeploymentPolicyAPI = {
   delete(policyId: string) {
     return del(polUrl(policyId));
   },
+  search(policyId: string, org?: string) {
+    const qs = org ? `?org=${encodeURIComponent(org)}` : '';
+    const s = splitOrg(policyId);
+    return post<any>(`/policies/${encodeURIComponent(s.name)}/search${qs}`, {});
+  },
 };
 
 // Management policies — node-level lifecycle management (pattern/businessPolicy/service type)
@@ -76,5 +81,10 @@ export const MgmtPolicyAPI = {
   },
   delete(policyId: string) {
     return del(mgmtUrl(policyId));
+  },
+  status(policyId: string, org?: string) {
+    const qs = org ? `?org=${encodeURIComponent(org)}` : '';
+    const s = splitOrg(policyId);
+    return get(`/mgmtpolicies/${encodeURIComponent(s.name)}/status${qs}`);
   },
 };

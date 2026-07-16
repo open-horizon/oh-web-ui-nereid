@@ -46,7 +46,7 @@ export default function HaGroups() {
 
   const showDetail = (id: string) => {
     Modal.info({ maskClosable: true,
-      title: t('HA Group') + ' - ' + id,
+      title: t('ha-group') + ' - ' + id,
       width: 700,
       content: (
         <pre style={{ background: '#f5f5f5', padding: 16, borderRadius: 6, overflow: 'auto', maxHeight: 500 }}>
@@ -71,7 +71,7 @@ export default function HaGroups() {
       };
       if (values.networkType) body.network = { type: values.networkType };
       await HaGroupAPI.create(values.name, body);
-      message.success(t('HA Group created successfully'));
+      message.success(t('ha-group-created-successfully'));
       setCreateOpen(false);
       createForm.resetFields();
       load();
@@ -101,7 +101,7 @@ export default function HaGroups() {
       };
       if (values.networkType) body.network = { type: values.networkType };
       await HaGroupAPI.update(editingId, body);
-      message.success(t('HA Group updated successfully'));
+      message.success(t('ha-group-updated-successfully'));
       setEditOpen(false);
       editForm.resetFields();
       load();
@@ -114,11 +114,11 @@ export default function HaGroups() {
 
   const handleDelete = (id: string) => {
     Modal.confirm({
-      title: t('Confirm deletion of HA group').replace('{0}', id),
+      title: t('confirm-deletion-of-ha-group').replace('{0}', id),
       onOk: async () => {
         try {
           await HaGroupAPI.delete(id);
-          message.success(t('Deleted'));
+          message.success(t('deleted'));
           load();
         } catch (err: any) {
           message.error(err.message);
@@ -139,7 +139,7 @@ export default function HaGroups() {
   const addNode = async (nodeId: string) => {
     try {
       await HaGroupAPI.addNode(memberGroupId, nodeId);
-      message.success(t('Node added to HA group'));
+      message.success(t('node-added-to-ha-group'));
       load();
     } catch (err: any) {
       message.error(err.message);
@@ -149,7 +149,7 @@ export default function HaGroups() {
   const removeNode = async (nodeId: string) => {
     try {
       await HaGroupAPI.removeNode(memberGroupId, nodeId);
-      message.success(t('Node removed from HA group'));
+      message.success(t('node-removed-from-ha-group'));
       const updated = await HaGroupAPI.list();
       setData(updated?.hagroups ?? {});
     } catch (err: any) {
@@ -163,24 +163,24 @@ export default function HaGroups() {
 
   const allColumns = [
     {
-      title: t('Name'), key: 'name', width: 200,
+      title: t('name'), key: 'name', width: 200,
       render: (_: any, record: any) => record.key,
     },
-    { title: t('Description'), dataIndex: 'description', key: 'description', render: (v: string) => v || '-' },
+    { title: t('description'), dataIndex: 'description', key: 'description', render: (v: string) => v || '-' },
     {
-      title: t('Member Count'), key: 'members', width: 120,
+      title: t('member-count'), key: 'members', width: 120,
       render: (_: any, record: any) => record?.members?.length ?? 0,
     },
     {
-      title: t('Network Config'), key: 'network', width: 120,
+      title: t('network-config'), key: 'network', width: 120,
       render: (_: any, record: any) => record?.network?.type || '-',
     },
     {
-      title: t('Last Updated'), key: 'lastUpdated', width: 180,
+      title: t('last-updated'), key: 'lastUpdated', width: 180,
       render: (_: any, record: any) => fmtTime(record?.lastUpdated),
     },
     {
-      title: t('Actions'), key: 'action', width: 180,
+      title: t('actions'), key: 'action', width: 180,
       render: (_: any, record: any) => {
         const id = record.key;
         return (
@@ -188,7 +188,7 @@ export default function HaGroups() {
             <Button size="small" icon={<EyeOutlined />} onClick={() => showDetail(id)} />
             <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(id)} />
             <Button size="small" icon={<TeamOutlined />} onClick={() => openMembers(id)}>
-              {t('Members')}
+              {t('members')}
             </Button>
             <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(id)} />
           </Space>
@@ -223,68 +223,68 @@ export default function HaGroups() {
     <div>
       <div style={{ marginBottom: 16 }}>
         <div>
-          <Text strong style={{ fontSize: 20 }}>{t('High Availability Groups (HA Groups)')}</Text>
+          <Text strong style={{ fontSize: 20 }}>{t('high-availability-groups-ha-groups')}</Text>
           <HelpButton module="hagroups" />
-          <br /><Text type="secondary">{t('HA Group Management')}</Text>
+          <br /><Text type="secondary">{t('ha-group-management')}</Text>
         </div>
         <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <Input
             allowClear
-            placeholder={t('Search')}
+            placeholder={t('search')}
             prefix={<SearchOutlined />}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             style={{ width: 200 }}
           />
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('Create HA Group')}</Button>
-          <Button icon={<ReloadOutlined />} onClick={load}>{t('Refresh')}</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('create-ha-group')}</Button>
+          <Button icon={<ReloadOutlined />} onClick={load}>{t('refresh')}</Button>
         </div>
       </div>
-      <Table columns={columns} dataSource={tableData} loading={loading} pagination={{ pageSize: 10, showSizeChanger: true, showQuickJumper: true, showLessItems: false, showTotal: (total) => `${total} ${t('HA Groups')}` }} size="middle" scroll={{ x: 'max-content' }} />
+      <Table columns={columns} dataSource={tableData} loading={loading} pagination={{ pageSize: 10, showSizeChanger: true, showQuickJumper: true, showLessItems: false, showTotal: (total) => `${total} ${t('ha-groups')}` }} size="middle" scroll={{ x: 'max-content' }} />
 
-      <Modal title={t('Create HA Group')} open={createOpen} onOk={handleCreate} onCancel={() => setCreateOpen(false)} confirmLoading={saving} width={480}>
+      <Modal title={t('create-ha-group')} open={createOpen} onOk={handleCreate} onCancel={() => setCreateOpen(false)} confirmLoading={saving} width={480}>
         <Form form={createForm} layout="vertical">
-          <Form.Item name="name" label={t('Name')} rules={[{ required: true, message: t('Please enter name') }]}>
+          <Form.Item name="name" label={t('name')} rules={[{ required: true, message: t('please-enter-name') }]}>
             <Input placeholder="my-ha-group" />
           </Form.Item>
-          <Form.Item name="description" label={t('Description')}>
-            <TextArea rows={2} placeholder={t('Optional description')} />
+          <Form.Item name="description" label={t('description')}>
+            <TextArea rows={2} placeholder={t('optional-description')} />
           </Form.Item>
-          <Form.Item name="networkType" label={t('Network Config')}>
+          <Form.Item name="networkType" label={t('network-config')}>
             <Input placeholder="e.g. bridge, host" />
           </Form.Item>
         </Form>
       </Modal>
 
-      <Modal title={t('Edit HA Group')} open={editOpen} onOk={handleEdit} onCancel={() => { setEditOpen(false); editForm.resetFields(); }} confirmLoading={saving} width={480}>
+      <Modal title={t('edit-ha-group')} open={editOpen} onOk={handleEdit} onCancel={() => { setEditOpen(false); editForm.resetFields(); }} confirmLoading={saving} width={480}>
         <Form form={editForm} layout="vertical">
-          <Form.Item name="description" label={t('Description')}>
+          <Form.Item name="description" label={t('description')}>
             <TextArea rows={2} />
           </Form.Item>
-          <Form.Item name="networkType" label={t('Network Config')}>
+          <Form.Item name="networkType" label={t('network-config')}>
             <Input />
           </Form.Item>
         </Form>
       </Modal>
 
-      <Modal title={t('HA Group Members') + ' - ' + memberGroupId} open={memberOpen} onCancel={() => setMemberOpen(false)} footer={null} width={560}>
+      <Modal title={t('ha-group-members') + ' - ' + memberGroupId} open={memberOpen} onCancel={() => setMemberOpen(false)} footer={null} width={560}>
         <div style={{ marginBottom: 12 }}>
-          <Text strong>{t('Current Members')}</Text>
+          <Text strong>{t('current-members')}</Text>
         </div>
-        {memberIds.length === 0 && <Text type="secondary">{t('No members')}</Text>}
+        {memberIds.length === 0 && <Text type="secondary">{t('no-members')}</Text>}
         {memberIds.map((nid) => (
           <div key={nid} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0' }}>
             <Text><Tag color="blue">{nid}</Tag></Text>
-            <Button size="small" danger icon={<DeleteOutlined />} onClick={() => removeNode(nid)}>{t('Remove')}</Button>
+            <Button size="small" danger icon={<DeleteOutlined />} onClick={() => removeNode(nid)}>{t('remove')}</Button>
           </div>
         ))}
         <div style={{ marginTop: 16, marginBottom: 8 }}>
-          <Text strong>{t('Add Node')}</Text>
+          <Text strong>{t('add-node')}</Text>
         </div>
         <Select
           showSearch
           style={{ width: '100%' }}
-          placeholder={t('Select a node...')}
+          placeholder={t('select-a-node')}
           onChange={addNode}
           filterOption={(input, option) => (option?.label as string || '').toLowerCase().includes(input.toLowerCase())}
           options={availableNodes.map((nid) => ({ label: nid, value: nid }))}

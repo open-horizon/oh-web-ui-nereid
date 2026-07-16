@@ -993,7 +993,7 @@ app.get('/api/status', async (req, res) => {
         if (svcRes.status === 200 && svcRes.data?.services) totalServices += Object.keys(svcRes.data.services).length;
         if (abRes.status === 200 && abRes.data?.agbots) totalAgbots += Object.keys(abRes.data.agbots).length;
         if (patRes.status === 200 && patRes.data?.patterns) totalPatterns += Object.keys(patRes.data.patterns).length;
-        if (polRes.status === 200 && polRes.data?.businessPolicys) totalPolicies += Object.keys(polRes.data.businessPolicys).length;
+        if (polRes.status === 200 && polRes.data?.businessPolicy) totalPolicies += Object.keys(polRes.data.businessPolicy).length;
         if (mgRes.status === 200 && mgRes.data?.managementPolicies) totalMgmtPolicies += Object.keys(mgRes.data.managementPolicies).length;
       } catch {}
     }));
@@ -1031,9 +1031,20 @@ app.get('/api/dashboard', async (req, res) => {
     let totalNodes = 0, totalUsers = 0, totalServices = 0, totalAgbots = 0;
     let totalPatterns = 0, totalPolicies = 0, totalMgmtPolicies = 0;
     let allNodeList = [];
+    let totalAgreements = 0, activeAgreements = 0;
+    let totalErrors = 0, recentErrors = [];
+    let nodeHealth = { healthy: 0, unhealthy: 0, unknown: 0 };
+    let serviceInstances = 0;
+    let exchangeConnected = false;
+    let exchangeLatency = 0;
+    let nodeVersions = {};
+    let unhealthyNodes = [];
+    let orgResources = {};
+    
     await Promise.all(orgs.map(async (org) => {
       try {
-        const [staRes, nRes, svcRes, abRes, patRes, polRes, mgRes] = await Promise.all([
+        const startTime = Date.now();
+        const [staRes, nRes, svcRes, abRes, patRes, polRes, mgRes, errRes] = await Promise.all([
           exch(s, 'GET', `/orgs/${org}/status`),
           exch(s, 'GET', `/orgs/${org}/nodes`),
           exch(s, 'GET', `/orgs/${org}/services`),
@@ -1041,29 +1052,100 @@ app.get('/api/dashboard', async (req, res) => {
           exch(s, 'GET', `/orgs/${org}/patterns`),
           exch(s, 'GET', `/orgs/${org}/business/policies`),
           exch(s, 'GET', `/orgs/${org}/managementpolicies`),
+          exch(s, 'GET', `/orgs/${org}/nodes/errors`).catch(() => ({ status: 500, data: null })),
         ]);
+        exchangeLatency += Date.now() - startTime;
+        
         if (staRes.status === 200 && staRes.data) {
           totalNodes += staRes.data.numberOfNodes ?? 0;
           totalUsers += staRes.data.numberOfUsers ?? 0;
         }
         if (nRes.status === 200 && nRes.data?.nodes) {
-          Object.entries(nRes.data.nodes).forEach(([id, n]) => {
+          const nodes = nRes.data.nodes;
+          Object.entries(nodes).forEach(([id, n]) => {
             allNodeList.push({ id, lastHeartbeat: n.lastHeartbeat, pattern: n.pattern, registered: Array.isArray(n.registeredServices) ? n.registeredServices.length : 0, org });
+            // Node health check
+            const heartbeatAge = n.lastHeartbeat ? now - new Date(n.lastHeartbeat).getTime() : Infinity;
+            if (heartbeatAge < 300000) nodeHealth.healthy++;
+            else if (heartbeatAge < 600000) nodeHealth.unknown++;
+            else {
+              nodeHealth.unhealthy++;
+              unhealthyNodes.push({ id, lastHeartbeat: n.lastHeartbeat, org });
+            }
+            // Version distribution
+            const version = n.version || n.agent_version || 'unknown';
+            nodeVersions[version] = (nodeVersions[version] || 0) + 1;
           });
         }
         if (svcRes.status === 200 && svcRes.data?.services) totalServices += Object.keys(svcRes.data.services).length;
         if (abRes.status === 200 && abRes.data?.agbots) totalAgbots += Object.keys(abRes.data.agbots).length;
         if (patRes.status === 200 && patRes.data?.patterns) totalPatterns += Object.keys(patRes.data.patterns).length;
-        if (polRes.status === 200 && polRes.data?.businessPolicys) totalPolicies += Object.keys(polRes.data.businessPolicys).length;
+        if (polRes.status === 200 && polRes.data?.businessPolicy) totalPolicies += Object.keys(polRes.data.businessPolicy).length;
         if (mgRes.status === 200 && mgRes.data?.managementPolicies) totalMgmtPolicies += Object.keys(mgRes.data.managementPolicies).length;
+        
+        // Agreements - aggregate from agbots
+        if (abRes.status === 200 && abRes.data?.agbots) {
+          const agbotIds = Object.keys(abRes.data.agbots);
+          await Promise.all(agbotIds.map(async (agbotId) => {
+            try {
+              const agRes = await exch(s, 'GET', `/orgs/${org}/agbots/${encodeURIComponent(agbotId)}/agreements`);
+              if (agRes.status === 200 && agRes.data?.agreements) {
+                const agreements = Object.values(agRes.data.agreements);
+                totalAgreements += agreements.length;
+                activeAgreements += agreements.filter((a) => a.state === 'negotiated' || a.state === 'agreed' || a.active).length;
+              }
+            } catch {}
+          }));
+        }
+        
+        // Errors
+        if (errRes.status === 200 && errRes.data?.errors) {
+          const errors = Object.values(errRes.data.errors);
+          totalErrors += errors.length;
+          recentErrors.push(...errors.slice(0, 5));
+        }
+        
+        // Organization resources
+        orgResources[org] = {
+          nodes: staRes.data?.numberOfNodes ?? 0,
+          users: staRes.data?.numberOfUsers ?? 0,
+          services: svcRes.status === 200 ? Object.keys(svcRes.data?.services ?? {}).length : 0,
+          agbots: abRes.status === 200 ? Object.keys(abRes.data?.agbots ?? {}).length : 0,
+        };
       } catch {}
     }));
+    
+    exchangeConnected = exchangeLatency > 0;
+    exchangeLatency = Math.round(exchangeLatency / orgs.length);
     const online = allNodeList.filter((n) => n.lastHeartbeat && now - new Date(n.lastHeartbeat).getTime() < 300000).length;
     const recent = allNodeList
       .filter((n) => n.lastHeartbeat)
       .sort((a, b) => new Date(b.lastHeartbeat).getTime() - new Date(a.lastHeartbeat).getTime())
       .slice(0, 8)
       .map((n) => ({ id: n.id, lastHeartbeat: n.lastHeartbeat, pattern: n.pattern, registered: n.registered }));
+    
+    // Sort recent errors by timestamp
+    recentErrors.sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
+    recentErrors = recentErrors.slice(0, 10);
+    
+    // Unhealthy nodes (limit to 10)
+    unhealthyNodes = unhealthyNodes.slice(0, 10);
+    
+    // Node version distribution (top 5)
+    const nodeVersionList = Object.entries(nodeVersions)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([version, count]) => ({ version, count }));
+    
+    // Recent changes (try to get from Exchange)
+    let recentChanges = [];
+    try {
+      const changesRes = await exch(s, 'GET', '/changes?max=10');
+      if (changesRes.status === 200 && changesRes.data?.changes) {
+        recentChanges = Object.values(changesRes.data.changes).slice(0, 10);
+      }
+    } catch {}
+    
     res.json({
       orgId: s.orgId,
       orgType: s.orgType,
@@ -1078,6 +1160,25 @@ app.get('/api/dashboard', async (req, res) => {
       serverUptimeMs: now - SERVER_START,
       serverStartedAt: new Date(SERVER_START).toISOString(),
       recentNodes: recent,
+      // Existing fields
+      nodeHealth,
+      totalAgreements,
+      activeAgreements,
+      totalErrors,
+      recentErrors,
+      serviceInstances: totalNodes,
+      exchangeConnected,
+      exchangeLatency,
+      notifications: [
+        ...(nodeHealth.unhealthy > 0 ? [{ type: 'warning', message: `${nodeHealth.unhealthy} nodes unhealthy` }] : []),
+        ...(totalErrors > 0 ? [{ type: 'error', message: `${totalErrors} errors detected` }] : []),
+        ...(activeAgreements < totalAgreements ? [{ type: 'info', message: `${totalAgreements - activeAgreements} agreements inactive` }] : []),
+      ],
+      // New fields
+      nodeVersionList,
+      unhealthyNodes,
+      orgResources,
+      recentChanges,
     });
   } catch (e) { res.status(502).json({ msg: e.message }); }
 });
@@ -1365,6 +1466,244 @@ app.get('/api/nodes/:id/managementStatus', async (req, res) => {
   try {
     const nodeId = stripOrg(org, decodeURIComponent(req.params.id));
     const { status, data } = await exch(s, 'GET', `/orgs/${org}/nodes/${nodeId}/managementStatus`);
+    res.status(ok(status, data)).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+// ==============================================
+// Node Search Routes
+// ==============================================
+
+// Search nodes by service
+app.post('/api/search/nodes/service', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  const org = req.query.org || s.orgId;
+  try {
+    console.log('[DEBUG] Search nodes by service:', org, 'body:', JSON.stringify(req.body));
+    const { status, data } = await exch(s, 'POST', `/orgs/${org}/search/nodes/service`, req.body);
+    console.log('[DEBUG] Search result:', status, JSON.stringify(data).substring(0, 200));
+    res.status(ok(status, data)).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+// Search nodes by error
+app.post('/api/search/nodes/error', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  const org = req.query.org || s.orgId;
+  try {
+    console.log('[SEARCH-ERROR] org:', org, 'body:', JSON.stringify(req.body));
+    const { status, data } = await exch(s, 'POST', `/orgs/${org}/search/nodes/error`, req.body);
+    console.log('[SEARCH-ERROR] result:', status, JSON.stringify(data).substring(0, 300));
+    res.status(ok(status, data)).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+// Get all node errors
+app.get('/api/search/nodes/error/all', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  const org = req.query.org || s.orgId;
+  try {
+    const { status, data } = await exch(s, 'GET', `/orgs/${org}/search/nodes/error/all`);
+    res.status(ok(status, data)).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+// Search node health
+app.post('/api/search/nodehealth', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  const org = req.query.org || s.orgId;
+  try {
+    console.log('[SEARCH-HEALTH] org:', org, 'body:', JSON.stringify(req.body));
+    const { status, data } = await exch(s, 'POST', `/orgs/${org}/search/nodehealth`, req.body);
+    console.log('[SEARCH-HEALTH] result:', status, JSON.stringify(data).substring(0, 300));
+    res.status(ok(status, data)).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+// Node status CRUD
+app.get('/api/nodes/:id/status', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  const org = req.query.org || s.orgId;
+  try {
+    const nodeId = stripOrg(org, decodeURIComponent(req.params.id));
+    const { status, data } = await exch(s, 'GET', `/orgs/${org}/nodes/${nodeId}/status`);
+    res.status(ok(status, data)).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+app.put('/api/nodes/:id/status', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  const org = req.query.org || s.orgId;
+  try {
+    const nodeId = stripOrg(org, decodeURIComponent(req.params.id));
+    const { status, data } = await exch(s, 'PUT', `/orgs/${org}/nodes/${nodeId}/status`, req.body);
+    res.status(ok(status, data)).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+app.delete('/api/nodes/:id/status', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  const org = req.query.org || s.orgId;
+  try {
+    const nodeId = stripOrg(org, decodeURIComponent(req.params.id));
+    const { status, data } = await exch(s, 'DELETE', `/orgs/${org}/nodes/${nodeId}/status`);
+    res.status(ok(status, data)).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+// Node error management
+app.put('/api/nodes/:id/errors', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  const org = req.query.org || s.orgId;
+  try {
+    const nodeId = stripOrg(org, decodeURIComponent(req.params.id));
+    const { status, data } = await exch(s, 'PUT', `/orgs/${org}/nodes/${nodeId}/errors`, req.body);
+    res.status(ok(status, data)).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+app.delete('/api/nodes/:id/errors', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  const org = req.query.org || s.orgId;
+  try {
+    const nodeId = stripOrg(org, decodeURIComponent(req.params.id));
+    const { status, data } = await exch(s, 'DELETE', `/orgs/${org}/nodes/${nodeId}/errors`);
+    res.status(ok(status, data)).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+// Node services config state
+app.post('/api/nodes/:id/services_configstate', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  const org = req.query.org || s.orgId;
+  try {
+    const nodeId = stripOrg(org, decodeURIComponent(req.params.id));
+    const { status, data } = await exch(s, 'POST', `/orgs/${org}/nodes/${nodeId}/services_configstate`, req.body);
+    res.status(ok(status, data)).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+// Node heartbeat
+app.post('/api/nodes/:id/heartbeat', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  const org = req.query.org || s.orgId;
+  try {
+    const nodeId = stripOrg(org, decodeURIComponent(req.params.id));
+    const { status, data } = await exch(s, 'POST', `/orgs/${org}/nodes/${nodeId}/heartbeat`);
+    res.status(ok(status, data)).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+// ==============================================
+// Deployment Policy Search
+// ==============================================
+
+app.post('/api/policies/:id/search', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  const org = req.query.org || s.orgId;
+  try {
+    const policyId = stripOrg(org, decodeURIComponent(req.params.id));
+    const { status, data } = await exch(s, 'POST', `/orgs/${org}/business/policies/${policyId}/search`, req.body);
+    res.status(ok(status, data)).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+// ==============================================
+// Pattern Search
+// ==============================================
+
+app.post('/api/patterns/:id/search', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  const org = req.query.org || s.orgId;
+  try {
+    const patternId = stripOrg(org, decodeURIComponent(req.params.id));
+    const { status, data } = await exch(s, 'POST', `/orgs/${org}/patterns/${patternId}/search`, req.body);
+    res.status(ok(status, data)).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+// ==============================================
+// Agbot Routes
+// ==============================================
+
+app.post('/api/agbots/:id/heartbeat', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  const org = req.query.org || s.orgId;
+  try {
+    const agbotId = stripOrg(org, decodeURIComponent(req.params.id));
+    const { status, data } = await exch(s, 'POST', `/orgs/${org}/agbots/${agbotId}/heartbeat`);
+    res.status(ok(status, data)).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+app.get('/api/agbots/:id/msgs', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  const org = req.query.org || s.orgId;
+  try {
+    const agbotId = stripOrg(org, decodeURIComponent(req.params.id));
+    const { status, data } = await exch(s, 'GET', `/orgs/${org}/agbots/${agbotId}/msgs`);
+    res.status(ok(status, data)).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+app.post('/api/agbots/:id/msgs', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  const org = req.query.org || s.orgId;
+  try {
+    const agbotId = stripOrg(org, decodeURIComponent(req.params.id));
+    const { status, data } = await exch(s, 'POST', `/orgs/${org}/agbots/${agbotId}/msgs`, req.body);
+    res.status(ok(status, data)).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+// ==============================================
+// Changes / Notification Framework
+// ==============================================
+
+app.post('/api/changes', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  const org = req.query.org || s.orgId;
+  try {
+    const { status, data } = await exch(s, 'POST', `/orgs/${org}/changes`, req.body);
+    res.status(ok(status, data)).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+app.get('/api/changes/maxchangeid', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  try {
+    const { status, data } = await exch(s, 'GET', '/changes/maxchangeid');
+    res.status(ok(status, data)).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+// ==============================================
+// My Orgs
+// ==============================================
+
+app.post('/api/myorgs', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  try {
+    const { status, data } = await exch(s, 'POST', '/myorgs');
     res.status(ok(status, data)).json(data);
   } catch (e) { res.status(502).json({ msg: e.message }); }
 });
@@ -2160,6 +2499,298 @@ app.delete('/api/hagroups/:id/nodes/:nodeId', async (req, res) => {
     const hgId = stripOrg(org, decodeURIComponent(req.params.id));
     const nodeId = stripOrg(org, decodeURIComponent(req.params.nodeId));
     const { status, data } = await exch(s, 'DELETE', `/orgs/${org}/hagroups/${hgId}/nodes/${nodeId}`);
+    res.status(status).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+// ==============================================
+// Secrets Management Routes
+// ==============================================
+
+app.get('/api/secrets', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  // Secrets are managed by the Secrets Manager (Vault/OpenBao), not the Exchange API.
+  // Return empty list since Exchange does not have a secrets endpoint.
+  res.json({ secrets: {} });
+});
+
+app.post('/api/secrets', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  res.status(400).json({ msg: 'Secrets must be managed via the Secrets Manager (hzn secretsmanager), not the Exchange API' });
+});
+
+app.delete('/api/secrets/:name', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  res.status(400).json({ msg: 'Secrets must be managed via the Secrets Manager (hzn secretsmanager), not the Exchange API' });
+});
+
+// ==============================================
+// Service Instances Routes
+// Service instances in Open Horizon are node-level, retrieved via /nodes/:id/services
+// The Exchange API does not have a standalone /service-instances endpoint.
+// ==============================================
+
+app.get('/api/service-instances', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  try {
+    // Determine orgs to query
+    let orgs = [s.orgId];
+    if (s.role === 'platform') {
+      try {
+        const orgRes = await exch(s, 'GET', '/orgs');
+        if (orgRes.status === 200) {
+          orgs = Object.keys(orgRes.data?.orgs ?? {}).filter((o) => o !== 'root');
+        }
+      } catch {}
+    }
+    
+    // Get all nodes from all orgs, then fetch services for each node
+    const instances = {};
+    
+    await Promise.all(orgs.map(async (org) => {
+      try {
+        const nodesRes = await exch(s, 'GET', `/orgs/${org}/nodes`);
+        if (nodesRes.status !== 200 || !nodesRes.data?.nodes) return;
+        
+        const nodeIds = Object.keys(nodesRes.data.nodes);
+        await Promise.all(nodeIds.map(async (nodeId) => {
+          try {
+            const svcRes = await exch(s, 'GET', `/orgs/${org}/nodes/${encodeURIComponent(nodeId)}/status`);
+            if (svcRes.status === 200 && svcRes.data?.services) {
+              const services = svcRes.data.services;
+              // Services can be an array or an object keyed by service URL
+              let serviceEntries = [];
+              if (Array.isArray(services)) {
+                serviceEntries = services.map((s, i) => {
+                  const key = s.url || s.serviceUrl || s.name || `service-${i}`;
+                  return [key, s];
+                });
+              } else if (typeof services === 'object') {
+                serviceEntries = Object.entries(services);
+              }
+              
+              serviceEntries.forEach(([svcKey, svcData]) => {
+                const instanceId = `${nodeId}/${svcKey}`;
+                const containerState = Array.isArray(svcData.containerStatus) && svcData.containerStatus.length > 0
+                  ? svcData.containerStatus[0].state
+                  : '';
+                instances[instanceId] = {
+                  id: instanceId,
+                  node_id: nodeId,
+                  orgid: org,
+                  service_url: svcData.serviceUrl || svcData.url || svcKey,
+                  service_version: svcData.version || '',
+                  service_arch: svcData.arch || '',
+                  agreement_id: svcData.agreementId || svcData.agreement_id || '',
+                  state: containerState,
+                  containerStatus: svcData.containerStatus || [],
+                  ...svcData,
+                };
+              });
+            }
+          } catch {}
+        }));
+      } catch {}
+    }));
+    
+    res.json(instances);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+app.get('/api/service-instances/:id', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  try {
+    const instanceId = decodeURIComponent(req.params.id);
+    const parts = instanceId.split('/');
+    if (parts.length < 2) {
+      return res.status(400).json({ msg: 'Invalid instance ID format. Expected: nodeId/serviceKey' });
+    }
+    const nodeId = parts[0];
+    const svcKey = parts.slice(1).join('/');
+    const org = req.query.org || s.orgId;
+    
+    const { status, data } = await exch(s, 'GET', `/orgs/${org}/nodes/${encodeURIComponent(nodeId)}/services/${encodeURIComponent(svcKey)}`);
+    if (status === 200 && data) {
+      res.json({ id: instanceId, node_id: nodeId, orgid: org, service_url: svcKey, ...data });
+    } else {
+      res.status(status).json(data);
+    }
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+app.delete('/api/service-instances/:id', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  try {
+    const instanceId = decodeURIComponent(req.params.id);
+    const parts = instanceId.split('/');
+    if (parts.length < 2) {
+      return res.status(400).json({ msg: 'Invalid instance ID format' });
+    }
+    const nodeId = parts[0];
+    const svcKey = parts.slice(1).join('/');
+    const org = req.query.org || s.orgId;
+    
+    const { status, data } = await exch(s, 'DELETE', `/orgs/${org}/nodes/${encodeURIComponent(nodeId)}/services/${encodeURIComponent(svcKey)}`);
+    res.status(ok(status, data)).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+// ==============================================
+// Bulk Node Operations
+// ==============================================
+
+app.post('/api/nodes/bulk/delete', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  const org = req.query.org || s.orgId;
+  try {
+    const { nodeIds } = req.body;
+    if (!Array.isArray(nodeIds) || nodeIds.length === 0) return res.status(400).json({ msg: 'No node IDs provided' });
+    const results = await Promise.all(nodeIds.map(async (rawId) => {
+      const nodeId = stripOrg(org, rawId);
+      try {
+        const { status, data } = await exch(s, 'DELETE', `/orgs/${org}/nodes/${nodeId}`);
+        return { id: nodeId, ok: status >= 200 && status < 300, status, msg: data?.msg };
+      } catch (e) { return { id: nodeId, ok: false, msg: e.message }; }
+    }));
+    res.json({ results });
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+app.post('/api/nodes/bulk/set-pattern', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  const org = req.query.org || s.orgId;
+  try {
+    const { nodeIds, pattern } = req.body;
+    if (!Array.isArray(nodeIds) || nodeIds.length === 0) return res.status(400).json({ msg: 'No node IDs provided' });
+    if (!pattern) return res.status(400).json({ msg: 'No pattern specified' });
+    const auth = req.headers['x-root-auth'] || s.auth;
+    const sess = { ...s, auth };
+    const fullPattern = pattern.includes('/') ? pattern : `${org}/${pattern}`;
+    const results = await Promise.all(nodeIds.map(async (rawId) => {
+      const nodeId = stripOrg(org, rawId);
+      try {
+        const { status, data } = await exch(sess, 'PATCH', `/orgs/${org}/nodes/${nodeId}`, { pattern: fullPattern });
+        return { id: nodeId, ok: status >= 200 && status < 300, status, msg: data?.msg };
+      } catch (e) { return { id: nodeId, ok: false, msg: e.message }; }
+    }));
+    res.json({ results });
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+// ==============================================
+// Node Owner Transfer
+// ==============================================
+
+app.post('/api/nodes/:id/transfer', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  const org = req.query.org || s.orgId;
+  try {
+    const nodeId = stripOrg(org, decodeURIComponent(req.params.id));
+    const { targetOrg } = req.body;
+    if (!targetOrg) return res.status(400).json({ msg: 'Target organization is required' });
+    // Step 1: get current node data
+    const getRes = await exch(s, 'GET', `/orgs/${org}/nodes/${nodeId}`);
+    if (getRes.status !== 200 || !getRes.data?.nodes?.[nodeId]) {
+      return res.status(404).json({ msg: 'Node not found' });
+    }
+    const nodeData = getRes.data.nodes[nodeId];
+    // Step 2: create node in target org
+    const createBody = { name: nodeData.name, nodeType: nodeData.nodeType, arch: nodeData.arch, pattern: nodeData.pattern };
+    const createRes = await exch(s, 'PUT', `/orgs/${targetOrg}/nodes/${nodeId}`, createBody);
+    if (createRes.status < 200 || createRes.status >= 300) {
+      return res.status(createRes.status).json({ msg: `Failed to create node in target org: ${createRes.data?.msg || createRes.status}` });
+    }
+    // Step 3: delete from source org
+    await exch(s, 'DELETE', `/orgs/${org}/nodes/${nodeId}`);
+    logEvent('node.transfer', { nodeId, from: org, to: targetOrg }, org);
+    res.json({ ok: true, msg: `Node ${nodeId} transferred from ${org} to ${targetOrg}` });
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+// ==============================================
+// Service Archiving
+// ==============================================
+
+app.post('/api/services/:id/archive', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  const org = req.query.org || s.orgId;
+  try {
+    const svcName = decodeURIComponent(req.params.id);
+    const { status, data } = await exch(s, 'PUT', `/orgs/${org}/services/${svcName}`, { archived: true });
+    res.status(status).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+app.post('/api/services/:id/unarchive', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  const org = req.query.org || s.orgId;
+  try {
+    const svcName = decodeURIComponent(req.params.id);
+    const { status, data } = await exch(s, 'PUT', `/orgs/${org}/services/${svcName}`, { archived: false });
+    res.status(status).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+// ==============================================
+// Organization Configuration (heartbeat, limits)
+// ==============================================
+
+app.put('/api/organizations/:orgid/config', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  try {
+    const orgid = req.params.orgid;
+    const body = {};
+    if (req.body.description !== undefined) body.description = req.body.description;
+    if (req.body.label !== undefined) body.label = req.body.label;
+    if (req.body.heartbeatIntervals) body.heartbeatIntervals = req.body.heartbeatIntervals;
+    if (req.body.limits) body.limits = req.body.limits;
+    const { status, data } = await exch(s, 'PUT', `/orgs/${orgid}`, body);
+    res.status(status).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+// ==============================================
+// NMP Status Detail
+// ==============================================
+
+app.get('/api/mgmtpolicies/:id/status', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  const org = req.query.org || s.orgId;
+  try {
+    const nmpId = stripOrg(org, decodeURIComponent(req.params.id));
+    const { status, data } = await exch(s, 'GET', `/orgs/${org}/managementpolicies/${nmpId}/status`);
+    res.status(ok(status, data)).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+// ==============================================
+// Service Upgrade Management
+// ==============================================
+
+app.post('/api/services/:id/upgrade', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  const org = req.query.org || s.orgId;
+  try {
+    const svcName = decodeURIComponent(req.params.id);
+    const { auto_upgrade, active_upgrade } = req.body;
+    const body = {};
+    if (auto_upgrade !== undefined) body.auto_upgrade = auto_upgrade;
+    if (active_upgrade !== undefined) body.active_upgrade = active_upgrade;
+    const { status, data } = await exch(s, 'PUT', `/orgs/${org}/services/${svcName}`, body);
     res.status(status).json(data);
   } catch (e) { res.status(502).json({ msg: e.message }); }
 });
