@@ -151,165 +151,171 @@ function ContainerFormList({ t }: { t: (k: string) => string }) {
       {(fields, { add, remove }) => (
         <>
           {fields.map(({ key, name, ...rest }) => (
-            <div key={key} style={{ border: '1px solid #d9d9d9', borderRadius: 6, padding: 12, marginBottom: 16, background: '#fafafa' }}>
-              <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
-                <Form.Item {...rest} name={[name, 'serviceName']} rules={[{ required: true, message: t('container-name-required') }]} style={{ marginBottom: 0, flex: 1, marginRight: 8 }}>
-                  <Input placeholder={t('container-name-placeholder')} />
-                </Form.Item>
-                <MinusCircleOutlined onClick={() => remove(name)} style={{ fontSize: 16, color: '#ff4d4f' }} />
+            <Collapse.Panel
+              key={key}
+              header={
+                <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+                  <Form.Item {...rest} name={[name, 'serviceName']} rules={[{ required: true, message: t('container-name-required') }]} style={{ marginBottom: 0, flex: 1, marginRight: 8 }}>
+                    <Input placeholder={t('container-name-placeholder')} />
+                  </Form.Item>
+                  <MinusCircleOutlined onClick={() => remove(name)} style={{ fontSize: 16, color: '#ff4d4f' }} />
+                </div>
+              }
+            >
+              <div style={{ border: '1px solid #d9d9d9', borderRadius: 6, padding: 12, background: '#fafafa', marginTop: 8 }}>
+                <Collapse size="small" destroyInactivePanel={false} defaultActiveKey={['img', 'opts', 'caps', 'health', 'net', 'storage', 'other']} items={[
+                  {
+                    key: 'img',
+                    label: t('image-and-registry'),
+                    children: (
+                      <div>
+                        <Form.Item {...rest} name={[name, 'image']} rules={[{ required: true, message: t('please-enter-the-image-name') }]} style={fieldStyle} label={t('image-name-image')}>
+                          <Input placeholder={t('image-nametag')} />
+                        </Form.Item>
+                        <Form.Item {...rest} name={[name, 'imageStore']} style={fieldStyle} label={t('image-registry')}>
+                          <Input placeholder={t('eg-dockerio')} />
+                        </Form.Item>
+                        <Form.Item {...rest} name={[name, 'imageRegistryToken']} style={fieldStyle} label={t('image-registry-token')}>
+                          <Input.Password />
+                        </Form.Item>
+                      </div>
+                    ),
+                  },
+                  {
+                    key: 'opts',
+                    label: t('deployment-options'),
+                    children: (
+                      <div>
+                        <Form.Item {...rest} name={[name, 'privileged']} style={fieldStyle} label={t('privileged-mode')} valuePropName="checked">
+                          <Switch />
+                        </Form.Item>
+                        <Form.Item {...rest} name={[name, 'user']} style={fieldStyle} label={t('user')}>
+                          <Input placeholder={t('eg-10001000')} />
+                        </Form.Item>
+                        <Form.Item {...rest} name={[name, 'pid']} style={fieldStyle} label={t('pid-namespace')}>
+                          <Input placeholder="host" />
+                        </Form.Item>
+                        <Form.Item {...rest} name={[name, 'ipc']} style={fieldStyle} label={t('ipc-namespace')}>
+                          <Input placeholder="host" />
+                        </Form.Item>
+                        <Form.Item {...rest} name={[name, 'maxMemoryMb']} style={fieldStyle} label={t('max-memory-mb')}>
+                          <Input type="number" />
+                        </Form.Item>
+                        <Form.Item {...rest} name={[name, 'maxCpus']} style={fieldStyle} label={t('max-cpus')}>
+                          <Input placeholder={t('eg-1-05-20')} />
+                        </Form.Item>
+                      </div>
+                    ),
+                  },
+                  {
+                    key: 'caps',
+                    label: t('capabilities'),
+                    children: (
+                      <div>
+                        <Form.Item {...rest} name={[name, 'capAdd']} style={fieldStyle} label={t('linux-capabilities-one-per-line')}>
+                          <TextArea rows={2} />
+                        </Form.Item>
+                        <Form.Item {...rest} name={[name, 'devices']} style={fieldStyle} label={t('device-mappings-one-per-line')}>
+                          <TextArea rows={2} />
+                        </Form.Item>
+                        <Form.Item {...rest} name={[name, 'command']} style={fieldStyle} label={t('command-json-array-or-one-per-line')}>
+                          <TextArea rows={2} />
+                        </Form.Item>
+                        <Form.Item {...rest} name={[name, 'entrypoint']} style={fieldStyle} label={t('entrypoint-json-array-or-one-per-line')}>
+                          <TextArea rows={2} />
+                        </Form.Item>
+                      </div>
+                    ),
+                  },
+                  {
+                    key: 'health',
+                    label: t('health-check'),
+                    children: (
+                      <div>
+                        <Form.Item {...rest} name={[name, 'healthCheckCommand']} style={fieldStyle} label={t('health-check-command')}>
+                          <Input />
+                        </Form.Item>
+                        <Form.Item {...rest} name={[name, 'healthCheckInterval']} style={fieldStyle} label={t('health-check-interval-seconds')}>
+                          <Input type="number" />
+                        </Form.Item>
+                        <Form.Item {...rest} name={[name, 'healthCheckRetries']} style={fieldStyle} label={t('health-check-retries')}>
+                          <Input type="number" />
+                        </Form.Item>
+                        <Form.Item {...rest} name={[name, 'healthCheckMinHealth']} style={fieldStyle} label={t('health-check-minimum-healthy-seconds')}>
+                          <Input type="number" />
+                        </Form.Item>
+                      </div>
+                    ),
+                  },
+                  {
+                    key: 'net',
+                    label: t('network-config'),
+                    children: (
+                      <div>
+                        <Form.Item {...rest} name={[name, 'ports']} style={fieldStyle} label={t('port-config')}>
+                          <TextArea rows={2} placeholder={t('port-config-one-per-line-format-hostportcontainerportprotocol')} />
+                        </Form.Item>
+                        <Form.Item {...rest} name={[name, 'ephemeralPorts']} style={fieldStyle} label={t('ephemeral-ports-json')}>
+                          <TextArea rows={1} />
+                        </Form.Item>
+                        <Form.Item {...rest} name={[name, 'network']} style={fieldStyle} label={t('network-mode')}>
+                          <Input placeholder="host / bridge" />
+                        </Form.Item>
+                        <Form.Item {...rest} name={[name, 'netOpenPorts']} style={fieldStyle} label={t('network-open-policy')}>
+                          <TextArea rows={1} />
+                        </Form.Item>
+                        <Form.Item {...rest} name={[name, 'netActiveAdapter']} style={fieldStyle} label={t('network-active-adapter')}>
+                          <Input placeholder="eth0" />
+                        </Form.Item>
+                        <Form.Item {...rest} name={[name, 'netDefaultInterface']} style={fieldStyle} label={t('default-network-interface')}>
+                          <Input placeholder="eth0" />
+                        </Form.Item>
+                      </div>
+                    ),
+                  },
+                  {
+                    key: 'storage',
+                    label: t('storage-and-volumes'),
+                    children: (
+                      <div>
+                        <Form.Item {...rest} name={[name, 'binds']} style={fieldStyle} label={t('persistent-volumes-one-per-line')}>
+                          <TextArea rows={2} />
+                        </Form.Item>
+                        <Form.Item {...rest} name={[name, 'tmpfs']} style={fieldStyle} label={t('temporary-volumes-one-per-line-format-pathsize')}>
+                          <TextArea rows={2} />
+                        </Form.Item>
+                      </div>
+                    ),
+                  },
+                  {
+                    key: 'other',
+                    label: t('other-config'),
+                    children: (
+                      <div>
+                        <Form.Item {...rest} name={[name, 'environment']} style={fieldStyle} label={t('environment-variables')}>
+                          <TextArea rows={2} />
+                        </Form.Item>
+                        <Form.Item {...rest} name={[name, 'logDriver']} style={fieldStyle} label={t('log-driver')}>
+                          <Input />
+                        </Form.Item>
+                        <Form.Item {...rest} name={[name, 'secrets']} style={fieldStyle} label={t('secrets-json')}>
+                          <TextArea rows={2} />
+                        </Form.Item>
+                        <Form.Item {...rest} name={[name, 'sysctls']} style={fieldStyle} label={t('sysctls-json-or-text')}>
+                          <TextArea rows={1} />
+                        </Form.Item>
+                        <Form.Item {...rest} name={[name, 'sharedBlockDevice']} style={fieldStyle} label={t('shared-block-device')}>
+                          <Input placeholder="/dev/sdb" />
+                        </Form.Item>
+                        <Form.Item {...rest} name={[name, 'haMode']} style={fieldStyle} label={t('high-availability-ha-mode')}>
+                          <Input placeholder={t('e.g. multiple, single, cluster')} />
+                        </Form.Item>
+                      </div>
+                    ),
+                  },
+                ]} />
               </div>
-              <Collapse size="small" destroyInactivePanel={false} defaultActiveKey={['img', 'opts', 'caps', 'health', 'net', 'storage', 'other']} items={[
-                {
-                  key: 'img',
-                  label: t('image-and-registry'),
-                  children: (
-                    <div>
-                      <Form.Item {...rest} name={[name, 'image']} rules={[{ required: true, message: t('please-enter-the-image-name') }]} style={fieldStyle} label={t('image-name-image')}>
-                        <Input placeholder={t('image-nametag')} />
-                      </Form.Item>
-                      <Form.Item {...rest} name={[name, 'imageStore']} style={fieldStyle} label={t('image-registry')}>
-                        <Input placeholder={t('eg-dockerio')} />
-                      </Form.Item>
-                      <Form.Item {...rest} name={[name, 'imageRegistryToken']} style={fieldStyle} label={t('image-registry-token')}>
-                        <Input.Password />
-                      </Form.Item>
-                    </div>
-                  ),
-                },
-                {
-                  key: 'opts',
-                  label: t('deployment-options'),
-                  children: (
-                    <div>
-                      <Form.Item {...rest} name={[name, 'privileged']} style={fieldStyle} label={t('privileged-mode')} valuePropName="checked">
-                        <Switch />
-                      </Form.Item>
-                      <Form.Item {...rest} name={[name, 'user']} style={fieldStyle} label={t('user')}>
-                        <Input placeholder={t('eg-10001000')} />
-                      </Form.Item>
-                      <Form.Item {...rest} name={[name, 'pid']} style={fieldStyle} label={t('pid-namespace')}>
-                        <Input placeholder="host" />
-                      </Form.Item>
-                      <Form.Item {...rest} name={[name, 'ipc']} style={fieldStyle} label={t('ipc-namespace')}>
-                        <Input placeholder="host" />
-                      </Form.Item>
-                      <Form.Item {...rest} name={[name, 'maxMemoryMb']} style={fieldStyle} label={t('max-memory-mb')}>
-                        <Input type="number" />
-                      </Form.Item>
-                      <Form.Item {...rest} name={[name, 'maxCpus']} style={fieldStyle} label={t('max-cpus')}>
-                        <Input placeholder={t('eg-1-05-20')} />
-                      </Form.Item>
-                    </div>
-                  ),
-                },
-                {
-                  key: 'caps',
-                  label: t('capabilities'),
-                  children: (
-                    <div>
-                      <Form.Item {...rest} name={[name, 'capAdd']} style={fieldStyle} label={t('linux-capabilities-one-per-line')}>
-                        <TextArea rows={2} />
-                      </Form.Item>
-                      <Form.Item {...rest} name={[name, 'devices']} style={fieldStyle} label={t('device-mappings-one-per-line')}>
-                        <TextArea rows={2} />
-                      </Form.Item>
-                      <Form.Item {...rest} name={[name, 'command']} style={fieldStyle} label={t('command-json-array-or-one-per-line')}>
-                        <TextArea rows={2} />
-                      </Form.Item>
-                      <Form.Item {...rest} name={[name, 'entrypoint']} style={fieldStyle} label={t('entrypoint-json-array-or-one-per-line')}>
-                        <TextArea rows={2} />
-                      </Form.Item>
-                    </div>
-                  ),
-                },
-                {
-                  key: 'health',
-                  label: t('health-check'),
-                  children: (
-                    <div>
-                      <Form.Item {...rest} name={[name, 'healthCheckCommand']} style={fieldStyle} label={t('health-check-command')}>
-                        <Input />
-                      </Form.Item>
-                      <Form.Item {...rest} name={[name, 'healthCheckInterval']} style={fieldStyle} label={t('health-check-interval-seconds')}>
-                        <Input type="number" />
-                      </Form.Item>
-                      <Form.Item {...rest} name={[name, 'healthCheckRetries']} style={fieldStyle} label={t('health-check-retries')}>
-                        <Input type="number" />
-                      </Form.Item>
-                      <Form.Item {...rest} name={[name, 'healthCheckMinHealth']} style={fieldStyle} label={t('health-check-minimum-healthy-seconds')}>
-                        <Input type="number" />
-                      </Form.Item>
-                    </div>
-                  ),
-                },
-                {
-                  key: 'net',
-                  label: t('network-config'),
-                  children: (
-                    <div>
-                      <Form.Item {...rest} name={[name, 'ports']} style={fieldStyle} label={t('port-config')}>
-                        <TextArea rows={2} placeholder={t('port-config-one-per-line-format-hostportcontainerportprotocol')} />
-                      </Form.Item>
-                      <Form.Item {...rest} name={[name, 'ephemeralPorts']} style={fieldStyle} label={t('ephemeral-ports-json')}>
-                        <TextArea rows={1} />
-                      </Form.Item>
-                      <Form.Item {...rest} name={[name, 'network']} style={fieldStyle} label={t('network-mode')}>
-                        <Input placeholder="host / bridge" />
-                      </Form.Item>
-                      <Form.Item {...rest} name={[name, 'netOpenPorts']} style={fieldStyle} label={t('network-open-policy')}>
-                        <TextArea rows={1} />
-                      </Form.Item>
-                      <Form.Item {...rest} name={[name, 'netActiveAdapter']} style={fieldStyle} label={t('network-active-adapter')}>
-                        <Input placeholder="eth0" />
-                      </Form.Item>
-                      <Form.Item {...rest} name={[name, 'netDefaultInterface']} style={fieldStyle} label={t('default-network-interface')}>
-                        <Input placeholder="eth0" />
-                      </Form.Item>
-                    </div>
-                  ),
-                },
-                {
-                  key: 'storage',
-                  label: t('storage-and-volumes'),
-                  children: (
-                    <div>
-                      <Form.Item {...rest} name={[name, 'binds']} style={fieldStyle} label={t('persistent-volumes-one-per-line')}>
-                        <TextArea rows={2} />
-                      </Form.Item>
-                      <Form.Item {...rest} name={[name, 'tmpfs']} style={fieldStyle} label={t('temporary-volumes-one-per-line-format-pathsize')}>
-                        <TextArea rows={2} />
-                      </Form.Item>
-                    </div>
-                  ),
-                },
-                {
-                  key: 'other',
-                  label: t('other-config'),
-                  children: (
-                    <div>
-                      <Form.Item {...rest} name={[name, 'environment']} style={fieldStyle} label={t('environment-variables')}>
-                        <TextArea rows={2} />
-                      </Form.Item>
-                      <Form.Item {...rest} name={[name, 'logDriver']} style={fieldStyle} label={t('log-driver')}>
-                        <Input />
-                      </Form.Item>
-                      <Form.Item {...rest} name={[name, 'secrets']} style={fieldStyle} label={t('secrets-json')}>
-                        <TextArea rows={2} />
-                      </Form.Item>
-                      <Form.Item {...rest} name={[name, 'sysctls']} style={fieldStyle} label={t('sysctls-json-or-text')}>
-                        <TextArea rows={1} />
-                      </Form.Item>
-                      <Form.Item {...rest} name={[name, 'sharedBlockDevice']} style={fieldStyle} label={t('shared-block-device')}>
-                        <Input placeholder="/dev/sdb" />
-                      </Form.Item>
-                      <Form.Item {...rest} name={[name, 'haMode']} style={fieldStyle} label={t('high-availability-ha-mode')}>
-                        <Input placeholder={t('e.g. multiple, single, cluster')} />
-                      </Form.Item>
-                    </div>
-                  ),
-                },
-              ]} />
-            </div>
+            </Collapse.Panel>
           ))}
           <Form.Item style={{ marginBottom: 0 }}>
             <Button type="dashed" onClick={() => add({ serviceName: '', image: '' })} block icon={<PlusOutlined />}>
