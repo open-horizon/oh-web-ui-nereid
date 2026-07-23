@@ -44,7 +44,7 @@ export const PatternAPI = {
   nodehealth(patternId: string) {
     const s = splitOrg(patternId);
     const qs = s.org ? `?org=${encodeURIComponent(s.org)}` : '';
-    return get<{ nodeHealth: any[] }>(`/patterns/${encodeURIComponent(s.name)}/nodehealth${qs}`);
+    return post<{ nodeHealth: any[] }>(`/patterns/${encodeURIComponent(s.name)}/nodehealth${qs}`, { nodeOrgids: [], lastTime: '' });
   },
   search(patternId: string, org?: string) {
     const qs = org ? `?org=${encodeURIComponent(org)}` : '';

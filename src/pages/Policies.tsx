@@ -4,8 +4,8 @@
 
 import { useEffect, useState } from 'react';
 import { usePolling } from '../hooks/usePolling';
-import { Table, Button, Space, Typography, message, Modal, Tag, Form, Input, Select, Upload, Drawer, Descriptions, Collapse } from 'antd';
-import { SearchOutlined, ReloadOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, ImportOutlined, EditOutlined, ClusterOutlined } from '@ant-design/icons';
+import { Table, Button, Space, Typography, message, Modal, Tag, Form, Input, Select, Upload, Drawer, Descriptions, Collapse, Tooltip } from 'antd';
+import { SearchOutlined, ReloadOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, ImportOutlined, EditOutlined, ClusterOutlined, DownloadOutlined } from '@ant-design/icons';
 
 import { DeploymentPolicyAPI, DeploymentPolicy } from '../api/policies';
 import { ServiceAPI, ExchangeService } from '../api/services';
@@ -50,6 +50,7 @@ export default function Policies() {
   const [nodesDrawerPolicy, setNodesDrawerPolicy] = useState('');
   const [matchedNodes, setMatchedNodes] = useState<ExchangeNode[]>([]);
   const [matchedNodesLoading, setMatchedNodesLoading] = useState(false);
+  const [allNodes, setAllNodes] = useState<Record<string, ExchangeNode>>({});
 
   const screenSize = useScreenSize();
 
@@ -127,8 +128,12 @@ export default function Policies() {
     const targetOrg = org !== undefined ? org : pageOrg;
     setLoading(true);
     try {
-      const res = await DeploymentPolicyAPI.list(targetOrg || undefined);
-      setData(res?.businessPolicy ?? {});
+      const [polRes, nodeRes] = await Promise.allSettled([
+        DeploymentPolicyAPI.list(targetOrg || undefined),
+        NodeAPI.list(targetOrg || undefined),
+      ]);
+      if (polRes.status === 'fulfilled') setData(polRes.value?.businessPolicy ?? {});
+      if (nodeRes.status === 'fulfilled') setAllNodes(nodeRes.value?.nodes ?? {});
       if (getConfig().role === 'platform') {
         const orgRes = await OrgAPI.list();
         setAllOrgs(Object.keys(orgRes?.orgs ?? {}).filter((o) => o !== 'root'));
@@ -146,8 +151,12 @@ export default function Policies() {
 
   usePolling(async () => {
     try {
-      const res = await DeploymentPolicyAPI.list(pageOrg || undefined);
-      setData(res?.businessPolicy ?? {});
+      const [polRes, nodeRes] = await Promise.allSettled([
+        DeploymentPolicyAPI.list(pageOrg || undefined),
+        NodeAPI.list(pageOrg || undefined),
+      ]);
+      if (polRes.status === 'fulfilled') setData(polRes.value?.businessPolicy ?? {});
+      if (nodeRes.status === 'fulfilled') setAllNodes(nodeRes.value?.nodes ?? {});
       if (getConfig().role === 'platform') {
         const orgRes = await OrgAPI.list();
         setAllOrgs(Object.keys(orgRes?.orgs ?? {}).filter((o) => o !== 'root'));
@@ -164,43 +173,56 @@ export default function Policies() {
       const svcName = policy?.service?.name || '';
       const svcOrg = policy?.service?.org || pageOrg;
       if (!svcName) { setMatchedNodes([]); setMatchedNodesLoading(false); return; }
-      // Use server-side search API for efficient matching
-      try {
-        const res = await DeploymentPolicyAPI.search(policyId, pageOrg || undefined);
-        const nodeList = res?.nodes ?? [];
-        setMatchedNodes(Array.isArray(nodeList) ? nodeList.map((n: any) => ({ name: n.name || n, ...n })) : []);
-      } catch {
-        // Fallback to client-side search if server-side search fails
-        const res = await NodeAPI.list(pageOrg || undefined);
-        const allNodes = Object.values(res?.nodes ?? {});
-        const matched: ExchangeNode[] = [];
-        for (const node of allNodes) {
-          let found = false;
-          const rs = (node as any).registeredServices;
-          const svcList = Array.isArray(rs) ? rs : Object.values(rs || {});
-          found = svcList.some((s: any) => {
-            const sName = s.name || s.ServiceName || s.url || s.serviceUrl || '';
-            const sOrg = s.org || s.ServiceOrg || s.serviceOrgid || '';
-            return sName === svcName && (!svcOrg || sOrg === svcOrg);
-          });
+      // Check all nodes' registeredServices for a match
+      const res = await NodeAPI.list(pageOrg || undefined);
+      const allNodes = Object.values(res?.nodes ?? {});
+      const matched: ExchangeNode[] = [];
+      for (const node of allNodes) {
+        let found = false;
+        const rs = (node as any).registeredServices;
+        const svcList = Array.isArray(rs) ? rs : Object.values(rs || {});
+        found = svcList.some((s: any) => {
+          const sName = s.url || s.name || s.ServiceName || s.serviceUrl || '';
+          return sName === svcName;
+        });
           if (!found && node.name) {
             try {
               const svcRes = await NodeAPI.services(node.name, pageOrg || undefined);
               const nodeSvcs = svcRes?.services ?? [];
               found = nodeSvcs.some((s: any) => {
-                const sName = s.name || s.ServiceName || s.url || s.serviceUrl || '';
-                const sOrg = s.org || s.ServiceOrg || s.serviceOrgid || '';
-                return sName === svcName && (!svcOrg || sOrg === svcOrg);
+                const sName = s.url || s.name || s.ServiceName || s.serviceUrl || '';
+                return sName === svcName;
               });
-            } catch { /* skip */ }
-          }
-          if (found) matched.push(node);
+          } catch { /* skip */ }
         }
-        setMatchedNodes(matched);
+        if (found) matched.push(node);
       }
+      setMatchedNodes(matched);
     } catch { setMatchedNodes([]); }
     setMatchedNodesLoading(false);
   };
+
+  // Build set of deployment policy IDs referenced by nodes
+  // A policy is "in use" if any node's registeredServices match the policy's service name+org
+  const referencedPolicies = (() => {
+    const refs = new Set<string>();
+    for (const [polId, pol] of Object.entries(data)) {
+      const svcName = pol?.service?.name || '';
+      if (!svcName) continue;
+      for (const node of Object.values(allNodes)) {
+        const rs = (node as any).registeredServices;
+        const svcList = Array.isArray(rs) ? rs : Object.values(rs || {});
+        const matched = svcList.some((s: any) => {
+          const sName = s.url || s.name || s.ServiceName || s.serviceUrl || '';
+          return sName === svcName;
+        });
+        if (matched) { refs.add(polId); break; }
+      }
+    }
+    return refs;
+  })();
+
+  const isPolicyReferenced = (id: string) => referencedPolicies.has(id);
 
   const handleDelete = (id: string) => {
     Modal.confirm({
@@ -215,6 +237,18 @@ export default function Policies() {
         }
       },
     });
+  };
+
+  const exportPolicy = (id: string) => {
+    const p = data[id];
+    if (!p) return;
+    const blob = new Blob([JSON.stringify(p, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${id}.deploymentpolicy.definition.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const showDetail = (id: string) => {
@@ -314,7 +348,12 @@ export default function Policies() {
             <Button size="small" icon={<EyeOutlined />} onClick={() => showDetail(id)} />
             <Button size="small" icon={<ClusterOutlined />} onClick={() => showPolicyNodes(id)}>{t('nodes')}</Button>
             <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(id)} />
-            <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(id)} />
+            <Tooltip title={t('export')}>
+              <Button size="small" icon={<DownloadOutlined />} onClick={() => exportPolicy(id)} />
+            </Tooltip>
+            <Tooltip title={isPolicyReferenced(id) ? t('policy-in-use-cannot-delete') : ''}>
+              <Button size="small" danger icon={<DeleteOutlined />} disabled={isPolicyReferenced(id)} onClick={() => handleDelete(id)} />
+            </Tooltip>
           </Space>
         );
       },
@@ -401,7 +440,7 @@ export default function Policies() {
         description: values.description || '',
         service: {
           name: svc.url || editSelectedServiceId,
-          org: getConfig().orgId || '',
+          org: editSelectedServiceId.includes('/') ? editSelectedServiceId.split('/')[0] : (getConfig().orgId || ''),
           arch: svc.arch || 'amd64',
           serviceVersions: [{ version: svc.version || '1.0.0', priority: {}, upgradePolicy: {} }],
           nodeHealth: null,

@@ -7,6 +7,8 @@ import { usePolling } from '../hooks/usePolling';
 import { Table, Button, Space, Typography, message, Modal, Drawer, Descriptions, Tag, Form, Input, Select, Tabs, Collapse, Alert, Switch, Upload, Tooltip, List } from 'antd';
 import { SearchOutlined, ReloadOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, EditOutlined, DownloadOutlined, ImportOutlined, MinusCircleOutlined, InboxOutlined, RiseOutlined } from '@ant-design/icons';
 import { ServiceAPI, ExchangeService } from '../api/services';
+import { PatternAPI, ExchangePattern } from '../api/patterns';
+import { DeploymentPolicyAPI, DeploymentPolicy } from '../api/policies';
 import { OrgAPI } from '../api/organizations';
 import { getConfig } from '../api/config';
 import { useT } from '../i18n/context';
@@ -34,84 +36,88 @@ function safeStringify(v: any): string {
   try { return JSON.stringify(v, null, 2); } catch { return String(v); }
 }
 
-// Convert form values to the Exchange deployment object format { services: { url: { image, ports, ... } } }
-// Each field is mapped from camelCase form name to snake_case Exchange field name
+function containerToDeploymentSvc(c: any): Record<string, any> {
+  const service: Record<string, any> = {};
+  service.image = c.image || '';
+  if (c.imageStore) service.imageStore = c.imageStore;
+  if (c.imageRegistryToken) service.imageRegistryToken = c.imageRegistryToken;
+  if (c.ports) {
+    service.ports = c.ports
+      .split('\n').map((l: string) => l.trim()).filter(Boolean)
+      .map((line: string) => {
+        const hostPort = line.includes(':') ? line : `${line}:${line.split('/')[0]}`;
+        return { HostPort: hostPort };
+      });
+  }
+  if (c.ephemeralPorts) {
+    try { service.ephemeral_ports = JSON.parse(c.ephemeralPorts); } catch {}
+  }
+  service.healthCheckCommand = c.healthCheckCommand || undefined;
+  service.healthCheckInterval = c.healthCheckInterval ? Number(c.healthCheckInterval) : undefined;
+  service.healthCheckRetries = c.healthCheckRetries ? Number(c.healthCheckRetries) : undefined;
+  service.healthCheckMinHealth = c.healthCheckMinHealth ? Number(c.healthCheckMinHealth) : undefined;
+  service.privileged = c.privileged ?? false;
+  service.max_memory_mb = c.maxMemoryMb ? Number(c.maxMemoryMb) : undefined;
+  service.max_cpus = c.maxCpus ? Number(c.maxCpus) : undefined;
+  service.user = c.user || undefined;
+  service.pid = c.pid || undefined;
+  service.ipc = c.ipc || undefined;
+  if (c.capAdd) {
+    service.cap_add = c.capAdd.split('\n').map((l: string) => l.trim()).filter(Boolean);
+  }
+  if (c.devices) {
+    service.devices = c.devices.split('\n').map((l: string) => l.trim()).filter(Boolean);
+  }
+  if (c.command) {
+    try { service.command = JSON.parse(c.command); } catch { service.command = c.command.split('\n').map((l: string) => l.trim()).filter(Boolean); }
+  }
+  if (c.entrypoint) {
+    try { service.entrypoint = JSON.parse(c.entrypoint); } catch { service.entrypoint = c.entrypoint.split('\n').map((l: string) => l.trim()).filter(Boolean); }
+  }
+  if (c.binds) {
+    service.binds = c.binds.split('\n').map((l: string) => l.trim()).filter(Boolean);
+  }
+  if (c.tmpfs) {
+    const lines = c.tmpfs.split('\n').map((l: string) => l.trim()).filter(Boolean);
+    const tmpfsObj: Record<string, string> = {};
+    for (const l of lines) {
+      const parts = l.split(':');
+      tmpfsObj[parts[0]] = parts.slice(1).join(':') || '';
+    }
+    service.tmpfs = tmpfsObj;
+  }
+  if (c.network) {
+    if (c.network === 'host') service.network = 'host';
+    else service.network = c.network;
+  }
+  if (c.netOpenPorts) {
+    service.netOpenPorts = c.netOpenPorts.split('\n').map((l: string) => l.trim()).filter(Boolean);
+  }
+  service.netActiveAdapter = c.netActiveAdapter || undefined;
+  service.netDefaultInterface = c.netDefaultInterface || undefined;
+  if (c.environment) {
+    service.environment = c.environment.split('\n').map((l: string) => l.trim()).filter(Boolean);
+  }
+  service.log_driver = c.logDriver || undefined;
+  service.secrets = c.secrets ? (() => { try { return JSON.parse(c.secrets); } catch { return {}; } })() : undefined;
+  if (c.sysctls) {
+    try { service.sysctls = JSON.parse(c.sysctls); } catch { service.sysctls = c.sysctls; }
+  }
+  service.sharedBlockDevice = c.sharedBlockDevice || undefined;
+  service.haMode = c.haMode || undefined;
+  return service;
+}
+
 function buildDeployment(values: any): any {
   const svc: Record<string, any> = {};
-  const img = values.image;
-  if (img) {
-    const service: Record<string, any> = {};
-    service.image = img;
-    if (values.imageStore) service.imageStore = values.imageStore;
-    if (values.imageRegistryToken) service.imageRegistryToken = values.imageRegistryToken;
-    // Ports: Exchange uses HostPort string format "5555:7777/udp" — normalize each line
-    if (values.ports) {
-      service.ports = values.ports
-        .split('\n').map((l: string) => l.trim()).filter(Boolean)
-        .map((line: string) => {
-          const hostPort = line.includes(':') ? line : `${line}:${line.split('/')[0]}`;
-          return { HostPort: hostPort };
-        });
+  const containers = values.containers || [];
+  if (containers.length > 0) {
+    for (const c of containers) {
+      if (!c.serviceName) continue;
+      svc[c.serviceName] = containerToDeploymentSvc(c);
     }
-    if (values.ephemeralPorts) {
-      try { service.ephemeral_ports = JSON.parse(values.ephemeralPorts); } catch {}
-    }
-    // Map directly, using undefined to omit empty fields from the deployment object
-    service.healthCheckCommand = values.healthCheckCommand || undefined;
-    service.healthCheckInterval = values.healthCheckInterval ? Number(values.healthCheckInterval) : undefined;
-    service.healthCheckRetries = values.healthCheckRetries ? Number(values.healthCheckRetries) : undefined;
-    service.healthCheckMinHealth = values.healthCheckMinHealth ? Number(values.healthCheckMinHealth) : undefined;
-    service.privileged = values.privileged || false;
-    service.max_memory_mb = values.maxMemoryMb ? Number(values.maxMemoryMb) : undefined;
-    service.max_cpus = values.maxCpus ? Number(values.maxCpus) : undefined;
-    service.user = values.user || undefined;
-    service.pid = values.pid || undefined;
-    service.ipc = values.ipc || undefined;
-    if (values.capAdd) {
-      service.cap_add = values.capAdd.split('\n').map((l: string) => l.trim()).filter(Boolean);
-    }
-    if (values.devices) {
-      service.devices = values.devices.split('\n').map((l: string) => l.trim()).filter(Boolean);
-    }
-    // Command/entrypoint: try JSON array first, fall back to one-per-line splitting
-    if (values.command) {
-      try { service.command = JSON.parse(values.command); } catch { service.command = values.command.split('\n').map((l: string) => l.trim()).filter(Boolean); }
-    }
-    if (values.entrypoint) {
-      try { service.entrypoint = JSON.parse(values.entrypoint); } catch { service.entrypoint = values.entrypoint.split('\n').map((l: string) => l.trim()).filter(Boolean); }
-    }
-    if (values.binds) {
-      service.binds = values.binds.split('\n').map((l: string) => l.trim()).filter(Boolean);
-    }
-    // tmpfs: "path:size" lines → { "/path": "100m" } object
-    if (values.tmpfs) {
-      const lines = values.tmpfs.split('\n').map((l: string) => l.trim()).filter(Boolean);
-      const tmpfsObj: Record<string, string> = {};
-      for (const l of lines) {
-        const parts = l.split(':');
-        tmpfsObj[parts[0]] = parts.slice(1).join(':') || '';
-      }
-      service.tmpfs = tmpfsObj;
-    }
-    if (values.network) {
-      if (values.network === 'host') service.network = 'host';
-      else service.network = values.network;
-    }
-    if (values.netOpenPorts) {
-      service.netOpenPorts = values.netOpenPorts.split('\n').map((l: string) => l.trim()).filter(Boolean);
-    }
-    service.netActiveAdapter = values.netActiveAdapter || undefined;
-    service.netDefaultInterface = values.netDefaultInterface || undefined;
-    service.environment = values.environment || undefined;
-    service.log_driver = values.logDriver || undefined;
-    service.secrets = values.secrets ? (() => { try { return JSON.parse(values.secrets); } catch { return {}; } })() : undefined;
-    if (values.sysctls) {
-      try { service.sysctls = JSON.parse(values.sysctls); } catch { service.sysctls = values.sysctls; }
-    }
-    service.sharedBlockDevice = values.sharedBlockDevice || undefined;
-    service.haMode = values.haMode || undefined;
-    // Key the service object by its URL, wrapping in { services: { url: ... } }
-    svc[values.serviceUrl || ''] = service;
+  } else if (values.image) {
+    svc[values.serviceUrl || ''] = containerToDeploymentSvc(values);
   }
   return { services: svc };
 }
@@ -138,6 +144,184 @@ const notifFormItemLayout = {
   style: { marginBottom: 0 },
 };
 
+function ContainerFormList({ t }: { t: (k: string) => string }) {
+  const fieldStyle = { marginBottom: 8 };
+  return (
+    <Form.List name="containers">
+      {(fields, { add, remove }) => (
+        <>
+          {fields.map(({ key, name, ...rest }) => (
+            <div key={key} style={{ border: '1px solid #d9d9d9', borderRadius: 6, padding: 12, marginBottom: 16, background: '#fafafa' }}>
+              <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+                <Form.Item {...rest} name={[name, 'serviceName']} rules={[{ required: true, message: t('container-name-required') }]} style={{ marginBottom: 0, flex: 1, marginRight: 8 }}>
+                  <Input placeholder={t('container-name-placeholder')} />
+                </Form.Item>
+                <MinusCircleOutlined onClick={() => remove(name)} style={{ fontSize: 16, color: '#ff4d4f' }} />
+              </div>
+              <Collapse size="small" destroyInactivePanel={false} defaultActiveKey={['img', 'opts', 'caps', 'health', 'net', 'storage', 'other']} items={[
+                {
+                  key: 'img',
+                  label: t('image-and-registry'),
+                  children: (
+                    <div>
+                      <Form.Item {...rest} name={[name, 'image']} rules={[{ required: true, message: t('please-enter-the-image-name') }]} style={fieldStyle} label={t('image-name-image')}>
+                        <Input placeholder={t('image-nametag')} />
+                      </Form.Item>
+                      <Form.Item {...rest} name={[name, 'imageStore']} style={fieldStyle} label={t('image-registry')}>
+                        <Input placeholder={t('eg-dockerio')} />
+                      </Form.Item>
+                      <Form.Item {...rest} name={[name, 'imageRegistryToken']} style={fieldStyle} label={t('image-registry-token')}>
+                        <Input.Password />
+                      </Form.Item>
+                    </div>
+                  ),
+                },
+                {
+                  key: 'opts',
+                  label: t('deployment-options'),
+                  children: (
+                    <div>
+                      <Form.Item {...rest} name={[name, 'privileged']} style={fieldStyle} label={t('privileged-mode')} valuePropName="checked">
+                        <Switch />
+                      </Form.Item>
+                      <Form.Item {...rest} name={[name, 'user']} style={fieldStyle} label={t('user')}>
+                        <Input placeholder={t('eg-10001000')} />
+                      </Form.Item>
+                      <Form.Item {...rest} name={[name, 'pid']} style={fieldStyle} label={t('pid-namespace')}>
+                        <Input placeholder="host" />
+                      </Form.Item>
+                      <Form.Item {...rest} name={[name, 'ipc']} style={fieldStyle} label={t('ipc-namespace')}>
+                        <Input placeholder="host" />
+                      </Form.Item>
+                      <Form.Item {...rest} name={[name, 'maxMemoryMb']} style={fieldStyle} label={t('max-memory-mb')}>
+                        <Input type="number" />
+                      </Form.Item>
+                      <Form.Item {...rest} name={[name, 'maxCpus']} style={fieldStyle} label={t('max-cpus')}>
+                        <Input placeholder={t('eg-1-05-20')} />
+                      </Form.Item>
+                    </div>
+                  ),
+                },
+                {
+                  key: 'caps',
+                  label: t('capabilities'),
+                  children: (
+                    <div>
+                      <Form.Item {...rest} name={[name, 'capAdd']} style={fieldStyle} label={t('linux-capabilities-one-per-line')}>
+                        <TextArea rows={2} />
+                      </Form.Item>
+                      <Form.Item {...rest} name={[name, 'devices']} style={fieldStyle} label={t('device-mappings-one-per-line')}>
+                        <TextArea rows={2} />
+                      </Form.Item>
+                      <Form.Item {...rest} name={[name, 'command']} style={fieldStyle} label={t('command-json-array-or-one-per-line')}>
+                        <TextArea rows={2} />
+                      </Form.Item>
+                      <Form.Item {...rest} name={[name, 'entrypoint']} style={fieldStyle} label={t('entrypoint-json-array-or-one-per-line')}>
+                        <TextArea rows={2} />
+                      </Form.Item>
+                    </div>
+                  ),
+                },
+                {
+                  key: 'health',
+                  label: t('health-check'),
+                  children: (
+                    <div>
+                      <Form.Item {...rest} name={[name, 'healthCheckCommand']} style={fieldStyle} label={t('health-check-command')}>
+                        <Input />
+                      </Form.Item>
+                      <Form.Item {...rest} name={[name, 'healthCheckInterval']} style={fieldStyle} label={t('health-check-interval-seconds')}>
+                        <Input type="number" />
+                      </Form.Item>
+                      <Form.Item {...rest} name={[name, 'healthCheckRetries']} style={fieldStyle} label={t('health-check-retries')}>
+                        <Input type="number" />
+                      </Form.Item>
+                      <Form.Item {...rest} name={[name, 'healthCheckMinHealth']} style={fieldStyle} label={t('health-check-minimum-healthy-seconds')}>
+                        <Input type="number" />
+                      </Form.Item>
+                    </div>
+                  ),
+                },
+                {
+                  key: 'net',
+                  label: t('network-config'),
+                  children: (
+                    <div>
+                      <Form.Item {...rest} name={[name, 'ports']} style={fieldStyle} label={t('port-config')}>
+                        <TextArea rows={2} placeholder={t('port-config-one-per-line-format-hostportcontainerportprotocol')} />
+                      </Form.Item>
+                      <Form.Item {...rest} name={[name, 'ephemeralPorts']} style={fieldStyle} label={t('ephemeral-ports-json')}>
+                        <TextArea rows={1} />
+                      </Form.Item>
+                      <Form.Item {...rest} name={[name, 'network']} style={fieldStyle} label={t('network-mode')}>
+                        <Input placeholder="host / bridge" />
+                      </Form.Item>
+                      <Form.Item {...rest} name={[name, 'netOpenPorts']} style={fieldStyle} label={t('network-open-policy')}>
+                        <TextArea rows={1} />
+                      </Form.Item>
+                      <Form.Item {...rest} name={[name, 'netActiveAdapter']} style={fieldStyle} label={t('network-active-adapter')}>
+                        <Input placeholder="eth0" />
+                      </Form.Item>
+                      <Form.Item {...rest} name={[name, 'netDefaultInterface']} style={fieldStyle} label={t('default-network-interface')}>
+                        <Input placeholder="eth0" />
+                      </Form.Item>
+                    </div>
+                  ),
+                },
+                {
+                  key: 'storage',
+                  label: t('storage-and-volumes'),
+                  children: (
+                    <div>
+                      <Form.Item {...rest} name={[name, 'binds']} style={fieldStyle} label={t('persistent-volumes-one-per-line')}>
+                        <TextArea rows={2} />
+                      </Form.Item>
+                      <Form.Item {...rest} name={[name, 'tmpfs']} style={fieldStyle} label={t('temporary-volumes-one-per-line-format-pathsize')}>
+                        <TextArea rows={2} />
+                      </Form.Item>
+                    </div>
+                  ),
+                },
+                {
+                  key: 'other',
+                  label: t('other-config'),
+                  children: (
+                    <div>
+                      <Form.Item {...rest} name={[name, 'environment']} style={fieldStyle} label={t('environment-variables')}>
+                        <TextArea rows={2} />
+                      </Form.Item>
+                      <Form.Item {...rest} name={[name, 'logDriver']} style={fieldStyle} label={t('log-driver')}>
+                        <Input />
+                      </Form.Item>
+                      <Form.Item {...rest} name={[name, 'secrets']} style={fieldStyle} label={t('secrets-json')}>
+                        <TextArea rows={2} />
+                      </Form.Item>
+                      <Form.Item {...rest} name={[name, 'sysctls']} style={fieldStyle} label={t('sysctls-json-or-text')}>
+                        <TextArea rows={1} />
+                      </Form.Item>
+                      <Form.Item {...rest} name={[name, 'sharedBlockDevice']} style={fieldStyle} label={t('shared-block-device')}>
+                        <Input placeholder="/dev/sdb" />
+                      </Form.Item>
+                      <Form.Item {...rest} name={[name, 'haMode']} style={fieldStyle} label={t('high-availability-ha-mode')}>
+                        <Input placeholder={t('e.g. multiple, single, cluster')} />
+                      </Form.Item>
+                    </div>
+                  ),
+                },
+              ]} />
+            </div>
+          ))}
+          <Form.Item style={{ marginBottom: 0 }}>
+            <Button type="dashed" onClick={() => add({ serviceName: '', image: '' })} block icon={<PlusOutlined />}>
+              {t('add-container')}
+            </Button>
+          </Form.Item>
+        </>
+      )}
+    </Form.List>
+  );
+}
+
 export default function Services() {
   const { t, fmtTime } = useT();
   const [data, setData] = useState<Record<string, ExchangeService>>({});
@@ -154,12 +338,14 @@ export default function Services() {
   const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
   const [selectedService, setSelectedService] = useState<string | null>(null);
   const [editModalOpen, setEditModalOpen] = useState(false);
-  const [createActiveKey, setCreateActiveKey] = useState<string[]>(['basic']);
-  const [editActiveKey, setEditActiveKey] = useState<string[]>(['basic']);
+  const [createActiveKey, setCreateActiveKey] = useState<string[]>(['basic', 'deps']);
+  const [editActiveKey, setEditActiveKey] = useState<string[]>(['basic', 'deps']);
   const [svcKeys, setSvcKeys] = useState<string[]>([]);
   const [svcKeysLoading, setSvcKeysLoading] = useState(false);
   const [svcDockauths, setSvcDockauths] = useState<any[]>([]);
   const [svcDockauthsLoading, setSvcDockauthsLoading] = useState(false);
+  const [patternData, setPatternData] = useState<Record<string, ExchangePattern>>({});
+  const [policyData, setPolicyData] = useState<Record<string, DeploymentPolicy>>({});
   const [keyAddModalOpen, setKeyAddModalOpen] = useState(false);
   const [keyAddForm] = Form.useForm();
   const [keyAddLoading, setKeyAddLoading] = useState(false);
@@ -184,8 +370,14 @@ export default function Services() {
     const targetOrg = org !== undefined ? org : pageOrg;
     setLoading(true);
     try {
-      const res = await ServiceAPI.list(targetOrg || undefined);
-      setData(res?.services ?? {});
+      const [svcRes, patRes, polRes] = await Promise.allSettled([
+        ServiceAPI.list(targetOrg || undefined),
+        PatternAPI.list(targetOrg || undefined),
+        DeploymentPolicyAPI.list(targetOrg || undefined),
+      ]);
+      if (svcRes.status === 'fulfilled') setData(svcRes.value?.services ?? {});
+      if (patRes.status === 'fulfilled') setPatternData(patRes.value?.patterns ?? {});
+      if (polRes.status === 'fulfilled') setPolicyData(polRes.value?.businessPolicy ?? {});
       if (getConfig().role === 'platform') {
         const orgRes = await OrgAPI.list();
         setAllOrgs(Object.keys(orgRes?.orgs ?? {}).filter((o) => o !== 'root'));
@@ -203,14 +395,65 @@ export default function Services() {
 
   usePolling(async () => {
     try {
-      const res = await ServiceAPI.list(pageOrg || undefined);
-      setData(res?.services ?? {});
+      const [svcRes, patRes, polRes] = await Promise.allSettled([
+        ServiceAPI.list(pageOrg || undefined),
+        PatternAPI.list(pageOrg || undefined),
+        DeploymentPolicyAPI.list(pageOrg || undefined),
+      ]);
+      if (svcRes.status === 'fulfilled') setData(svcRes.value?.services ?? {});
+      if (patRes.status === 'fulfilled') setPatternData(patRes.value?.patterns ?? {});
+      if (polRes.status === 'fulfilled') setPolicyData(polRes.value?.businessPolicy ?? {});
       if (getConfig().role === 'platform') {
         const orgRes = await OrgAPI.list();
         setAllOrgs(Object.keys(orgRes?.orgs ?? {}).filter((o) => o !== 'root'));
       }
     } catch { /* auto-refresh: silent */ }
   }, 30000);
+
+  // Build set of service keys referenced by patterns, policies, or other services' requiredServices
+  const referencedServices = (() => {
+    const refs = new Set<string>();
+    // Match pattern services by serviceOrgid + serviceUrl against service keys and url fields
+    for (const pat of Object.values(patternData)) {
+      for (const svc of pat?.services || []) {
+        const org = svc.serviceOrgid || '';
+        const svcUrl = svc.serviceUrl || '';
+        if (!org || !svcUrl) continue;
+        if (data[`${org}/${svcUrl}`]) { refs.add(`${org}/${svcUrl}`); continue; }
+        for (const [key, s] of Object.entries(data)) {
+          const keyOrg = key.split('/')[0];
+          if (keyOrg === org && s.url === svcUrl) { refs.add(key); break; }
+        }
+      }
+    }
+    // Match deployment policies by service name + org
+    for (const pol of Object.values(policyData)) {
+      const svc = pol?.service;
+      if (!svc?.org || !svc?.name) continue;
+      if (data[`${svc.org}/${svc.name}`]) { refs.add(`${svc.org}/${svc.name}`); continue; }
+      for (const [key, s] of Object.entries(data)) {
+        const keyOrg = key.split('/')[0];
+        if (keyOrg === svc.org && s.url === svc.name) { refs.add(key); break; }
+      }
+    }
+    // Match services' requiredServices (dependent services)
+    for (const [parentKey, parentSvc] of Object.entries(data)) {
+      if (parentKey === undefined) continue;
+      for (const dep of parentSvc?.requiredServices || []) {
+        const depOrg = dep?.org || '';
+        const depUrl = dep?.url || '';
+        if (!depOrg || !depUrl) continue;
+        if (data[`${depOrg}/${depUrl}`]) { refs.add(`${depOrg}/${depUrl}`); continue; }
+        for (const [key, s] of Object.entries(data)) {
+          const keyOrg = key.split('/')[0];
+          if (keyOrg === depOrg && s.url === depUrl) { refs.add(key); break; }
+        }
+      }
+    }
+    return refs;
+  })();
+
+  const isServiceReferenced = (id: string) => referencedServices.has(id);
 
   const handleDelete = (id: string) => {
     Modal.confirm({
@@ -366,85 +609,80 @@ export default function Services() {
     } catch (err: any) {
       message.error(err.message);
     }
-  };
+};
 
-  // Populate edit form with existing service data, parsing deployment JSON into individual form fields
-  // Compute which deployment panels to expand in edit mode based on existing config
-  const computeEditActiveKeys = (svc: ExchangeService, sd: any): string[] => {
-    const keys: string[] = ['basic']; // basic always relevant
-    if (sd?.image || sd?.imageStore || sd?.imageRegistryToken) keys.push('deployImg');
-    if (sd?.privileged || sd?.user || sd?.pid || sd?.ipc || sd?.max_memory_mb != null || sd?.max_cpus != null) keys.push('deploySvc');
-    if ((sd?.cap_add && sd.cap_add.length) || (sd?.devices && sd.devices.length) || sd?.command || sd?.entrypoint) keys.push('capabilities');
-    if (sd?.healthCheckCommand || sd?.healthCheckInterval != null || sd?.healthCheckRetries != null || sd?.healthCheckMinHealth != null) keys.push('health');
-    if ((sd?.ports && sd.ports.length) || (sd?.ephemeral_ports && sd.ephemeral_ports.length) || sd?.network || (sd?.netOpenPorts && sd.netOpenPorts.length) || sd?.netActiveAdapter || sd?.netDefaultInterface) keys.push('network');
-    if ((sd?.binds && sd.binds.length) || (sd?.tmpfs && objKeys(sd.tmpfs).length)) keys.push('storage');
-    if (sd?.environment || sd?.log_driver || sd?.secrets || sd?.sysctls || sd?.sharedBlockDevice || sd?.haMode) keys.push('other');
-    return keys;
-  };
-
+// Open edit modal and ensure form values are set after mount
   const openEdit = (id: string) => {
     setEditTarget(id);
     const svc = data[id];
     if (!svc) return;
     const dep = parseDep(svc.deployment);
-    // Extract first service from deployment (keyed by svc.url)
-    const sd = dep?.services?.[svc.url || ''] || {};
     const existingDeployment = objKeys(dep).length > 0;
     setEditType(existingDeployment ? 'update' : 'full');
-    setEditActiveKey(computeEditActiveKeys(svc, sd));
-    editForm.setFieldsValue({
-      name: id,
-      label: svc.label || '',
-      version: svc.version || '',
-      arch: svc.arch || '',
-      serviceUrl: svc.url || '',
-      description: svc.description || '',
-      serviceJSON: JSON.stringify(svc, null, 2),
-      userInputJSON: JSON.stringify(svc.userInput || [], null, 2),
-      deploymentJSON: JSON.stringify(dep, null, 2),
-      // Map snake_case deployment fields to camelCase form fields
-      image: sd.image || '',
-      imageStore: sd.imageStore || '',
-      imageRegistryToken: sd.imageRegistryToken || '',
-      privileged: sd.privileged || false,
-      user: sd.user || '',
-      pid: sd.pid || '',
-      ipc: sd.ipc || '',
-      maxMemoryMb: sd.max_memory_mb ?? undefined,
-      maxCpus: sd.max_cpus ?? undefined,
-      healthCheckCommand: sd.healthCheckCommand || '',
-      healthCheckInterval: sd.healthCheckInterval ?? undefined,
-      healthCheckRetries: sd.healthCheckRetries ?? undefined,
-      healthCheckMinHealth: sd.healthCheckMinHealth ?? undefined,
-      ports: (sd.ports || []).map((p: any) => p.HostPort || '').join('\n'),
-      ephemeralPorts: sd.ephemeral_ports ? JSON.stringify(sd.ephemeral_ports) : '',
-      network: sd.network || '',
-      netOpenPorts: (sd.netOpenPorts || []).join('\n'),
-      netActiveAdapter: sd.netActiveAdapter || '',
-      netDefaultInterface: sd.netDefaultInterface || '',
-      binds: (sd.binds || []).join('\n'),
-      tmpfs: sd.tmpfs ? Object.entries(sd.tmpfs).map(([k, v]) => v ? `${k}:${v}` : k).join('\n') : '',
-      environment: sd.environment || '',
-      logDriver: sd.log_driver || '',
-      secrets: sd.secrets ? JSON.stringify(sd.secrets, null, 2) : '',
-      sysctls: sd.sysctls ? (typeof sd.sysctls === 'string' ? sd.sysctls : JSON.stringify(sd.sysctls, null, 2)) : '',
-      sharedBlockDevice: sd.sharedBlockDevice || '',
-      haMode: sd.haMode || '',
-      capAdd: (sd.cap_add || []).join('\n'),
-      devices: (sd.devices || []).join('\n'),
-      command: Array.isArray(sd.command) ? sd.command.join('\n') : sd.command || '',
-      entrypoint: Array.isArray(sd.entrypoint) ? sd.entrypoint.join('\n') : sd.entrypoint || '',
-      requiredServices: fromRequiredServices(svc.requiredServices),
-    });
-    setEditModalOpen(true);
+    setEditActiveKey(['basic', 'containers', 'deps']);
     setEditTab('json');
+    setEditModalOpen(true);
+    // Use setTimeout to ensure modal is mounted before setting form values
+    setTimeout(() => {
+      editForm.setFieldsValue({
+        name: id,
+        label: svc.label || '',
+        version: svc.version || '',
+        arch: svc.arch || '',
+        serviceUrl: svc.url || '',
+        description: svc.description || '',
+        serviceJSON: JSON.stringify(svc, null, 2),
+        userInputJSON: JSON.stringify(svc.userInput || [], null, 2),
+        deploymentJSON: JSON.stringify(dep, null, 2),
+        containers: Object.entries(dep?.services || {}).map(([serviceName, sd]: [string, any]) => ({
+          serviceName,
+          image: sd.image || '',
+          imageStore: sd.imageStore || '',
+          imageRegistryToken: sd.imageRegistryToken || '',
+          privileged: sd.privileged ?? false,
+          user: sd.user || '',
+          pid: sd.pid || '',
+          ipc: sd.ipc || '',
+          maxMemoryMb: sd.max_memory_mb ?? undefined,
+          maxCpus: sd.max_cpus ?? undefined,
+          healthCheckCommand: sd.healthCheckCommand || '',
+          healthCheckInterval: sd.healthCheckInterval ?? undefined,
+          healthCheckRetries: sd.healthCheckRetries ?? undefined,
+          healthCheckMinHealth: sd.healthCheckMinHealth ?? undefined,
+          ports: (sd.ports || []).map((p: any) => p.HostPort || '').join('\n'),
+          ephemeralPorts: sd.ephemeral_ports ? JSON.stringify(sd.ephemeral_ports) : '',
+          network: sd.network || '',
+          netOpenPorts: (sd.netOpenPorts || []).join('\n'),
+          netActiveAdapter: sd.netActiveAdapter || '',
+          netDefaultInterface: sd.netDefaultInterface || '',
+          binds: (sd.binds || []).join('\n'),
+          tmpfs: sd.tmpfs ? Object.entries(sd.tmpfs).map(([k, v]) => v ? `${k}:${v}` : k).join('\n') : '',
+          environment: Array.isArray(sd.environment) ? sd.environment.join('\n') : (sd.environment || ''),
+          logDriver: sd.log_driver || '',
+          secrets: sd.secrets ? JSON.stringify(sd.secrets, null, 2) : '',
+          sysctls: sd.sysctls ? (typeof sd.sysctls === 'string' ? sd.sysctls : JSON.stringify(sd.sysctls, null, 2)) : '',
+          sharedBlockDevice: sd.sharedBlockDevice || '',
+          haMode: sd.haMode || '',
+          capAdd: (sd.cap_add || []).join('\n'),
+          devices: (sd.devices || []).join('\n'),
+          command: Array.isArray(sd.command) ? sd.command.join('\n') : sd.command || '',
+          entrypoint: Array.isArray(sd.entrypoint) ? sd.entrypoint.join('\n') : sd.entrypoint || '',
+        })),
+        requiredServices: fromRequiredServices(svc.requiredServices),
+        sharable: svc.sharable || 'multiple',
+        public: svc.public !== false,
+        documentation: svc.documentation || '',
+      });
+    }, 0);
   };
 
   // Save edited service: JSON tab parses raw text, UI tab builds deployment from form fields
   const handleEditSave = async () => {
     if (!editTarget) return;
     try {
-      const values = await editForm.validateFields();
+      // Validate required fields only; use getFieldsValue to capture all fields including those without rules
+      await editForm.validateFields(['name', 'label', 'version', 'arch', 'serviceUrl', 'containers']);
+      const values = editForm.getFieldsValue();
       setCreating(true);
       if (editTab === 'json') {
         let parsed: any;
@@ -490,6 +728,9 @@ export default function Services() {
           arch: values.arch || existing.arch,
           url: values.serviceUrl || existing.url,
           description: values.description || existing.description,
+          sharable: values.sharable || 'multiple',
+          public: values.public !== false,
+          documentation: values.documentation || '',
           userInput: existing.userInput || [],
           deployment,
           requiredServices: toRequiredServices(values.requiredServices),
@@ -510,7 +751,8 @@ export default function Services() {
   // Create new service: build deployment from form, send with required Exchange fields
   const handleCreate = async () => {
     try {
-      const values = await form.validateFields();
+      await form.validateFields(['name', 'label', 'version', 'arch', 'serviceUrl', 'containers']);
+      const values = form.getFieldsValue();
       if (getConfig().role === 'platform' && !createOrg) {
         message.error(t('please-select-an-organization'));
         return;
@@ -523,8 +765,9 @@ export default function Services() {
         version: values.version,
         arch: values.arch,
         url: values.serviceUrl || '',
-        public: true,
-        sharable: 'multiple',
+        public: values.public !== false,
+        sharable: values.sharable || 'multiple',
+        documentation: values.documentation || '',
         matchHardware: {},
         userInput: [],
         deployment,
@@ -559,37 +802,44 @@ export default function Services() {
           arch: parsed.arch || '',
           serviceUrl: parsed.url || '',
           description: parsed.description || '',
-          image: sd.image || '',
-          imageStore: sd.imageStore || '',
-          imageRegistryToken: sd.imageRegistryToken || '',
-          privileged: sd.privileged || false,
-          maxMemoryMb: sd.max_memory_mb ?? undefined,
-          maxCpus: sd.max_cpus ?? undefined,
-          user: sd.user || '',
-          pid: sd.pid || '',
-          ipc: sd.ipc || '',
-          healthCheckCommand: sd.healthCheckCommand || '',
-          healthCheckInterval: sd.healthCheckInterval ?? undefined,
-          healthCheckRetries: sd.healthCheckRetries ?? undefined,
-          healthCheckMinHealth: sd.healthCheckMinHealth ?? undefined,
-          ports: (sd.ports || []).map((p: any) => p.HostPort || '').join('\n'),
-          ephemeralPorts: sd.ephemeral_ports ? JSON.stringify(sd.ephemeral_ports) : '',
-          network: sd.network || '',
-          netOpenPorts: (sd.netOpenPorts || []).join('\n'),
-          netActiveAdapter: sd.netActiveAdapter || '',
-          netDefaultInterface: sd.netDefaultInterface || '',
-          binds: (sd.binds || []).join('\n'),
-          tmpfs: sd.tmpfs ? Object.entries(sd.tmpfs).map(([k, v]) => v ? `${k}:${v}` : k).join('\n') : '',
-          environment: sd.environment || '',
-          capAdd: (sd.cap_add || []).join('\n'),
-          devices: (sd.devices || []).join('\n'),
-          command: Array.isArray(sd.command) ? sd.command.join('\n') : sd.command || '',
-          entrypoint: Array.isArray(sd.entrypoint) ? sd.entrypoint.join('\n') : sd.entrypoint || '',
-          logDriver: sd.log_driver || '',
-          secrets: sd.secrets ? JSON.stringify(sd.secrets, null, 2) : '',
-          sysctls: sd.sysctls ? (typeof sd.sysctls === 'string' ? sd.sysctls : JSON.stringify(sd.sysctls, null, 2)) : '',
-          sharedBlockDevice: sd.sharedBlockDevice || '',
-          haMode: sd.haMode || '',
+          containers: Object.entries(dep?.services || {}).map(([serviceName, s]: [string, any]) => ({
+            serviceName,
+            image: s.image || '',
+            imageStore: s.imageStore || '',
+            imageRegistryToken: s.imageRegistryToken || '',
+            privileged: s.privileged ?? false,
+            maxMemoryMb: s.max_memory_mb ?? undefined,
+            maxCpus: s.max_cpus ?? undefined,
+            user: s.user || '',
+            pid: s.pid || '',
+            ipc: s.ipc || '',
+            healthCheckCommand: s.healthCheckCommand || '',
+            healthCheckInterval: s.healthCheckInterval ?? undefined,
+            healthCheckRetries: s.healthCheckRetries ?? undefined,
+            healthCheckMinHealth: s.healthCheckMinHealth ?? undefined,
+            ports: (s.ports || []).map((p: any) => p.HostPort || '').join('\n'),
+            ephemeralPorts: s.ephemeral_ports ? JSON.stringify(s.ephemeral_ports) : '',
+            network: s.network || '',
+            netOpenPorts: (s.netOpenPorts || []).join('\n'),
+            netActiveAdapter: s.netActiveAdapter || '',
+            netDefaultInterface: s.netDefaultInterface || '',
+            binds: (s.binds || []).join('\n'),
+            tmpfs: s.tmpfs ? Object.entries(s.tmpfs).map(([k, v]) => v ? `${k}:${v}` : k).join('\n') : '',
+            environment: Array.isArray(s.environment) ? s.environment.join('\n') : (s.environment || ''),
+            capAdd: (s.cap_add || []).join('\n'),
+            devices: (s.devices || []).join('\n'),
+            command: Array.isArray(s.command) ? s.command.join('\n') : s.command || '',
+            entrypoint: Array.isArray(s.entrypoint) ? s.entrypoint.join('\n') : s.entrypoint || '',
+            logDriver: s.log_driver || '',
+            secrets: s.secrets ? JSON.stringify(s.secrets, null, 2) : '',
+            sysctls: s.sysctls ? (typeof s.sysctls === 'string' ? s.sysctls : JSON.stringify(s.sysctls, null, 2)) : '',
+            sharedBlockDevice: s.sharedBlockDevice || '',
+            haMode: s.haMode || '',
+          })),
+          sharable: parsed.sharable || 'multiple',
+          public: parsed.public !== false,
+          documentation: parsed.documentation || '',
+          requiredServices: fromRequiredServices(parsed.requiredServices),
         });
       } catch (_) {}
     } else if (key === 'json' && editTab === 'ui') {
@@ -605,6 +855,9 @@ export default function Services() {
         arch: fv.arch || base.arch,
         url: fv.serviceUrl || base.url,
         description: fv.description || base.description,
+        sharable: fv.sharable || 'multiple',
+        public: fv.public !== false,
+        documentation: fv.documentation || '',
         userInput: base.userInput || [],
         deployment,
         requiredServices: toRequiredServices(fv.requiredServices),
@@ -656,7 +909,9 @@ export default function Services() {
             <Tooltip title={record.auto_upgrade ? t('disable-auto-upgrade') : t('enable-auto-upgrade')}>
               <Button size="small" icon={<RiseOutlined />} onClick={() => handleUpgrade(id, !record.auto_upgrade)} />
             </Tooltip>
-            <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(id)} />
+            <Tooltip title={isServiceReferenced(id) ? t('service-in-use-cannot-delete') : ''}>
+              <Button size="small" danger icon={<DeleteOutlined />} disabled={isServiceReferenced(id)} onClick={() => handleDelete(id)} />
+            </Tooltip>
           </Space>
         );
       },
@@ -810,6 +1065,41 @@ export default function Services() {
               ),
             },
             {
+              key: 'deps',
+              label: t('required-services'),
+              children: (
+                <div>
+                  {(() => {
+                    const deps = data[selectedService]?.requiredServices || [];
+                    if (!deps.length) return <Text type="secondary">{t('no-data')}</Text>;
+                    return (
+                      <Table
+                        dataSource={deps}
+                        rowKey={(r: any) => `${r.org}/${r.url}/${r.version}/${r.arch}`}
+                        pagination={false}
+                        size="small"
+                        columns={[
+                          { title: t('organization'), dataIndex: 'org', key: 'org' },
+                          {
+                            title: t('url'),
+                            dataIndex: 'url',
+                            key: 'url',
+                            render: (url: string, rec: any) => {
+                              const depKey = `${rec.org}/${url}`;
+                              if (data[depKey]) return <a onClick={() => showDetail(depKey)}>{url}</a>;
+                              return url;
+                            },
+                          },
+                          { title: t('version'), dataIndex: 'version', key: 'version', width: 100 },
+                          { title: t('architecture'), dataIndex: 'arch', key: 'arch', width: 100 },
+                        ]}
+                      />
+                    );
+                  })()}
+                </div>
+              ),
+            },
+            {
               key: 'keys',
               label: t('keys'),
               children: (
@@ -953,6 +1243,7 @@ export default function Services() {
         <Form form={form} layout="vertical">
           <Collapse
             size="small"
+            destroyInactivePanel={false}
             activeKey={createActiveKey}
             onChange={(k) => setCreateActiveKey(k as string[])}
             items={[
@@ -997,151 +1288,25 @@ export default function Services() {
                     <Form.Item name="sharedBlockDevice" label={t('shared-block-device')}>
                       <Input placeholder="/dev/sdb" />
                     </Form.Item>
-                  </div>
-                ),
-              },
-              {
-                key: 'deployImg',
-                label: t('deployment-images'),
-                children: (
-                  <div>
-                    <Form.Item name="image" label={t('image-name-image')} rules={[{ required: true, message: t('please-enter-the-image-name') }]}>
-                      <Input placeholder="name:tag" />
+                    <Form.Item name="sharable" label={t('sharable')}>
+                      <Select>
+                        <Select.Option value="multiple">multiple</Select.Option>
+                        <Select.Option value="singleton">singleton</Select.Option>
+                      </Select>
                     </Form.Item>
-                    <Form.Item name="imageStore" label={t('image-registry')}>
-                      <Input placeholder={t('e.g. docker.io')} />
-                    </Form.Item>
-                    <Form.Item name="imageRegistryToken" label={t('image-registry-token')}>
-                      <Input.Password placeholder={t('optional-registry-token')} />
-                    </Form.Item>
-                  </div>
-                ),
-              },
-              {
-                key: 'deploySvc',
-                label: t('deployment-options'),
-                children: (
-                  <div>
-                    <Form.Item name="privileged" label={t('privileged-mode')} valuePropName="checked">
+                    <Form.Item name="public" label={t('public')} valuePropName="checked">
                       <Switch />
                     </Form.Item>
-                    <Form.Item name="user" label={t('user')}>
-                      <Input placeholder={t('e.g. 1000:1000')} />
-                    </Form.Item>
-                    <Form.Item name="pid" label={t('pid-namespace')}>
-                      <Input placeholder={t('e.g. host')} />
-                    </Form.Item>
-                    <Form.Item name="ipc" label={t('ipc-namespace')}>
-                      <Input placeholder={t('e.g. host')} />
-                    </Form.Item>
-                    <Form.Item name="maxMemoryMb" label={t('max-memory-mb')}>
-                      <Input type="number" placeholder="256" />
-                    </Form.Item>
-                    <Form.Item name="maxCpus" label={t('max-cpus')}>
-                      <Input placeholder={t('e.g. 1, 0.5, 2.0')} />
+                    <Form.Item name="documentation" label={t('documentation')}>
+                      <Input placeholder="https://..." />
                     </Form.Item>
                   </div>
                 ),
               },
               {
-                key: 'capabilities',
-                label: t('capabilities'),
-                children: (
-                  <div>
-                    <Form.Item name="capAdd" label={t('linux-capabilities-one-per-line')}>
-                      <TextArea rows={3} placeholder="NET_ADMIN\nSYS_TIME" />
-                    </Form.Item>
-                    <Form.Item name="devices" label={t('device-mappings-one-per-line')}>
-                      <TextArea rows={3} placeholder="/dev/ttyUSB0:/dev/ttyUSB0:rwm" />
-                    </Form.Item>
-                    <Form.Item name="command" label={t('command-json-array-or-one-per-line')}>
-                      <TextArea rows={3} placeholder='["sh", "-c", "echo hello"]' />
-                    </Form.Item>
-                    <Form.Item name="entrypoint" label={t('entrypoint-json-array-or-one-per-line')}>
-                      <TextArea rows={3} placeholder='["/docker-entrypoint.sh"]' />
-                    </Form.Item>
-                  </div>
-                ),
-              },
-              {
-                key: 'health',
-                label: t('health-check'),
-                children: (
-                  <div>
-                    <Form.Item name="healthCheckCommand" label={t('health-check-command')}>
-                      <Input placeholder={t('e.g. curl -f http://localhost/health')} />
-                    </Form.Item>
-                    <Form.Item name="healthCheckInterval" label={t('health-check-interval-seconds')}>
-                      <Input type="number" placeholder="60" />
-                    </Form.Item>
-                    <Form.Item name="healthCheckRetries" label={t('health-check-retries')}>
-                      <Input type="number" placeholder="3" />
-                    </Form.Item>
-                    <Form.Item name="healthCheckMinHealth" label={t('health-check-minimum-healthy-seconds')}>
-                      <Input type="number" placeholder="10" />
-                    </Form.Item>
-                  </div>
-                ),
-              },
-              {
-                key: 'network',
-                label: t('network-config'),
-                children: (
-                  <div>
-                    <Form.Item name="ports" label={t('port-config')}>
-                      <TextArea rows={3} placeholder={t('port-config-one-per-line-format-hostportcontainerportprotocol')} />
-                    </Form.Item>
-                    <Form.Item name="ephemeralPorts" label={t('ephemeral-ports-json')}>
-                      <TextArea rows={2} placeholder='[{"protocol": "tcp", "port_range": "8080-8090"}]' />
-                    </Form.Item>
-                    <Form.Item name="network" label={t('network-config')}>
-                      <Input placeholder={t('e.g. host, bridge, default')} />
-                    </Form.Item>
-                    <Form.Item name="netOpenPorts" label={t('network-open-policy')}>
-                      <TextArea rows={2} placeholder={t('one-per-line')} />
-                    </Form.Item>
-                    <Form.Item name="netActiveAdapter" label={t('network-active-adapter')}>
-                      <Input placeholder={t('e.g. eth0, wlan0')} />
-                    </Form.Item>
-                    <Form.Item name="netDefaultInterface" label={t('default-network-interface')}>
-                      <Input placeholder={t('e.g. eth0')} />
-                    </Form.Item>
-                  </div>
-                ),
-              },
-              {
-                key: 'storage',
-                label: t('storage-and-volumes'),
-                children: (
-                  <div>
-                    <Form.Item name="binds" label={t('persistent-volumes-one-per-line-format-containerpathnodedefault')}>
-                      <TextArea rows={3} placeholder="/data\n/opt/data:NODEDEFAULT" />
-                    </Form.Item>
-                    <Form.Item name="tmpfs" label={t('temporary-volumes-one-per-line-format-pathsize')}>
-                      <TextArea rows={3} placeholder="/tmp\n/var/tmp:100m" />
-                    </Form.Item>
-                  </div>
-                ),
-              },
-              {
-                key: 'other',
-                label: t('other-config'),
-                children: (
-                  <div>
-                    <Form.Item name="environment" label={t('environment-variables')}>
-                      <TextArea rows={3} placeholder={t('one-per-line-eg-keyvalue')} />
-                    </Form.Item>
-                    <Form.Item name="logDriver" label={t('log-driver')}>
-                      <Input placeholder={t('e.g. json-file, syslog, journald')} />
-                    </Form.Item>
-                    <Form.Item name="secrets" label={t('secrets-json')}>
-                      <TextArea rows={3} placeholder='{"secret1": {"secret": "xxx", "key": "yyy"}}' />
-                    </Form.Item>
-                    <Form.Item name="sysctls" label={t('sysctls-json-or-text')}>
-                      <TextArea rows={2} placeholder='{"net.core.somaxconn": "1024"}' />
-                    </Form.Item>
-                  </div>
-                ),
+                key: 'containers',
+                label: 'Containers',
+                children: <ContainerFormList t={t} />,
               },
               {
                 key: 'deps',
@@ -1215,6 +1380,7 @@ export default function Services() {
                 <Form form={editForm} layout="vertical">
                   <Collapse
                     size="small"
+                    destroyInactivePanel={false}
                     activeKey={editActiveKey}
                     onChange={(k) => setEditActiveKey(k as string[])}
                     items={[
@@ -1244,152 +1410,26 @@ export default function Services() {
                             <Form.Item name="sharedBlockDevice" label={t('shared-block-device')}>
                               <Input />
                             </Form.Item>
-                          </div>
-                        ),
-                      },
-                      {
-                        key: 'deployImg',
-                        label: t('deployment-images'),
-                        children: (
-                          <div>
-                            <Form.Item name="image" label={t('image-name-image')}>
-                              <Input />
+                            <Form.Item name="sharable" label={t('sharable')}>
+                              <Select>
+                                <Select.Option value="multiple">multiple</Select.Option>
+                                <Select.Option value="singleton">singleton</Select.Option>
+                              </Select>
                             </Form.Item>
-                            <Form.Item name="imageStore" label={t('image-registry')}>
-                              <Input />
-                            </Form.Item>
-                            <Form.Item name="imageRegistryToken" label={t('image-registry-token')}>
-                              <Input.Password />
-                            </Form.Item>
-                          </div>
-                        ),
-                      },
-                      {
-                        key: 'deploySvc',
-                        label: t('deployment-options'),
-                        children: (
-                          <div>
-                            <Form.Item name="privileged" label={t('privileged-mode')} valuePropName="checked">
+                            <Form.Item name="public" label={t('public')} valuePropName="checked">
                               <Switch />
                             </Form.Item>
-                            <Form.Item name="user" label={t('user')}>
-                              <Input />
-                            </Form.Item>
-                            <Form.Item name="pid" label={t('pid-namespace')}>
-                              <Input />
-                            </Form.Item>
-                            <Form.Item name="ipc" label={t('ipc-namespace')}>
-                              <Input />
-                            </Form.Item>
-                            <Form.Item name="maxMemoryMb" label={t('max-memory-mb')}>
-                              <Input type="number" />
-                            </Form.Item>
-                            <Form.Item name="maxCpus" label={t('max-cpus')}>
+                            <Form.Item name="documentation" label={t('documentation')}>
                               <Input />
                             </Form.Item>
                           </div>
                         ),
                       },
                       {
-                        key: 'capabilities',
-                        label: t('capabilities'),
-                        children: (
-                          <div>
-                            <Form.Item name="capAdd" label={t('linux-capabilities-one-per-line')}>
-                              <TextArea rows={3} />
-                            </Form.Item>
-                            <Form.Item name="devices" label={t('device-mappings-one-per-line')}>
-                              <TextArea rows={3} />
-                            </Form.Item>
-                            <Form.Item name="command" label={t('command-json-array-or-one-per-line')}>
-                              <TextArea rows={3} />
-                            </Form.Item>
-                            <Form.Item name="entrypoint" label={t('entrypoint-json-array-or-one-per-line')}>
-                              <TextArea rows={3} />
-                            </Form.Item>
-                          </div>
-                        ),
+                        key: 'containers',
+                        label: 'Containers',
+                        children: <ContainerFormList t={t} />,
                       },
-                      {
-                        key: 'health',
-                        label: t('health-check'),
-                        children: (
-                          <div>
-                            <Form.Item name="healthCheckCommand" label={t('health-check-command')}>
-                              <Input />
-                            </Form.Item>
-                            <Form.Item name="healthCheckInterval" label={t('health-check-interval-seconds')}>
-                              <Input type="number" />
-                            </Form.Item>
-                            <Form.Item name="healthCheckRetries" label={t('health-check-retries')}>
-                              <Input type="number" />
-                            </Form.Item>
-                            <Form.Item name="healthCheckMinHealth" label={t('health-check-minimum-healthy-seconds')}>
-                              <Input type="number" />
-                            </Form.Item>
-                          </div>
-                        ),
-                      },
-                      {
-                        key: 'network',
-                        label: t('network-config'),
-                        children: (
-                          <div>
-                            <Form.Item name="ports" label={t('port-config')}>
-                              <TextArea rows={3} />
-                            </Form.Item>
-                            <Form.Item name="ephemeralPorts" label={t('ephemeral-ports-json')}>
-                              <TextArea rows={2} />
-                            </Form.Item>
-                            <Form.Item name="network" label={t('network-config')}>
-                              <Input />
-                            </Form.Item>
-                            <Form.Item name="netOpenPorts" label={t('network-open-policy')}>
-                              <TextArea rows={2} />
-                            </Form.Item>
-                            <Form.Item name="netActiveAdapter" label={t('network-active-adapter')}>
-                              <Input />
-                            </Form.Item>
-                            <Form.Item name="netDefaultInterface" label={t('default-network-interface')}>
-                              <Input />
-                            </Form.Item>
-                          </div>
-                        ),
-                      },
-                      {
-                        key: 'storage',
-                        label: t('storage-and-volumes'),
-                        children: (
-                          <div>
-                            <Form.Item name="binds" label={t('persistent-volumes-one-per-line')}>
-                              <TextArea rows={3} />
-                            </Form.Item>
-                            <Form.Item name="tmpfs" label={t('temporary-volumes-one-per-line')}>
-                              <TextArea rows={3} />
-                            </Form.Item>
-                          </div>
-                        ),
-                      },
-                      {
-                        key: 'other',
-                        label: t('other-config'),
-                        children: (
-                          <div>
-                            <Form.Item name="environment" label={t('environment-variables')}>
-                              <TextArea rows={3} />
-                            </Form.Item>
-                            <Form.Item name="logDriver" label={t('log-driver')}>
-                              <Input />
-                            </Form.Item>
-                            <Form.Item name="secrets" label={t('secrets-json')}>
-                              <TextArea rows={3} />
-                            </Form.Item>
-                    <Form.Item name="sysctls" label={t('sysctls-json-or-text')}>
-                      <TextArea rows={2} />
-                    </Form.Item>
-                  </div>
-                ),
-              },
               {
                 key: 'deps',
                 label: t('required-services'),

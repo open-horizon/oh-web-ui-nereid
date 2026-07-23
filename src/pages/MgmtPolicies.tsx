@@ -227,6 +227,10 @@ const [createOpen, setCreateOpen] = useState(false);
         constraints: vconstraints,
         enabled: true,
       };
+      const existingPolicy = data[editingId];
+      const existingOrg = existingPolicy?.service?.org
+        || existingPolicy?.properties?.find((p: any) => p.name === 'openhorizon.service.org')?.value
+        || getConfig().orgId || '';
       if (values.patternType === 'pattern') {
         body.pattern = values.patternId || '';
       } else if (values.patternType === 'businessPolicy') {
@@ -234,7 +238,7 @@ const [createOpen, setCreateOpen] = useState(false);
       } else {
         body.service = {
           name: values.serviceName,
-          org: getConfig().orgId || '',
+          org: existingOrg,
           arch: 'amd64',
           serviceVersions: [{ version: '1.0.0', priority: {}, upgrade: {} }],
           nodeHealth: { ping_interval: 60, parallel_health_check: true },
@@ -243,7 +247,7 @@ const [createOpen, setCreateOpen] = useState(false);
       if (selectedServices.length > 0) {
         body.dataServices = selectedServices.map((svcId) => ({
           serviceUrl: services[svcId].url || '',
-          serviceOrgid: getConfig().orgId || '',
+          serviceOrgid: services[svcId].organization || existingOrg,
           serviceArch: services[svcId].arch || 'amd64',
           serviceVersions: [{ version: services[svcId].version || '1.0.0', priority: {}, upgrade: {} }],
         }));

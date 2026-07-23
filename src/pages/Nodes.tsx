@@ -126,7 +126,10 @@ export default function Nodes() {
         NodeAPI.errors(nid, nOrg),
         NodeAPI.managementStatus(nid, nOrg),
       ]);
-      if (ag.status === 'fulfilled') setNodeAgreements(Object.values(ag.value?.agreements ?? {}));
+      if (ag.status === 'fulfilled') {
+        const ags = ag.value?.agreements ?? {};
+        setNodeAgreements(Object.entries(ags).map(([id, val]) => ({ id, ...(val as any) })));
+      }
       if (er.status === 'fulfilled') {
         const errData = er.value?.errors ?? [];
         setNodeErrors(Array.isArray(errData) ? errData : []);
@@ -484,13 +487,12 @@ export default function Nodes() {
       },
     },
     {
-      title: t('svc'), key: 'services', width: 50, align: 'center' as const,
+      title: t('svc'), key: 'services', width: 70, align: 'center' as const,
       render: (_: any, record: any) => {
-        const rs = record?.registeredServices;
-        const count = Array.isArray(rs) ? rs.length : 0;
-        return count > 0
-          ? <Tag color="green" style={{ margin: 0 }}>{count}</Tag>
-          : <Tag style={{ margin: 0 }}>0</Tag>;
+        const total = record?._svcTotal ?? 0;
+        const running = record?._svcRunning ?? 0;
+        const color = total > 0 && running === total ? 'green' : total > 0 ? 'orange' : 'default';
+        return <Tag color={color} style={{ margin: 0 }}>{running}/{total}</Tag>;
       },
     },
     {
@@ -796,29 +798,36 @@ export default function Nodes() {
                   loading={servicesLoading}
                   dataSource={nodeServices}
                   locale={{ emptyText: t('no-registered-services') }}
-                  renderItem={(svc: NodeServiceStatus) => (
-                    <List.Item>
-                      <List.Item.Meta
-                        avatar={
-                          svc.agreementId
-                            ? <CheckCircleOutlined style={{ fontSize: 20, color: '#52c41a' }} />
-                            : <MinusCircleOutlined style={{ fontSize: 20, color: '#faad14' }} />
-                        }
-                        title={
-                          <Space>
-                            <Text code>{svc.url || svc.serviceUrl || '-'}</Text>
-                            <Tag>{svc.version || '-'}</Tag>
-                            <Tag>{svc.arch || '-'}</Tag>
-                          </Space>
-                        }
-                        description={
-                          svc.agreementId
-                            ? t('agreement') + svc.agreementId
-                            : t('waiting-for-agreement')
-                        }
-                      />
-                    </List.Item>
-                  )}
+                  renderItem={(svc: NodeServiceStatus) => {
+                    const cs = Array.isArray(svc.containerStatus) ? svc.containerStatus[0] : null;
+                    const state = cs?.state || 'unknown';
+                    const isRunning = state === 'running';
+                    const hasAgreement = !!svc.agreementId;
+                    return (
+                      <List.Item>
+                        <List.Item.Meta
+                          avatar={
+                            isRunning
+                              ? <CheckCircleOutlined style={{ fontSize: 20, color: '#52c41a' }} />
+                              : <MinusCircleOutlined style={{ fontSize: 20, color: '#faad14' }} />
+                          }
+                          title={
+                            <Space>
+                              <Text code>{svc.url || svc.serviceUrl || '-'}</Text>
+                              <Tag>{svc.version || '-'}</Tag>
+                              <Tag>{svc.arch || '-'}</Tag>
+                            </Space>
+                          }
+                          description={
+                            <Space>
+                              <Tag color={isRunning ? 'green' : 'default'}>{state}</Tag>
+                              {hasAgreement && <Text type="secondary">{t('agreement')}{svc.agreementId}</Text>}
+                            </Space>
+                          }
+                        />
+                      </List.Item>
+                    );
+                  }}
                 />
               ),
             },
@@ -830,22 +839,44 @@ export default function Nodes() {
                   loading={subLoading}
                   dataSource={nodeAgreements}
                   locale={{ emptyText: t('no-agreements') }}
-                  renderItem={(ag: any, i: number) => (
-                    <List.Item>
-                      <List.Item.Meta
-                        title={<Text code>{ag.current_agreement_id || ag.id || `#${i + 1}`}</Text>}
-                        description={
-                          <div>
-                            <div>{t('state')}{ag.state || ag.agreement_state || '-'}</div>
-                            {ag.service_specifications?.map((s: any, j: number) => (
-                              <Tag key={j} style={{ marginTop: 4 }}>{s.service_url}@{s.service_version_range}</Tag>
-                            ))}
-                            {ag.credits && <div>{t('credits')}{ag.credits}</div>}
-                          </div>
-                        }
-                      />
-                    </List.Item>
-                  )}
+                  renderItem={(ag: any, i: number) => {
+                    const shortId = (ag.id || '').slice(0, 16) + '…';
+                    const mainSvc = ag.agrService;
+                    let lastUpd: string | null = null;
+                    if (ag.lastUpdated) {
+                      try {
+                        const d = typeof ag.lastUpdated === 'number' ? new Date(ag.lastUpdated * 1000) : new Date(ag.lastUpdated);
+                        if (!isNaN(d.getTime())) lastUpd = d.toISOString();
+                      } catch {}
+                    }
+                    return (
+                      <List.Item>
+                        <List.Item.Meta
+                          title={
+                            <Space>
+                              <Text code>{shortId}</Text>
+                              {mainSvc && <Tag color="blue">{mainSvc.url}@{mainSvc.version}</Tag>}
+                            </Space>
+                          }
+                          description={
+                            <div>
+                              <Space>
+                                <Tag>{ag.state || '-'}</Tag>
+                                {lastUpd && <Text type="secondary">{t('last-updated')}{fmtTime(lastUpd)}</Text>}
+                              </Space>
+                              {ag.services?.length > 0 && (
+                                <div style={{ marginTop: 4 }}>
+                                  {ag.services.map((s: any, j: number) => (
+                                    <Tag key={j} style={{ marginTop: 2 }}>{s.url}@{s.version}</Tag>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          }
+                        />
+                      </List.Item>
+                    );
+                  }}
                 />
               ),
             },
@@ -925,58 +956,75 @@ export default function Nodes() {
                 />
               ),
             },
+
             {
               key: 'servicesConfig',
               label: t('services-config-state'),
               children: (
                 <div>
-                  <Button
-                    size="small"
-                    icon={<EditOutlined />}
-                    onClick={async () => {
-                      const services = drawerNode?.registeredServices;
-                      const svcList = Array.isArray(services) ? services : Object.values(services || {});
-                      if (svcList.length === 0) {
-                        message.warning(t('no-services'));
-                        return;
-                      }
-                      // For each service, set config state to 'active'
+                  <Space style={{ marginBottom: 12 }} wrap>
+                    <Button size="small" icon={<EditOutlined />} onClick={async () => {
+                      const svcList: any[] = Object.values(drawerNode?.registeredServices || {});
+                      if (svcList.length === 0) { message.warning(t('no-services')); return; }
                       for (const svc of svcList) {
-                        const svcName = svc.name || svc.ServiceName || '';
+                        const svcName = svc.url || svc.name || svc.ServiceName || '';
                         const svcOrg = svc.org || svc.ServiceOrg || pageOrg;
                         if (svcName) {
                           try {
-                            await NodeAPI.setServicesConfigState(drawerNodeId, [
-                              { org: svcOrg, service: svcName, configState: 'active' }
-                            ], pageOrg || undefined);
-                          } catch (err: any) {
-                            message.error(err.message);
-                          }
+                            await NodeAPI.setServicesConfigState(drawerNodeId,
+                              [{ org: svcOrg, service: svcName, configState: 'active' }],
+                              pageOrg || undefined);
+                          } catch (err: any) { message.error(err.message); }
                         }
                       }
                       message.success(t('services-config-updated'));
-                    }}
-                  >
-                    {t('activate-all')}
-                  </Button>
+                    }}>{t('activate-all')}</Button>
+                    <Button size="small" danger icon={<EditOutlined />} onClick={async () => {
+                      const svcList: any[] = Object.values(drawerNode?.registeredServices || {});
+                      if (svcList.length === 0) { message.warning(t('no-services')); return; }
+                      for (const svc of svcList) {
+                        const svcName = svc.url || svc.name || svc.ServiceName || '';
+                        const svcOrg = svc.org || svc.ServiceOrg || pageOrg;
+                        if (svcName) {
+                          try {
+                            await NodeAPI.setServicesConfigState(drawerNodeId,
+                              [{ org: svcOrg, service: svcName, configState: 'suspended' }],
+                              pageOrg || undefined);
+                          } catch (err: any) { message.error(err.message); }
+                        }
+                      }
+                      message.success(t('services-config-updated'));
+                    }}>{t('suspend-all')}</Button>
+                  </Space>
                   <List
                     loading={subLoading}
                     dataSource={Object.values(drawerNode?.registeredServices || {})}
                     locale={{ emptyText: t('no-services') }}
-                    renderItem={(svc: any) => (
-                      <List.Item>
-                        <List.Item.Meta
-                          title={<Text code>{svc.name || svc.ServiceName || '-'}</Text>}
-                          description={
-                            <div>
-                              <div>{t('org')}: {svc.org || svc.ServiceOrg || '-'}</div>
-                              <div>{t('version')}: {svc.version || '-'}</div>
-                              <div>{t('config-state')}: {svc.configState || 'active'}</div>
-                            </div>
-                          }
-                        />
-                      </List.Item>
-                    )}
+                    renderItem={(svc: any) => {
+                      const configState = svc.configState || 'active';
+                      const isActive = configState === 'active';
+                      return (
+                        <List.Item>
+                          <List.Item.Meta
+                            avatar={isActive
+                              ? <CheckCircleOutlined style={{ fontSize: 20, color: '#52c41a' }} />
+                              : <CloseCircleOutlined style={{ fontSize: 20, color: '#faad14' }} />
+                            }
+                            title={<Text code>{svc.url || svc.name || svc.ServiceName || '-'}</Text>}
+                            description={
+                              <div>
+                                <Space>
+                                  <Tag>{svc.version || '-'}</Tag>
+                                  <Tag color={isActive ? 'green' : 'orange'}>{configState}</Tag>
+                                  <Text type="secondary">{t('agreements')}: {svc.numAgreements ?? '-'}</Text>
+                                </Space>
+                                {svc.policy && <div><Text type="secondary" style={{ fontSize: 12 }}>{t('policy')}: {svc.policy}</Text></div>}
+                              </div>
+                            }
+                          />
+                        </List.Item>
+                      );
+                    }}
                   />
                 </div>
               ),

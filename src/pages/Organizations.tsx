@@ -3,10 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Table, Button, Space, Typography, message, Modal, Form, Input, InputNumber, Tabs } from 'antd';
 import { SearchOutlined, PlusOutlined, ReloadOutlined, DeleteOutlined, EyeOutlined, SettingOutlined } from '@ant-design/icons';
 import { OrgAPI, Organization } from '../api/organizations';
 import { OrgConfigAPI } from '../api/orgConfig';
+import { getConfig } from '../api/config';
 import { useT } from '../i18n/context';
 import { useScreenSize } from '../hooks/useIsMobile';
 import HelpButton from '../components/HelpButton';
@@ -15,8 +17,16 @@ const { Text } = Typography;
 
 export default function Organizations() {
   const { t, fmtTime } = useT();
+  const navigate = useNavigate();
   const [data, setData] = useState<Record<string, Organization>>({});
   const [loading, setLoading] = useState(true);
+
+  // Partner users should not access organization management
+  useEffect(() => {
+    if (getConfig().role !== 'platform') {
+      navigate('/dashboard', { replace: true });
+    }
+  }, [navigate]);
   const [modalOpen, setModalOpen] = useState(false);
   const [detailData, setDetailData] = useState<any>(null);
   const [createOpen, setCreateOpen] = useState(false);

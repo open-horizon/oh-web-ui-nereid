@@ -3,10 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { usePolling } from '../hooks/usePolling';
 import { Row, Col, Card, Typography, message, Modal, Tabs, Spin } from 'antd';
 import { EyeOutlined } from '@ant-design/icons';
 import { CatalogAPI } from '../api/catalog';
+import { getConfig } from '../api/config';
 import { useT } from '../i18n/context';
 import HelpButton from '../components/HelpButton';
 
@@ -14,9 +16,16 @@ const { Text } = Typography;
 
 export default function Catalog() {
   const { t } = useT();
+  const navigate = useNavigate();
   const [services, setServices] = useState<Record<string, any>>({});
   const [patterns, setPatterns] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (getConfig().role !== 'platform') {
+      navigate('/dashboard', { replace: true });
+    }
+  }, [navigate]);
   useEffect(() => {
     (async () => {
       try {

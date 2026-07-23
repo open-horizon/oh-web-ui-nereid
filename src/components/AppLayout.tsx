@@ -120,7 +120,7 @@ export default function AppLayout() {
     if (selectedKey !== '/dashboard' && !validKeys.includes(selectedKey)) {
       navigate('/dashboard', { replace: true });
     }
-  }, []);
+  }, [selectedKey]);
 
   const renderMenu = (onClick?: () => void) => (
     <Menu

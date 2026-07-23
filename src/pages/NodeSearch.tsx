@@ -20,6 +20,8 @@ const { Text } = Typography;
 export default function NodeSearch() {
   const { t, fmtTime } = useT();
   const config = getConfig();
+  const isPlatform = config.role === 'platform';
+  const sessionOrg = config.orgId || '';
   const [activeTab, setActiveTab] = useState('service');
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<Record<string, any>>({});
@@ -30,39 +32,42 @@ export default function NodeSearch() {
   const [patternList, setPatternList] = useState<string[]>([]);
 
   // Service search state
-  const [serviceOrg, setServiceOrg] = useState('');
+  const [serviceOrg, setServiceOrg] = useState(isPlatform ? '' : sessionOrg);
   const [serviceName, setServiceName] = useState('');
   const [serviceVersion, setServiceVersion] = useState('');
 
   // Error search state
-  const [errorOrg, setErrorOrg] = useState('');
+  const [errorOrg, setErrorOrg] = useState(isPlatform ? '' : sessionOrg);
   const [errorFilter, setErrorFilter] = useState('');
 
   // Health search state
-  const [healthOrg, setHealthOrg] = useState('');
+  const [healthOrg, setHealthOrg] = useState(isPlatform ? '' : sessionOrg);
   const [healthPattern, setHealthPattern] = useState('');
   const [healthService, setHealthService] = useState('');
 
   // Load dropdown data
   const loadDropdowns = useCallback(async () => {
     try {
-      const [orgRes, svcRes, patRes] = await Promise.allSettled([
-        OrgAPI.list(),
-        ServiceAPI.list(),
-        PatternAPI.list(),
-      ]);
+      const reqs: Promise<any>[] = [
+        ServiceAPI.list(isPlatform ? undefined : sessionOrg || undefined),
+        PatternAPI.list(isPlatform ? undefined : sessionOrg || undefined),
+      ];
+      if (isPlatform) reqs.unshift(OrgAPI.list());
+      const results = await Promise.allSettled(reqs);
       
-      if (orgRes.status === 'fulfilled') {
-        setOrgList(Object.keys(orgRes.value?.orgs ?? {}).filter((o) => o !== 'root'));
+      if (isPlatform && results[0].status === 'fulfilled') {
+        setOrgList(Object.keys(results[0].value?.orgs ?? {}).filter((o) => o !== 'root'));
       }
-      if (svcRes.status === 'fulfilled') {
-        setServiceList(Object.keys(svcRes.value?.services ?? {}));
+      const svcIdx = isPlatform ? 1 : 0;
+      const patIdx = isPlatform ? 2 : 1;
+      if (results[svcIdx].status === 'fulfilled') {
+        setServiceList(Object.keys(results[svcIdx].value?.services ?? {}));
       }
-      if (patRes.status === 'fulfilled') {
-        setPatternList(Object.keys(patRes.value?.patterns ?? {}));
+      if (results[patIdx].status === 'fulfilled') {
+        setPatternList(Object.keys(results[patIdx].value?.patterns ?? {}));
       }
     } catch {}
-  }, []);
+  }, [isPlatform, sessionOrg]);
 
   useEffect(() => { loadDropdowns(); }, [loadDropdowns]);
   usePolling(loadDropdowns, 60000);
@@ -153,6 +158,7 @@ export default function NodeSearch() {
             children: (
               <Card>
                 <Space wrap style={{ marginBottom: 16 }}>
+                  {isPlatform && (
                   <Select
                     placeholder={t('organization')}
                     value={serviceOrg || undefined}
@@ -162,6 +168,7 @@ export default function NodeSearch() {
                     showSearch
                     allowClear
                   />
+                  )}
                   <Select
                     placeholder={t('service-name')}
                     value={serviceName || undefined}
@@ -191,6 +198,7 @@ export default function NodeSearch() {
             children: (
               <Card>
                 <Space wrap style={{ marginBottom: 16 }}>
+                  {isPlatform && (
                   <Select
                     placeholder={t('organization')}
                     value={errorOrg || undefined}
@@ -200,6 +208,7 @@ export default function NodeSearch() {
                     showSearch
                     allowClear
                   />
+                  )}
                   <Input
                     placeholder={t('error-filter-optional')}
                     value={errorFilter}
@@ -219,6 +228,7 @@ export default function NodeSearch() {
             children: (
               <Card>
                 <Space wrap style={{ marginBottom: 16 }}>
+                  {isPlatform && (
                   <Select
                     placeholder={t('organization')}
                     value={healthOrg || undefined}
@@ -228,6 +238,7 @@ export default function NodeSearch() {
                     showSearch
                     allowClear
                   />
+                  )}
                   <Select
                     placeholder={t('pattern-name')}
                     value={healthPattern || undefined}

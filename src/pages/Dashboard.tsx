@@ -129,7 +129,7 @@ export default function Dashboard() {
       {/* 统计卡片 */}
       <Row gutter={[16, 16]}>
         {stats.map((st) => (
-          <Col xs={12} sm={8} md={6} lg={3} key={st.key}>
+          <Col xs={12} sm={8} md={6} lg={6} key={st.key}>
             <Tooltip title={st.tip} placement="top">
               <Card hoverable onClick={() => navigate(st.link)} style={{ cursor: 'pointer' }}>
                 <Statistic title={st.title} value={st.value} prefix={st.icon} />

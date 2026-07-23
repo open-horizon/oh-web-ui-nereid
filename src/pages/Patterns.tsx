@@ -4,7 +4,7 @@
 
 import { useEffect, useState } from 'react';
 import { usePolling } from '../hooks/usePolling';
-import { Table, Button, Space, Typography, message, Modal, Tag, Form, Input, Alert, Select, Checkbox, Drawer, Tabs, List } from 'antd';
+import { Table, Button, Space, Typography, message, Modal, Tag, Form, Input, Alert, Select, Checkbox, Drawer, Tabs, List, Tooltip } from 'antd';
 import { ReloadOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, SearchOutlined, ImportOutlined, EditOutlined, DownloadOutlined, ClusterOutlined } from '@ant-design/icons';
 import { PatternAPI, ExchangePattern } from '../api/patterns';
 import { ServiceAPI, ExchangeService } from '../api/services';
@@ -67,6 +67,7 @@ export default function Patterns() {
   const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
   const [detailPatternId, setDetailPatternId] = useState<string>('');
   const [patternNodeHealth, setPatternNodeHealth] = useState<any[]>([]);
+  const [allNodes, setAllNodes] = useState<Record<string, ExchangeNode>>({});
   const [nodeHealthLoading, setNodeHealthLoading] = useState(false);
 
   // Load patterns from Exchange; system org also loads org list for cross-org browsing
@@ -74,8 +75,12 @@ export default function Patterns() {
     const targetOrg = org !== undefined ? org : pageOrg;
     setLoading(true);
     try {
-      const res = await PatternAPI.list(targetOrg || undefined);
-      setData(res?.patterns ?? {});
+      const [patRes, nodeRes] = await Promise.allSettled([
+        PatternAPI.list(targetOrg || undefined),
+        NodeAPI.list(targetOrg || undefined),
+      ]);
+      if (patRes.status === 'fulfilled') setData(patRes.value?.patterns ?? {});
+      if (nodeRes.status === 'fulfilled') setAllNodes(nodeRes.value?.nodes ?? {});
       if (getConfig().role === 'platform') {
         const orgRes = await OrgAPI.list();
         setAllOrgs(Object.keys(orgRes?.orgs ?? {}).filter((o) => o !== 'root'));
@@ -93,8 +98,12 @@ export default function Patterns() {
 
   usePolling(async () => {
     try {
-      const res = await PatternAPI.list(pageOrg || undefined);
-      setData(res?.patterns ?? {});
+      const [patRes, nodeRes] = await Promise.allSettled([
+        PatternAPI.list(pageOrg || undefined),
+        NodeAPI.list(pageOrg || undefined),
+      ]);
+      if (patRes.status === 'fulfilled') setData(patRes.value?.patterns ?? {});
+      if (nodeRes.status === 'fulfilled') setAllNodes(nodeRes.value?.nodes ?? {});
       if (getConfig().role === 'platform') {
         const orgRes = await OrgAPI.list();
         setAllOrgs(Object.keys(orgRes?.orgs ?? {}).filter((o) => o !== 'root'));
@@ -107,26 +116,31 @@ export default function Patterns() {
     setNodesDrawerOpen(true);
     setMatchedNodesLoading(true);
     try {
-      // Use server-side search API for efficient matching
-      try {
-        const res = await PatternAPI.search(patternId, pageOrg || undefined);
-        const nodeList = res?.nodes ?? [];
-        setMatchedNodes(Array.isArray(nodeList) ? nodeList.map((n: any) => ({ name: n.name || n, ...n })) : []);
-      } catch {
-        // Fallback to client-side search if server-side search fails
-        const res = await NodeAPI.list(pageOrg || undefined);
-        const allNodes = Object.values(res?.nodes ?? {});
-        const org = patternId.includes('/') ? patternId.split('/')[0] : pageOrg;
-        const name = patternId.includes('/') ? patternId.split('/').slice(1).join('/') : patternId;
-        const matched = allNodes.filter((n: any) => {
-          const np = n.pattern || '';
-          return np === patternId || np === `${org}/${name}` || np === name;
-        });
-        setMatchedNodes(matched);
-      }
+      // Check all nodes' pattern field for a match
+      const res = await NodeAPI.list(pageOrg || undefined);
+      const allNodes = Object.values(res?.nodes ?? {});
+      const org = patternId.includes('/') ? patternId.split('/')[0] : pageOrg;
+      const name = patternId.includes('/') ? patternId.split('/').slice(1).join('/') : patternId;
+      const matched = allNodes.filter((n: any) => {
+        const np = n.pattern || '';
+        return np === patternId || np === `${org}/${name}` || np === name;
+      });
+      setMatchedNodes(matched);
     } catch { setMatchedNodes([]); }
     setMatchedNodesLoading(false);
   };
+
+  // Build set of pattern IDs referenced by nodes
+  const referencedPatterns = (() => {
+    const refs = new Set<string>();
+    for (const node of Object.values(allNodes)) {
+      const p = (node as any).pattern;
+      if (p) refs.add(p);
+    }
+    return refs;
+  })();
+
+  const isPatternReferenced = (id: string) => referencedPatterns.has(id);
 
   const handleDelete = (id: string) => {
     Modal.confirm({
@@ -211,7 +225,7 @@ export default function Patterns() {
   const buildServicesFromEdit = () =>
     editSelectedSvcIds.map((svcId) => ({
       serviceUrl: (editServices[svcId]?.url || svcId),
-      serviceOrgid: getConfig().orgId || '',
+      serviceOrgid: svcId.includes('/') ? svcId.split('/')[0] : (getConfig().orgId || ''),
       serviceArch: editServices[svcId]?.arch || 'amd64',
       serviceVersions: [{ version: editServices[svcId]?.version || '1.0.0', priority: {}, upgradePolicy: {} }],
       nodeHealth: { ping_interval: 60, parallel_health_check: true },
@@ -359,7 +373,12 @@ export default function Patterns() {
             <Button size="small" icon={<EyeOutlined />} onClick={() => showDetail(id)} />
             <Button size="small" icon={<ClusterOutlined />} onClick={() => showPatternNodes(id)}>{t('nodes')}</Button>
             <Button size="small" icon={<EditOutlined />} onClick={() => openEditModel(id)} />
-            <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(id)} />
+            <Tooltip title={t('export')}>
+              <Button size="small" icon={<DownloadOutlined />} onClick={() => exportPattern(id)} />
+            </Tooltip>
+            <Tooltip title={isPatternReferenced(id) ? t('pattern-in-use-cannot-delete') : ''}>
+              <Button size="small" danger icon={<DeleteOutlined />} disabled={isPatternReferenced(id)} onClick={() => handleDelete(id)} />
+            </Tooltip>
           </Space>
         );
       },

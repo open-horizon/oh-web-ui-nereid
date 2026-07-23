@@ -269,7 +269,7 @@ app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 // Partner users are org-scoped: they can read/write within their bound org
 // but cannot access BFF management routes (users, exchange-config, apikeys).
 const PUBLIC_PATHS = new Set(['/api/health', '/api/setup-status', '/api/setup', '/api/login']);
-const PARTNER_BLOCKED = ['/api/bff-users', '/api/exchange-config', '/api/apikeys', '/api/settings'];
+const PARTNER_BLOCKED = ['/api/bff-users', '/api/exchange-config', '/api/apikeys', '/api/settings', '/api/catalog-services', '/api/catalog-patterns'];
 app.use((req, res, next) => {
   if (!req.path.startsWith('/api/')) return next();
   if (PUBLIC_PATHS.has(req.path)) return next();
@@ -1344,16 +1344,43 @@ app.get('/api/nodes', async (req, res) => {
             try {
               const r = await exch(s, 'GET', `/orgs/${org}/nodes`);
               if (r.status === 200 && r.data?.nodes) {
-                Object.assign(allNodes, r.data.nodes);
+                Object.entries(r.data.nodes).forEach(([id, n]) => {
+                  n._org = org;
+                  allNodes[id] = n;
+                });
               }
             } catch (_) {}
           }));
         }
       } catch (_) {}
+      // Augment each node with _svcRunning / _svcTotal from node status
+      await Promise.allSettled(Object.keys(allNodes).map(async (id) => {
+        const org = allNodes[id]._org || s.orgId;
+        try {
+          const sr = await exch(s, 'GET', `/orgs/${org}/nodes/${encodeURIComponent(id)}/status`);
+          if (sr.status === 200 && sr.data?.services) {
+            const services = Array.isArray(sr.data.services) ? sr.data.services : [];
+            allNodes[id]._svcTotal = services.length;
+            allNodes[id]._svcRunning = services.filter(s => s.containerStatus?.[0]?.state === 'running').length;
+          }
+        } catch (_) {}
+      }));
       return res.json({ nodes: allNodes, lastIndex: 0 });
     }
     const org = requestedOrg || s.orgId;
     const { status, data } = await exch(s, 'GET', `/orgs/${org}/nodes`);
+    if (status === 200 && data?.nodes) {
+      await Promise.allSettled(Object.keys(data.nodes).map(async (id) => {
+        try {
+          const sr = await exch(s, 'GET', `/orgs/${org}/nodes/${encodeURIComponent(id)}/status`);
+          if (sr.status === 200 && sr.data?.services) {
+            const services = Array.isArray(sr.data.services) ? sr.data.services : [];
+            data.nodes[id]._svcTotal = services.length;
+            data.nodes[id]._svcRunning = services.filter(s => s.containerStatus?.[0]?.state === 'running').length;
+          }
+        } catch (_) {}
+      }));
+    }
     res.status(ok(status, data)).json(data);
   } catch (e) { res.status(502).json({ msg: e.message }); }
 });
@@ -1480,9 +1507,7 @@ app.post('/api/search/nodes/service', async (req, res) => {
   if (!s) return res.status(401).json({ msg: 'Not logged in' });
   const org = req.query.org || s.orgId;
   try {
-    console.log('[DEBUG] Search nodes by service:', org, 'body:', JSON.stringify(req.body));
     const { status, data } = await exch(s, 'POST', `/orgs/${org}/search/nodes/service`, req.body);
-    console.log('[DEBUG] Search result:', status, JSON.stringify(data).substring(0, 200));
     res.status(ok(status, data)).json(data);
   } catch (e) { res.status(502).json({ msg: e.message }); }
 });
@@ -1493,9 +1518,7 @@ app.post('/api/search/nodes/error', async (req, res) => {
   if (!s) return res.status(401).json({ msg: 'Not logged in' });
   const org = req.query.org || s.orgId;
   try {
-    console.log('[SEARCH-ERROR] org:', org, 'body:', JSON.stringify(req.body));
     const { status, data } = await exch(s, 'POST', `/orgs/${org}/search/nodes/error`, req.body);
-    console.log('[SEARCH-ERROR] result:', status, JSON.stringify(data).substring(0, 300));
     res.status(ok(status, data)).json(data);
   } catch (e) { res.status(502).json({ msg: e.message }); }
 });
@@ -1989,13 +2012,13 @@ app.delete('/api/patterns/:id', async (req, res) => {
   } catch (e) { res.status(502).json({ msg: e.message }); }
 });
 
-app.get('/api/patterns/:id/nodehealth', async (req, res) => {
+app.post('/api/patterns/:id/nodehealth', async (req, res) => {
   const s = session(req);
   if (!s) return res.status(401).json({ msg: 'Not logged in' });
   const org = req.query.org || s.orgId;
   try {
     const patId = stripOrg(org, decodeURIComponent(req.params.id));
-    const { status, data } = await exch(s, 'GET', `/orgs/${org}/deployment/patterns/${patId}/nodehealth`);
+    const { status, data } = await exch(s, 'POST', `/orgs/${org}/patterns/${patId}/nodehealth`, req.body);
     res.status(ok(status, data)).json(data);
   } catch (e) { res.status(502).json({ msg: e.message }); }
 });

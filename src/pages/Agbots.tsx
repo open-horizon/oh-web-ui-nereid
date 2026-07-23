@@ -29,10 +29,10 @@ export default function Agbots() {
   const [patterns, setPatterns] = useState<Record<string, ExchangePattern>>({});
   const [policies, setPolicies] = useState<Record<string, DeploymentPolicy>>({});
   const [pickerLoading, setPickerLoading] = useState(false);
-  const [pickerOrg, setPickerOrg] = useState<string>('');
+  const [pickerOrg, setPickerOrg] = useState<string>(getConfig().role === 'platform' ? '' : (getConfig().orgId || ''));
 
   const [allOrgs, setAllOrgs] = useState<string[]>([]);
-  const [pageOrg, setPageOrg] = useState<string>('');
+  const [pageOrg, setPageOrg] = useState<string>(getConfig().role === 'platform' ? '' : (getConfig().orgId || ''));
   const [patternCounts, setPatternCounts] = useState<Record<string, number>>({});
   const [policyCounts, setPolicyCounts] = useState<Record<string, number>>({});
   const [currentAgbotId, setCurrentAgbotId] = useState<string>('');
@@ -46,7 +46,7 @@ export default function Agbots() {
   const [pageSize, setPageSize] = useState(10);
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [createOrg, setCreateOrg] = useState('');
+  const [createOrg, setCreateOrg] = useState(getConfig().role === 'platform' ? '' : (getConfig().orgId || ''));
   const [createForm] = Form.useForm();
   const [messagesDrawerOpen, setMessagesDrawerOpen] = useState(false);
   const [messagesLoading, setMessagesLoading] = useState(false);
@@ -525,6 +525,8 @@ export default function Agbots() {
         width={500}
       >
         <div style={{ marginBottom: 8, display: 'flex', gap: 8 }}>
+          {getConfig().role === 'platform' ? (
+          <>
           <Select
             style={{ width: 200 }}
             placeholder={t('organization')}
@@ -539,6 +541,10 @@ export default function Agbots() {
             onPressEnter={(e) => pickPattern((e.target as HTMLInputElement).value)}
             style={{ width: 180 }}
           />
+          </>
+          ) : (
+          <Text type="secondary">{t('organization')}: {sessionOrg}</Text>
+          )}
         </div>
         {pickerLoading ? (
           <Text type="secondary">{t('loading')}</Text>
@@ -571,6 +577,8 @@ export default function Agbots() {
         width={500}
       >
         <div style={{ marginBottom: 8, display: 'flex', gap: 8 }}>
+          {getConfig().role === 'platform' ? (
+          <>
           <Select
             style={{ width: 200 }}
             placeholder={t('organization')}
@@ -585,6 +593,10 @@ export default function Agbots() {
             onPressEnter={(e) => pickPolicy((e.target as HTMLInputElement).value)}
             style={{ width: 180 }}
           />
+          </>
+          ) : (
+          <Text type="secondary">{t('organization')}: {sessionOrg}</Text>
+          )}
         </div>
         {pickerLoading ? (
           <Text type="secondary">{t('loading')}</Text>

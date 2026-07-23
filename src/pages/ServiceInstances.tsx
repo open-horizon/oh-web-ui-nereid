@@ -156,6 +156,7 @@ export default function ServiceInstances() {
           style={{ width: 200 }}
           allowClear
         />
+        {getConfig().role === 'platform' && (
         <Select
           placeholder={t('org')}
           value={orgFilter || undefined}
@@ -164,6 +165,7 @@ export default function ServiceInstances() {
           allowClear
           options={orgList.map((o) => ({ label: o, value: o }))}
         />
+        )}
         <Select
           placeholder={t('state')}
           value={stateFilter || undefined}

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Table, Button, Space, Typography, message, Modal, Form, Input, Select, Tag, Descriptions, Checkbox,
 } from 'antd';
@@ -19,7 +20,14 @@ const { Text } = Typography;
 
 export default function BffUsers() {
   const { t, fmtTime } = useT();
+  const navigate = useNavigate();
   const config = getConfig();
+
+  useEffect(() => {
+    if (config.role !== 'platform') {
+      navigate('/dashboard', { replace: true });
+    }
+  }, [config.role, navigate]);
   const [data, setData] = useState<BffUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
