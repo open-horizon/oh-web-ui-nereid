@@ -10,6 +10,7 @@ the README is partly stale (e.g. it says Redis is required — it is not).
 - Don't surprise the user — confirm before risky/irreversible operations.
 - Reference code as `file_path:line_number`.
 - **CRITICAL: Never speculate or make up technical claims.** Only state what is directly confirmed by documentation, source code, or the user. When unsure about a technical mechanism, ask the user for direction instead of fabricating an explanation. If you cannot find clear evidence in docs/code, say so rather than inventing.
+- **CRITICAL: Before doing any time-consuming reasoning, investigation, or complex logical operations, ALWAYS ask the user first.** Do not waste time and resources on autonomous research without permission. Ask for clarification on where the problem is, then proceed.
 
 ## Stack & Layout
 - Frontend: React 18 + Vite + TypeScript + Ant Design 5, React Router v6 (`src/`).

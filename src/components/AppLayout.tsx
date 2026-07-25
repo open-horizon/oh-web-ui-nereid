@@ -116,8 +116,9 @@ export default function AppLayout() {
 
   // Route guard: redirect to dashboard if route is invalid for the role
   useEffect(() => {
+    const alwaysAllowed = ['/settings', '/profile', '/help'];
     const validKeys = menuItems.map((i) => (i as any).key).filter(Boolean) as string[];
-    if (selectedKey !== '/dashboard' && !validKeys.includes(selectedKey)) {
+    if (selectedKey !== '/dashboard' && !validKeys.includes(selectedKey) && !alwaysAllowed.includes(selectedKey)) {
       navigate('/dashboard', { replace: true });
     }
   }, [selectedKey]);

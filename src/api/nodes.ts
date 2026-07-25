@@ -104,6 +104,12 @@ export const NodeAPI = {
     const qs = orgQ ? `?org=${encodeURIComponent(orgQ)}` : '';
     return get<{ agreements: Record<string, any> }>(`/nodes/${encodeURIComponent(s.name)}/agreements${qs}`);
   },
+  deleteAgreement(nodeId: string, agreementId: string, org?: string) {
+    const s = splitOrg(nodeId);
+    const orgQ = org || s.org;
+    const qs = orgQ ? `?org=${encodeURIComponent(orgQ)}` : '';
+    return del(`/nodes/${encodeURIComponent(s.name)}/agreements/${encodeURIComponent(agreementId)}${qs}`);
+  },
   errors(nodeId: string, org?: string) {
     const s = splitOrg(nodeId);
     const orgQ = org || s.org;

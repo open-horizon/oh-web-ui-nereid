@@ -7,6 +7,8 @@ const express = require('express');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const https = require('https');
+const http = require('http');
 const { generateKeyPair, signDeployment, genAndSign } = require('./sign-utils.cjs');
 
 // ==============================================
@@ -846,26 +848,241 @@ app.put('/api/exchange-config', requireRole('platform'), async (req, res) => {
   }
 });
 
-// ---- System settings (session / audit) ----
+app.post('/api/exchange-config/test', requireRole('platform'), async (req, res) => {
+  try {
+    const { baseURL, user, password } = req.body;
+    if (!baseURL || !user || !password) return res.status(400).json({ ok: false, msg: 'Missing required parameters' });
+    const auth = `${user}:${password}`;
+    const b64 = Buffer.from(auth).toString('base64');
+    const url = `${baseURL.replace(/\/+$/, '')}/v1/admin/version`;
+    const r = await fetch(url, { headers: { Authorization: `Basic ${b64}` }, signal: AbortSignal.timeout(10000) });
+    if (!r.ok && r.status !== 404) return res.json({ ok: false, msg: `Exchange returned ${r.status}` });
+    const version = (await r.text()).replace(/"/g, '');
+    const orgId = user.includes('/') ? user.split('/')[0] : user;
+    res.json({ ok: true, msg: `Connected — org: ${orgId}, version: ${version || 'unknown'}` });
+  } catch (e) {
+    res.json({ ok: false, msg: `Exchange unreachable: ${e.message}` });
+  }
+});
+
+// ---- System settings (session / audit / registry) ----
 app.get('/api/settings', requireRole('platform'), async (req, res) => {
   const map = await db.loadSettings();
   res.json({
     session_ttl: parseInt(map.session_ttl || process.env.SESSION_TTL || '86400', 10),
     session_abs_ttl: parseInt(map.session_abs_ttl || process.env.SESSION_ABS_TTL || '28800', 10),
     audit_retention_days: parseInt(map.audit_retention_days || '0', 10),
+    registry_url: map.registry_url || 'https://hub.docker.com',
+    registry_insecure: map.registry_insecure === 'true',
+    registry_username: map.registry_username || '',
+    registry_password: map.registry_password || '',
   });
 });
 app.put('/api/settings', requireRole('platform'), async (req, res) => {
-  const { session_ttl, session_abs_ttl, audit_retention_days } = req.body;
-  const allowed = ['session_ttl', 'session_abs_ttl', 'audit_retention_days'];
+  const allowed = ['session_ttl', 'session_abs_ttl', 'audit_retention_days', 'registry_url', 'registry_insecure', 'registry_username', 'registry_password'];
   for (const [k, v] of Object.entries(req.body)) {
     if (!allowed.includes(k)) continue;
-    const n = parseInt(v, 10);
-    if (isNaN(n) || n < 0) return res.status(400).json({ msg: `参数 ${k} 无效` });
-    await db.saveSetting(k, String(n));
+    if (k === 'registry_url') {
+      await db.saveSetting(k, String(v));
+    } else if (k === 'registry_insecure') {
+      await db.saveSetting(k, v ? 'true' : 'false');
+    } else if (k === 'registry_username' || k === 'registry_password') {
+      await db.saveSetting(k, String(v));
+    } else {
+      const n = parseInt(v, 10);
+      if (isNaN(n) || n < 0) return res.status(400).json({ msg: `参数 ${k} 无效` });
+      await db.saveSetting(k, String(n));
+    }
   }
   logEvent('settings.update', { ...req.body }, exchangeConfig.orgId || '');
   res.json({ ok: true });
+});
+
+// ---- Docker Registry search proxy ----
+app.get('/api/registry/search', requireAuth, async (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (!q || q.length < 2) return res.json({ results: [] });
+  const map = await db.loadSettings();
+  const registryUrl = map.registry_url || 'https://hub.docker.com';
+  const insecure = map.registry_insecure === 'true';
+  const regUser = map.registry_username || '';
+  const regPass = map.registry_password || '';
+  try {
+    const url = new URL(registryUrl);
+    const isDockerHub = url.hostname === 'hub.docker.com' || url.hostname === 'index.docker.io';
+    const lib = url.protocol === 'https:' ? https : http;
+
+    const opts = {
+      hostname: url.hostname,
+      method: 'GET',
+      rejectUnauthorized: !insecure,
+      headers: { Accept: 'application/json' },
+    };
+    if (regUser) {
+      opts.headers['Authorization'] = 'Basic ' + Buffer.from(regUser + ':' + regPass).toString('base64');
+    }
+
+    if (isDockerHub) {
+      opts.path = `/v2/repositories/library/?page_size=20&name=${encodeURIComponent(q)}`;
+      opts.hostname = 'hub.docker.com';
+    } else {
+      const base = url.pathname === '/' ? '' : url.pathname.replace(/\/+$/, '');
+      opts.path = `${base}/v2/_catalog`;
+      opts.hostname = url.hostname;
+    }
+
+    const proxyReq = lib.request(opts, (proxyRes) => {
+      let body = '';
+      proxyRes.on('data', (chunk) => { body += chunk; });
+      proxyRes.on('end', () => {
+        try {
+          const data = JSON.parse(body);
+          if (isDockerHub) {
+            const results = (data.results || []).map((r) => ({
+              name: r.name,
+              fullName: r.repo_name || `library/${r.name}`,
+              description: r.description || '',
+              starCount: r.star_count || 0,
+              isOfficial: r.is_official || false,
+            }));
+            return res.json({ results });
+          }
+          const repos = data.repositories || [];
+          const results = repos
+            .filter((r) => r.toLowerCase().includes(q.toLowerCase()))
+            .slice(0, 20)
+            .map((r) => ({ name: r, fullName: `${url.hostname}/${r}`, description: '', starCount: 0, isOfficial: false }));
+          return res.json({ results });
+        } catch { res.json({ results: [] }); }
+      });
+    });
+    proxyReq.on('error', () => { res.json({ results: [] }); });
+    proxyReq.end();
+  } catch {
+    res.json({ results: [] });
+  }
+});
+
+// ---- Registry image tags proxy ----
+app.get('/api/registry/tags', requireAuth, async (req, res) => {
+  const image = (req.query.image || '').trim();
+  if (!image) return res.json({ tags: [] });
+  const map = await db.loadSettings();
+  const registryUrl = map.registry_url || 'https://hub.docker.com';
+  const insecure = map.registry_insecure === 'true';
+  const regUser = map.registry_username || '';
+  const regPass = map.registry_password || '';
+  try {
+    const url = new URL(registryUrl);
+    const isDockerHub = url.hostname === 'hub.docker.com' || url.hostname === 'index.docker.io';
+    const lib = url.protocol === 'https:' ? https : http;
+
+    const opts = {
+      method: 'GET',
+      rejectUnauthorized: !insecure,
+      headers: { Accept: 'application/json' },
+    };
+    if (regUser) {
+      opts.headers['Authorization'] = 'Basic ' + Buffer.from(regUser + ':' + regPass).toString('base64');
+    }
+
+    if (isDockerHub) {
+      const path = image.startsWith('library/') ? image.slice(8) : image;
+      opts.hostname = 'hub.docker.com';
+      opts.path = `/v2/repositories/library/${encodeURIComponent(path)}/tags?page_size=100`;
+    } else {
+      opts.hostname = url.hostname;
+      const base = url.pathname === '/' ? '' : url.pathname.replace(/\/+$/, '');
+      const repoPath = image.startsWith(url.hostname + '/') ? image.slice(url.hostname.length + 1) : image;
+      opts.path = `${base}/v2/${repoPath}/tags/list`;
+    }
+
+    const proxyReq = lib.request(opts, (proxyRes) => {
+      let body = '';
+      proxyRes.on('data', (chunk) => { body += chunk; });
+      proxyRes.on('end', () => {
+        try {
+          const data = JSON.parse(body);
+          let tags = [];
+          if (isDockerHub) {
+            tags = (data.results || []).map((t) => t.name);
+          } else {
+            tags = data.tags || [];
+          }
+          tags.sort((a, b) => {
+            if (a === 'latest') return -1;
+            if (b === 'latest') return 1;
+            return b.localeCompare(a);
+          });
+          return res.json({ tags });
+        } catch { res.json({ tags: [] }); }
+      });
+    });
+    proxyReq.on('error', () => { res.json({ tags: [] }); });
+    proxyReq.end();
+  } catch {
+    res.json({ tags: [] });
+  }
+});
+
+// ---- Registry connection test ----
+app.post('/api/registry/test', requireAuth, async (req, res) => {
+  const { registry_url, registry_insecure, registry_username, registry_password } = req.body || {};
+  const registryUrl = registry_url || 'https://hub.docker.com';
+  const insecure = registry_insecure === true || registry_insecure === 'true';
+  const regUser = registry_username || '';
+  const regPass = registry_password || '';
+  try {
+    const url = new URL(registryUrl);
+    const isDockerHub = url.hostname === 'hub.docker.com' || url.hostname === 'index.docker.io';
+    const lib = url.protocol === 'https:' ? https : http;
+
+    const opts = {
+      hostname: url.hostname,
+      method: 'GET',
+      rejectUnauthorized: !insecure,
+      timeout: 10000,
+      headers: { Accept: 'application/json' },
+    };
+    if (regUser) {
+      opts.headers['Authorization'] = 'Basic ' + Buffer.from(regUser + ':' + regPass).toString('base64');
+    }
+
+    if (isDockerHub) {
+      opts.path = '/v2/repositories/library/nginx/tags?page_size=1';
+      opts.hostname = 'hub.docker.com';
+    } else {
+      const base = url.pathname === '/' ? '' : url.pathname.replace(/\/+$/, '');
+      opts.path = `${base}/v2/_catalog`;
+    }
+
+    const testReq = lib.request(opts, (proxyRes) => {
+      let body = '';
+      proxyRes.on('data', (chunk) => { body += chunk; });
+      proxyRes.on('end', () => {
+        const ok = proxyRes.statusCode >= 200 && proxyRes.statusCode < 400;
+        let detail = '';
+        try { const d = JSON.parse(body); detail = d.message || d.detail || ''; } catch {}
+        if (ok) {
+          res.json({ ok: true, msg: 'Registry connection successful' });
+        } else if (proxyRes.statusCode === 401) {
+          res.json({ ok: false, msg: 'Authentication failed — check username/password' });
+        } else {
+          res.json({ ok: false, msg: `Registry returned HTTP ${proxyRes.statusCode}${detail ? ': ' + detail : ''}` });
+        }
+      });
+    });
+    testReq.on('error', (e) => {
+      res.json({ ok: false, msg: `Connection failed: ${e.message}` });
+    });
+    testReq.on('timeout', () => {
+      testReq.destroy();
+      res.json({ ok: false, msg: 'Connection timed out (10s)' });
+    });
+    testReq.end();
+  } catch (e) {
+    res.json({ ok: false, msg: `Invalid registry URL: ${e.message}` });
+  }
 });
 
 // ---- Partner API key management ----
@@ -1353,15 +1570,32 @@ app.get('/api/nodes', async (req, res) => {
           }));
         }
       } catch (_) {}
-      // Augment each node with _svcRunning / _svcTotal from node status
+      // Augment each node with _svcRunning / _svcTotal / _errorCount from node status + errors
       await Promise.allSettled(Object.keys(allNodes).map(async (id) => {
         const org = allNodes[id]._org || s.orgId;
         try {
-          const sr = await exch(s, 'GET', `/orgs/${org}/nodes/${encodeURIComponent(id)}/status`);
-          if (sr.status === 200 && sr.data?.services) {
-            const services = Array.isArray(sr.data.services) ? sr.data.services : [];
+          const [sr, er] = await Promise.allSettled([
+            exch(s, 'GET', `/orgs/${org}/nodes/${encodeURIComponent(id)}/status`),
+            exch(s, 'GET', `/orgs/${org}/nodes/${encodeURIComponent(id)}/errors`),
+          ]);
+          if (sr.status === 'fulfilled' && sr.value.status === 200 && sr.value.data?.services) {
+            const services = Array.isArray(sr.value.data.services) ? sr.value.data.services : [];
             allNodes[id]._svcTotal = services.length;
             allNodes[id]._svcRunning = services.filter(s => s.containerStatus?.[0]?.state === 'running').length;
+            // Container-level counts
+            let totalContainers = 0;
+            let runningContainers = 0;
+            for (const svc of services) {
+              const containers = Array.isArray(svc.containerStatus) ? svc.containerStatus : [];
+              totalContainers += containers.length;
+              runningContainers += containers.filter(c => c.state === 'running').length;
+            }
+            allNodes[id]._ctnTotal = totalContainers;
+            allNodes[id]._ctnRunning = runningContainers;
+          }
+          if (er.status === 'fulfilled' && er.value.status === 200) {
+            const errArr = er.value.data?.errors ?? [];
+            allNodes[id]._errorCount = Array.isArray(errArr) ? errArr.length : 0;
           }
         } catch (_) {}
       }));
@@ -1372,11 +1606,28 @@ app.get('/api/nodes', async (req, res) => {
     if (status === 200 && data?.nodes) {
       await Promise.allSettled(Object.keys(data.nodes).map(async (id) => {
         try {
-          const sr = await exch(s, 'GET', `/orgs/${org}/nodes/${encodeURIComponent(id)}/status`);
-          if (sr.status === 200 && sr.data?.services) {
-            const services = Array.isArray(sr.data.services) ? sr.data.services : [];
+          const [sr, er] = await Promise.allSettled([
+            exch(s, 'GET', `/orgs/${org}/nodes/${encodeURIComponent(id)}/status`),
+            exch(s, 'GET', `/orgs/${org}/nodes/${encodeURIComponent(id)}/errors`),
+          ]);
+          if (sr.status === 'fulfilled' && sr.value.status === 200 && sr.value.data?.services) {
+            const services = Array.isArray(sr.value.data.services) ? sr.value.data.services : [];
             data.nodes[id]._svcTotal = services.length;
             data.nodes[id]._svcRunning = services.filter(s => s.containerStatus?.[0]?.state === 'running').length;
+            // Container-level counts
+            let totalContainers = 0;
+            let runningContainers = 0;
+            for (const svc of services) {
+              const containers = Array.isArray(svc.containerStatus) ? svc.containerStatus : [];
+              totalContainers += containers.length;
+              runningContainers += containers.filter(c => c.state === 'running').length;
+            }
+            data.nodes[id]._ctnTotal = totalContainers;
+            data.nodes[id]._ctnRunning = runningContainers;
+          }
+          if (er.status === 'fulfilled' && er.value.status === 200) {
+            const errArr = er.value.data?.errors ?? [];
+            data.nodes[id]._errorCount = Array.isArray(errArr) ? errArr.length : 0;
           }
         } catch (_) {}
       }));
@@ -1471,6 +1722,18 @@ app.get('/api/nodes/:id/agreements', async (req, res) => {
   try {
     const nodeId = stripOrg(org, decodeURIComponent(req.params.id));
     const { status, data } = await exch(s, 'GET', `/orgs/${org}/nodes/${nodeId}/agreements`);
+    res.status(ok(status, data)).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+app.delete('/api/nodes/:id/agreements/:agreementId', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  const org = req.query.org || s.orgId;
+  try {
+    const nodeId = stripOrg(org, decodeURIComponent(req.params.id));
+    const agreementId = decodeURIComponent(req.params.agreementId);
+    const { status, data } = await exch(s, 'DELETE', `/orgs/${org}/nodes/${nodeId}/agreements/${encodeURIComponent(agreementId)}`);
     res.status(ok(status, data)).json(data);
   } catch (e) { res.status(502).json({ msg: e.message }); }
 });
@@ -1825,37 +2088,53 @@ app.put('/api/services/:id', async (req, res) => {
   try {
     const svcName = decodeURIComponent(req.params.id);
     const org = req.query.org || s.orgId;
-    const svcId = `${org}/${svcName}`;
     const body = serviceBody(req.body);
 
-    // Inject url/version/arch from the URL path to avoid Exchange validation mismatch.
-    // The Exchange derives these from the service ID in the PUT path and requires them to
-    // match the body fields. Take them from the path so they always agree.
+    // Parse old service ID to extract url/arch
     const parsed = parseServiceId(svcName);
     if (parsed.url) body.url = parsed.url;
-    if (parsed.version) body.version = parsed.version;
+    if (!body.version && parsed.version) body.version = parsed.version;
     if (parsed.arch) body.arch = parsed.arch;
 
     if (body.deployment && typeof body.deployment !== 'string') {
       body.deployment = JSON.stringify(body.deployment);
     }
 
-    // Re-sign deployment on every PUT — Exchange requires a valid signature matching the uploaded public key
+    // Build new service ID from body fields (may differ from URL if version changed)
+    const newSvcName = body.url + '_' + body.version + '_' + body.arch;
+    const versionChanged = newSvcName !== svcName;
+
+    // Re-sign deployment on every PUT
     if (body.deployment) {
       const { deploymentSignature, publicKey } = genAndSign(body.deployment);
       body.deploymentSignature = deploymentSignature;
 
-      const { status, data } = await exch(s, 'PUT', `/orgs/${org}/services/${svcName}`, body);
-      // Exchange returns varied success messages; check for 'ok' or 'updated' heuristically
-      if (data && typeof data === 'object' && data.msg && (data.msg === 'ok' || String(data.msg).includes('updated'))) {
-        await exchRaw(s, 'PUT', `/orgs/${org}/services/${encodeURIComponent(svcId)}/keys/default.public.key`, publicKey, 'text/plain');
+      if (versionChanged) {
+        // Version changed: POST to create new service (Exchange requires POST for new services)
+        const { status, data } = await exch(s, 'POST', '/orgs/' + org + '/services', body);
+        if (status === 201 && data && data.code === 'ok') {
+          const newSvcId = org + '/' + newSvcName;
+          await exchRaw(s, 'PUT', '/orgs/' + org + '/services/' + encodeURIComponent(newSvcId) + '/keys/default.public.key', publicKey, 'text/plain');
+        }
+        res.status(status).json(data);
+      } else {
+        // Version unchanged: PUT to update existing service in place
+        const { status, data } = await exch(s, 'PUT', '/orgs/' + org + '/services/' + svcName, body);
+        if (data && typeof data === 'object' && data.msg && (data.msg === 'ok' || String(data.msg).includes('updated'))) {
+          await exchRaw(s, 'PUT', '/orgs/' + org + '/services/' + encodeURIComponent(svcId) + '/keys/default.public.key', publicKey, 'text/plain');
+        }
+        res.status(status).json(data);
       }
-      res.status(status).json(data);
       return;
     }
 
-    const { status, data } = await exch(s, 'PUT', `/orgs/${org}/services/${svcName}`, body);
-    res.status(status).json(data);
+    if (versionChanged) {
+      const { status, data } = await exch(s, 'POST', '/orgs/' + org + '/services', body);
+      res.status(status).json(data);
+    } else {
+      const { status, data } = await exch(s, 'PUT', '/orgs/' + org + '/services/' + svcName, body);
+      res.status(status).json(data);
+    }
   } catch (e) { res.status(502).json({ msg: e.message }); }
 });
 
@@ -2646,23 +2925,7 @@ app.get('/api/service-instances/:id', async (req, res) => {
   } catch (e) { res.status(502).json({ msg: e.message }); }
 });
 
-app.delete('/api/service-instances/:id', async (req, res) => {
-  const s = session(req);
-  if (!s) return res.status(401).json({ msg: 'Not logged in' });
-  try {
-    const instanceId = decodeURIComponent(req.params.id);
-    const parts = instanceId.split('/');
-    if (parts.length < 2) {
-      return res.status(400).json({ msg: 'Invalid instance ID format' });
-    }
-    const nodeId = parts[0];
-    const svcKey = parts.slice(1).join('/');
-    const org = req.query.org || s.orgId;
-    
-    const { status, data } = await exch(s, 'DELETE', `/orgs/${org}/nodes/${encodeURIComponent(nodeId)}/services/${encodeURIComponent(svcKey)}`);
-    res.status(ok(status, data)).json(data);
-  } catch (e) { res.status(502).json({ msg: e.message }); }
-});
+// Service instances are read-only node status reports. No delete endpoint.
 
 // ==============================================
 // Bulk Node Operations

@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState, useEffect } from 'react';
-import { Layout, Menu, Card, Typography, Form, Input, InputNumber, Button, message, Descriptions, Tag } from 'antd';
-import { get as apiGet, put as apiPut } from '../api/client';
+import { Layout, Menu, Card, Typography, Form, Input, InputNumber, Button, message, Descriptions, Tag, Switch, Space } from 'antd';
+import { get as apiGet, put as apiPut, post as apiPost } from '../api/client';
 import { useT } from '../i18n/context';
 
 const { Sider, Content } = Layout;
@@ -21,6 +21,10 @@ interface SystemSettings {
   session_ttl: number;
   session_abs_ttl: number;
   audit_retention_days: number;
+  registry_url?: string;
+  registry_insecure?: boolean;
+  registry_username?: string;
+  registry_password?: string;
 }
 
 export default function Settings() {
@@ -28,6 +32,7 @@ export default function Settings() {
   const menuItems = [
     { key: 'connection', label: t('connection-config') },
     { key: 'session', label: t('session-audit') },
+    { key: 'registry', label: t('registry-config') },
   ];
   const [active, setActive] = useState('connection');
   const [loading, setLoading] = useState(false);
@@ -40,8 +45,12 @@ export default function Settings() {
   const [settings, setSettings] = useState<SystemSettings | null>(null);
   const [sessionForm] = Form.useForm();
 
+  // Registry state
+  const [registryForm] = Form.useForm();
+
   useEffect(() => {
     if (active === 'connection') loadConfig();
+    else if (active === 'registry') loadRegistry();
     else loadSettings();
   }, [active]);
 
@@ -64,6 +73,18 @@ export default function Settings() {
       const data = await apiGet<SystemSettings>('/settings');
       setSettings(data);
       sessionForm.setFieldsValue(data);
+    } catch (e: any) {
+      message.error(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadRegistry() {
+    setLoading(true);
+    try {
+      const data = await apiGet<SystemSettings>('/settings');
+      registryForm.setFieldsValue({ registry_url: data.registry_url || 'https://hub.docker.com', registry_insecure: data.registry_insecure || false, registry_username: data.registry_username || '', registry_password: data.registry_password || '' });
     } catch (e: any) {
       message.error(e.message);
     } finally {
@@ -98,6 +119,53 @@ export default function Settings() {
       message.error(e.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRegistryUpdate = async (values: { registry_url: string; registry_insecure: boolean; registry_username: string; registry_password: string }) => {
+    setLoading(true);
+    try {
+      await apiPut('/settings', values);
+      message.success(t('updated'));
+    } catch (e: any) {
+      message.error(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const [testing, setTesting] = useState(false);
+  const [testingExchange, setTestingExchange] = useState(false);
+
+  const handleTestRegistry = async () => {
+    const values = registryForm.getFieldsValue();
+    setTesting(true);
+    try {
+      const res = await apiPost<{ ok: boolean; msg: string }>('/registry/test', values);
+      if (res.ok) message.success(res.msg);
+      else message.error(res.msg);
+    } catch (e: any) {
+      message.error(e.message);
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const handleTestExchange = async () => {
+    const values = connForm.getFieldsValue();
+    setTestingExchange(true);
+    try {
+      const res = await apiPost<{ ok: boolean; msg: string }>('/exchange-config/test', {
+        baseURL: values.baseURL?.replace(/\/+$/, ''),
+        user: values.user,
+        password: values.password,
+      });
+      if (res.ok) message.success(res.msg);
+      else message.error(res.msg);
+    } catch (e: any) {
+      message.error(e.message);
+    } finally {
+      setTestingExchange(false);
     }
   };
 
@@ -140,7 +208,10 @@ export default function Settings() {
                     <Input.Password placeholder="********" />
                   </Form.Item>
                   <Form.Item>
-                    <Button type="primary" htmlType="submit" loading={loading}>{t('save')}</Button>
+                    <Space>
+                      <Button type="primary" htmlType="submit" loading={loading}>{t('save')}</Button>
+                      <Button onClick={handleTestExchange} loading={testingExchange}>{t('test-connection')}</Button>
+                    </Space>
                   </Form.Item>
                 </Form>
               </>
@@ -176,6 +247,47 @@ export default function Settings() {
               </Form.Item>
               <Form.Item>
                 <Button type="primary" htmlType="submit" loading={loading}>{t('save')}</Button>
+              </Form.Item>
+            </Form>
+          </Card>
+        )}
+        {active === 'registry' && (
+          <Card title={t('registry-config')} loading={loading}>
+            <Form form={registryForm} layout="vertical" onFinish={handleRegistryUpdate}>
+              <Form.Item
+                label={t('registry-url')}
+                name="registry_url"
+                tooltip={t('registry-url-tip')}
+              >
+                <Input placeholder="https://hub.docker.com" />
+              </Form.Item>
+              <Form.Item
+                label={t('registry-insecure')}
+                name="registry_insecure"
+                valuePropName="checked"
+                tooltip={t('registry-insecure-tip')}
+              >
+                <Switch />
+              </Form.Item>
+              <Form.Item
+                label={t('registry-username')}
+                name="registry_username"
+                tooltip={t('registry-username-tip')}
+              >
+                <Input placeholder="username" />
+              </Form.Item>
+              <Form.Item
+                label={t('registry-password')}
+                name="registry_password"
+                tooltip={t('registry-password-tip')}
+              >
+                <Input.Password placeholder="********" />
+              </Form.Item>
+              <Form.Item>
+                <Space>
+                  <Button type="primary" htmlType="submit" loading={loading}>{t('save')}</Button>
+                  <Button onClick={handleTestRegistry} loading={testing}>{t('test-connection')}</Button>
+                </Space>
               </Form.Item>
             </Form>
           </Card>

@@ -48,17 +48,7 @@ export default function ServiceInstances() {
   useEffect(() => { fetchInstances(); }, [fetchInstances]);
   usePolling(fetchInstances, 30000);
 
-  const handleDelete = async (id: string) => {
-    Modal.confirm({
-      title: t('are-you-sure'),
-      content: `${t('delete-service-instance')}: ${id}`,
-      onOk: async () => {
-        await ServiceInstanceAPI.delete(id, config.orgId);
-        message.success(t('deleted'));
-        fetchInstances();
-      },
-    });
-  };
+  // Service instances are read-only node status reports. Deletion is not applicable.
 
   const instanceList = useMemo(() => {
     return Object.entries(instances).map(([id, data]) => ({ id, ...(data as any) }));
@@ -118,16 +108,11 @@ export default function ServiceInstances() {
     { title: t('node'), dataIndex: 'node_id', key: 'node_id', ellipsis: true },
     { title: t('state'), dataIndex: 'state', key: 'state', render: (v: string) => v ? <Tag color={v === 'running' ? 'green' : v === 'agreement' ? 'blue' : 'default'}>{v}</Tag> : '-' },
     {
-      title: t('actions'), key: 'actions', width: 100,
+      title: t('actions'), key: 'actions',
       render: (_: any, record: any) => (
-        <Space>
-          <Tooltip title={t('detail')}>
-            <Button type="link" icon={<EyeOutlined />} onClick={() => { setDetail(record); setDetailOpen(true); }} size="small" />
-          </Tooltip>
-          <Tooltip title={t('delete')}>
-            <Button type="link" danger icon={<DeleteOutlined />} onClick={() => handleDelete(record.id)} size="small" />
-          </Tooltip>
-        </Space>
+        <Tooltip title={t('detail')}>
+          <Button type="link" icon={<EyeOutlined />} onClick={() => { setDetail(record); setDetailOpen(true); }} size="small" />
+        </Tooltip>
       ),
     },
   ];
@@ -195,7 +180,7 @@ export default function ServiceInstances() {
           pageSizeOptions: ['10', '20', '50', '100'],
           onChange: (p, size) => { setPage(p); setPageSize(size); },
         }}
-        scroll={{ x: 800 }}
+
       />
       
       <Drawer open={detailOpen} onClose={() => setDetailOpen(false)} title={t('service-instance-detail')} width={640} destroyOnClose>

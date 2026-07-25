@@ -4,7 +4,7 @@
 
 import { useEffect, useState } from 'react';
 import { usePolling } from '../hooks/usePolling';
-import { Table, Button, Space, Typography, message, Modal, Tag, Badge, Select, Alert, Drawer, Descriptions, List, Input, Switch, Tabs, Card } from 'antd';
+import { Table, Button, Space, Typography, message, Modal, Tag, Badge, Select, Alert, Drawer, Descriptions, List, Input, Switch, Tabs, Card, Tooltip } from 'antd';
 import { SearchOutlined, ReloadOutlined, EyeOutlined, NodeIndexOutlined, CheckCircleOutlined, CloseCircleOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, PlusCircleOutlined, SwapOutlined } from '@ant-design/icons';
 import { NodeAPI, ExchangeNode, NodeServiceStatus, NodePolicy, OneUserInputService } from '../api/nodes';
 import { PatternAPI, ExchangePattern } from '../api/patterns';
@@ -249,6 +249,30 @@ export default function Nodes() {
     }
   };
 
+  const handleDeleteAgreement = (agreementId: string) => {
+    if (!drawerNodeId) return;
+    Modal.confirm({
+      title: t('delete-agreement'),
+      content: (
+        <div>
+          <Alert message={t('delete-agreement-warning')} type="warning" showIcon style={{ marginBottom: 12 }} />
+          <Text code style={{ fontSize: 12 }}>{agreementId}</Text>
+        </div>
+      ),
+      onOk: async () => {
+        try {
+          const nOrg = drawerNodeId.includes('/') ? drawerNodeId.split('/')[0] : pageOrg;
+          await NodeAPI.deleteAgreement(localNodeId(drawerNodeId), agreementId, nOrg);
+          message.success(t('agreement-deleted'));
+          // Refetch agreements and services
+          openDrawer(drawerNodeId);
+        } catch (err: any) {
+          message.error(err.message);
+        }
+      },
+    });
+  };
+
   const addUserInputService = () => {
     setUserInputData([...userInputData, {
       serviceOrgid: pageOrg || sessionOrg,
@@ -444,21 +468,26 @@ export default function Nodes() {
     {
       title: t('node-id'), key: 'nodeId',
       render: (_: any, record: any) => {
-        return <Text style={{ fontSize: 12 }} ellipsis>{record.key}</Text>;
+        const errCount = record._errorCount ?? 0;
+        return (
+          <Space>
+            <Text style={{ fontSize: 12 }} ellipsis>{record.key}</Text>
+            {errCount > 0 && <Badge count={errCount} size="small" />}
+          </Space>
+        );
       },
     },
-    { title: t('name'), dataIndex: 'name', key: 'name', ellipsis: true, render: (v: string) => v || '-' },
-    { title: t('type'), dataIndex: 'nodeType', key: 'nodeType', width: 70 },
-    { title: t('arch'), dataIndex: 'arch', key: 'arch', width: 70 },
+    { title: t('type'), dataIndex: 'nodeType', key: 'nodeType' },
+    { title: t('arch'), dataIndex: 'arch', key: 'arch' },
     {
-      title: t('cpu'), key: 'cpu', width: 55,
+      title: t('cpu'), key: 'cpu',
       render: (_: any, record: any) => {
         const p = policies[record.key]?.properties?.find((p: any) => p.name === 'openhorizon.cpu');
         return p ? String(p.value) : '-';
       },
     },
     {
-      title: t('memory'), key: 'memory', width: 65,
+      title: t('memory'), key: 'memory',
       render: (_: any, record: any) => {
         const p = policies[record.key]?.properties?.find((p: any) => p.name === 'openhorizon.memory');
         return p ? fmtMemory(Number(p.value)) : '-';
@@ -487,7 +516,7 @@ export default function Nodes() {
       },
     },
     {
-      title: t('svc'), key: 'services', width: 70, align: 'center' as const,
+      title: t('services'), key: 'services', align: 'center' as const,
       render: (_: any, record: any) => {
         const total = record?._svcTotal ?? 0;
         const running = record?._svcRunning ?? 0;
@@ -496,7 +525,16 @@ export default function Nodes() {
       },
     },
     {
-      title: t('priv'), key: 'allowPrivileged', width: 50, align: 'center' as const,
+      title: t('containers'), key: 'containers', align: 'center' as const,
+      render: (_: any, record: any) => {
+        const total = record?._ctnTotal ?? 0;
+        const running = record?._ctnRunning ?? 0;
+        const color = total > 0 && running === total ? 'green' : total > 0 ? 'orange' : 'default';
+        return <Tag color={color} style={{ margin: 0 }}>{running}/{total}</Tag>;
+      },
+    },
+    {
+      title: t('priv'), key: 'allowPrivileged', align: 'center' as const,
       render: (_: any, record: any) => {
         const id = record.key;
         const policy = policies[id];
@@ -515,18 +553,18 @@ export default function Nodes() {
       },
     },
     {
-      title: t('heartbeat'), key: 'lastHeartbeat', width: 150,
+      title: t('heartbeat'), key: 'lastHeartbeat',
       render: (_: any, record: any) => fmtTime(record?.lastHeartbeat),
     },
     {
-      title: t('status'), key: 'status', width: 75, align: 'center' as const,
+      title: t('status'), key: 'status', align: 'center' as const,
       render: (_: any, record: any) => {
         const alive = isAlive(record?.lastHeartbeat);
         return <Badge status={alive ? 'success' : 'error'} text={alive ? t('online') : t('offline')} />;
       },
     },
     {
-      title: '', key: 'action', width: 90, align: 'center' as const,
+      title: '', key: 'action', align: 'center' as const,
       render: (_: any, record: any) => {
         const id = record.key;
         return (
@@ -618,7 +656,10 @@ export default function Nodes() {
               <Button danger loading={bulkLoading} onClick={handleBulkDelete}>
                 {t('delete')} ({selectedRowKeys.length})
               </Button>
-              <Button loading={bulkLoading} onClick={() => setBulkPatternOpen(true)}>
+              <Button loading={bulkLoading} onClick={() => {
+                PatternAPI.list().then(res => setAvailablePatterns(Object.keys(res?.patterns ?? {}))).catch(() => setAvailablePatterns([]));
+                setBulkPatternOpen(true);
+              }}>
                 {t('set-pattern')} ({selectedRowKeys.length})
               </Button>
             </>
@@ -799,33 +840,58 @@ export default function Nodes() {
                   dataSource={nodeServices}
                   locale={{ emptyText: t('no-registered-services') }}
                   renderItem={(svc: NodeServiceStatus) => {
-                    const cs = Array.isArray(svc.containerStatus) ? svc.containerStatus[0] : null;
-                    const state = cs?.state || 'unknown';
-                    const isRunning = state === 'running';
-                    const hasAgreement = !!svc.agreementId;
+                    const containers = Array.isArray(svc.containerStatus) ? svc.containerStatus : [];
+                    const allRunning = containers.length > 0 && containers.every((c: any) => c.state === 'running');
                     return (
-                      <List.Item>
-                        <List.Item.Meta
-                          avatar={
-                            isRunning
-                              ? <CheckCircleOutlined style={{ fontSize: 20, color: '#52c41a' }} />
-                              : <MinusCircleOutlined style={{ fontSize: 20, color: '#faad14' }} />
+                      <div style={{ marginBottom: 12, border: '1px solid #f0f0f0', borderRadius: 6, padding: 12 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                          {allRunning
+                            ? <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 16 }} />
+                            : <MinusCircleOutlined style={{ color: '#faad14', fontSize: 16 }} />
                           }
-                          title={
-                            <Space>
-                              <Text code>{svc.url || svc.serviceUrl || '-'}</Text>
-                              <Tag>{svc.version || '-'}</Tag>
-                              <Tag>{svc.arch || '-'}</Tag>
-                            </Space>
-                          }
-                          description={
-                            <Space>
-                              <Tag color={isRunning ? 'green' : 'default'}>{state}</Tag>
-                              {hasAgreement && <Text type="secondary">{t('agreement')}{svc.agreementId}</Text>}
-                            </Space>
-                          }
-                        />
-                      </List.Item>
+                          <Text code>{svc.url || svc.serviceUrl || '-'}</Text>
+                          <Tag>{svc.version || '-'}</Tag>
+                          <Tag>{svc.arch || '-'}</Tag>
+                        </div>
+                        {svc.agreementId && (
+                          <div style={{ marginBottom: 8 }}>
+                            <Text type="secondary" style={{ fontSize: 12 }}>{t('agreement')}{svc.agreementId}</Text>
+                          </div>
+                        )}
+                        {containers.length === 0 ? (
+                          <Text type="secondary">{t('no-container-status')}</Text>
+                        ) : (
+                          <Table
+                            dataSource={containers}
+                            rowKey={(_: any, i?: number) => i ?? 0}
+                            pagination={false}
+                            size="small"
+                            showHeader={false}
+                            columns={[
+                              {
+                                key: 'icon', width: 28,
+                                render: (_: any, c: any) => (
+                                  <Tooltip title={c.state || 'unknown'}>
+                                    {c.state === 'running'
+                                      ? <CheckCircleOutlined style={{ color: '#52c41a' }} />
+                                      : <CloseCircleOutlined style={{ color: '#ff4d4f' }} />
+                                    }
+                                  </Tooltip>
+                                ),
+                              },
+                              {
+                                title: t('container-name'), key: 'name',
+                                render: (_: any, c: any) => (
+                                  <Space>
+                                    <Text code style={{ fontSize: 12 }}>{c.name || '-'}</Text>
+                                    <Text type="secondary" style={{ fontSize: 11 }}>{c.image || ''}</Text>
+                                  </Space>
+                                ),
+                              },
+                            ]}
+                          />
+                        )}
+                      </div>
                     );
                   }}
                 />
@@ -850,7 +916,13 @@ export default function Nodes() {
                       } catch {}
                     }
                     return (
-                      <List.Item>
+                      <List.Item
+                        actions={[
+                          <Tooltip key="del" title={t('delete-agreement-tip')}>
+                            <Button type="link" danger icon={<DeleteOutlined />} size="small" onClick={() => handleDeleteAgreement(ag.id)} />
+                          </Tooltip>,
+                        ]}
+                      >
                         <List.Item.Meta
                           title={
                             <Space>
