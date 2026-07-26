@@ -7,6 +7,7 @@ import { usePolling } from '../hooks/usePolling';
 import { Table, Button, Space, Typography, message, Modal, Drawer, Descriptions, Tag, Input, Select, Tabs, Tooltip, List, Form } from 'antd';
 import { SearchOutlined, ReloadOutlined, DeleteOutlined, EyeOutlined, LinkOutlined, PlusOutlined, KeyOutlined, HeartOutlined, MessageOutlined } from '@ant-design/icons';
 import { AgbotAPI, ExchangeAgbot } from '../api/agbots';
+import { NodeAPI } from '../api/nodes';
 import { PatternAPI, ExchangePattern } from '../api/patterns';
 import { DeploymentPolicyAPI, DeploymentPolicy } from '../api/policies';
 import { OrgAPI } from '../api/organizations';
@@ -479,22 +480,81 @@ export default function Agbots() {
                   loading={agbotAgreementsLoading}
                   dataSource={agbotAgreements}
                   locale={{ emptyText: t('no-agreements') }}
-                  renderItem={(ag: any, i: number) => (
-                    <List.Item>
-                      <List.Item.Meta
-                        title={<Text code>{ag.current_agreement_id || ag.id || `#${i + 1}`}</Text>}
-                        description={
-                          <div>
-                            <div>{t('state')}{ag.state || ag.agreement_state || '-'}</div>
-                            {ag.service_specifications?.map((s: any, j: number) => (
-                              <Tag key={j} style={{ marginTop: 4 }}>{s.service_url}@{s.service_version_range}</Tag>
-                            ))}
-                            <div>{t('node-2')}{ag.node_id || ag.nodeOrgid ? `${ag.nodeOrgid}/${ag.node_id}` : '-'}</div>
-                          </div>
-                        }
-                      />
-                    </List.Item>
-                  )}
+                  renderItem={(ag: any, i: number) => {
+                    const agrId = ag.agreementId || ag.current_agreement_id || ag.id || `#${i + 1}`;
+                    // Enriched from backend: ag.nodeId, ag.containerState, ag.configState
+                    // Exchange API: ag.service.url, ag.service.pattern
+                    // Agbot internal API: ag.device_id, ag.service_id[]
+                    const nodeId = ag.nodeId || ag.device_id || ag.node_id || '-';
+                    const svcs = ag.service_id || (ag.service ? [`${ag.service.url || ''} ${ag.service.pattern || ''}`] : []);
+                    const state = ag.state || ag.agreement_state || '-';
+                    const containerState = ag.containerState || '';
+                    const configState = ag.configState || '';
+                    const updatedAt = ag.lastUpdated || ag.agreement_creation_time || ag.agreement_finalized_time || '';
+                    return (
+                      <List.Item
+                        actions={[
+                          <Tooltip key="del" title={t('delete-agreement-tip')}>
+                            <Button
+                              type="link"
+                              danger
+                              icon={<DeleteOutlined />}
+                              size="small"
+                              onClick={() => {
+                                Modal.confirm({
+                                  title: t('delete-agreement'),
+                                  content: <Text code>{agrId}</Text>,
+                                  okText: t('delete'),
+                                  okType: 'danger',
+                                  onOk: async () => {
+                                    try {
+                                      const nodeOrg = nodeId.includes('/') ? nodeId.split('/')[0] : '';
+                                      const nodeName = nodeId.includes('/') ? nodeId.split('/')[1] : nodeId;
+                                      await NodeAPI.deleteAgreement(nodeName, agrId, nodeOrg);
+                                      message.success(t('agreement-deleted'));
+                                      if (selectedAgbot) showDetail(selectedAgbot);
+                                    } catch (err: any) { message.error(err.message); }
+                                  },
+                                });
+                              }}
+                            />
+                          </Tooltip>,
+                        ]}
+                      >
+                        <List.Item.Meta
+                          title={
+                            <Space>
+                              <Text code style={{ fontSize: 12 }}>{agrId}</Text>
+                              <Tag color={state === 'Finalized Agreement' ? 'green' : state === 'Expired Agreement' ? 'red' : 'default'}>{state}</Tag>
+                            </Space>
+                          }
+                          description={
+                            <div>
+                              <Space wrap>
+                                {nodeId !== '-' && (
+                                  <Text type="secondary">{t('node-2')}: <Text code>{nodeId}</Text></Text>
+                                )}
+                                {containerState && (
+                                  <Tag color={containerState === 'running' ? 'green' : containerState === 'not started' ? 'red' : 'orange'}>{containerState}</Tag>
+                                )}
+                                {configState && configState !== 'active' && (
+                                  <Tag color="orange">{configState}</Tag>
+                                )}
+                                {updatedAt && (
+                                  <Text type="secondary" style={{ fontSize: 12 }}>{fmtTime(updatedAt)}</Text>
+                                )}
+                              </Space>
+                              {svcs.length > 0 && svcs[0] && (
+                                <div style={{ marginTop: 4 }}>
+                                  {svcs.filter(Boolean).map((s: string, j: number) => <Tag key={j}>{s}</Tag>)}
+                                </div>
+                              )}
+                            </div>
+                          }
+                        />
+                      </List.Item>
+                    );
+                  }}
                 />
               ),
             },

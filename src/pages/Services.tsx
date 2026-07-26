@@ -341,6 +341,8 @@ export default function Services() {
   const [keyAddModalOpen, setKeyAddModalOpen] = useState(false);
   const [keyAddForm] = Form.useForm();
   const [keyAddLoading, setKeyAddLoading] = useState(false);
+  const [resignLoading, setResignLoading] = useState(false);
+  const [resignResult, setResignResult] = useState<{ deploymentSignature: string; publicKey: string } | null>(null);
   const [dockauthAddModalOpen, setDockauthAddModalOpen] = useState(false);
   const [dockauthAddForm] = Form.useForm();
   const [dockauthAddLoading, setDockauthAddLoading] = useState(false);
@@ -481,6 +483,18 @@ export default function Services() {
       message.success(auto ? t('auto-upgrade-enabled') : t('auto-upgrade-disabled'));
       load();
     } catch (e: any) { message.error(e?.message || 'Upgrade config failed'); }
+  };
+
+  const handleResign = async (id: string) => {
+    setResignLoading(true);
+    setResignResult(null);
+    try {
+      const res = await ServiceAPI.resign(id);
+      setResignResult(res);
+      message.success(t('service-re-signed'));
+      load();
+    } catch (e: any) { message.error(e?.message || 'Re-sign failed'); }
+    setResignLoading(false);
   };
 
   const showDetail = async (id: string) => {
@@ -664,6 +678,8 @@ export default function Services() {
         sharable: svc.sharable || 'multiple',
         public: svc.public !== false,
         documentation: svc.documentation || '',
+        auto_upgrade: svc.auto_upgrade === true,
+        active_upgrade: svc.active_upgrade === true,
       });
     }, 0);
   };
@@ -723,6 +739,8 @@ export default function Services() {
           sharable: values.sharable || 'multiple',
           public: values.public !== false,
           documentation: values.documentation || '',
+          auto_upgrade: values.auto_upgrade === true,
+          active_upgrade: values.active_upgrade === true,
           userInput: existing.userInput || [],
           deployment,
           requiredServices: toRequiredServices(values.requiredServices),
@@ -1042,6 +1060,16 @@ export default function Services() {
                     <Descriptions.Item label={t('architecture')}>{data[selectedService].arch || '-'}</Descriptions.Item>
                     <Descriptions.Item label={t('url')}>{data[selectedService].url || '-'}</Descriptions.Item>
                     <Descriptions.Item label={t('description')}>{data[selectedService].description || '-'}</Descriptions.Item>
+                    <Descriptions.Item label={t('auto-upgrade')}>
+                      <Tag color={data[selectedService].auto_upgrade ? 'green' : 'default'}>
+                        {data[selectedService].auto_upgrade ? t('enabled') : t('disabled')}
+                      </Tag>
+                    </Descriptions.Item>
+                    <Descriptions.Item label={t('active-upgrade')}>
+                      <Tag color={data[selectedService].active_upgrade ? 'green' : 'default'}>
+                        {data[selectedService].active_upgrade ? t('enabled') : t('disabled')}
+                      </Tag>
+                    </Descriptions.Item>
                     <Descriptions.Item label={t('containers')}>
                       {(() => {
                         const d = parseDep(data[selectedService].deployment);
@@ -1179,6 +1207,64 @@ export default function Services() {
                       </List.Item>
                     )}
                   />
+                </div>
+              ),
+            },
+            {
+              key: 'signature',
+              label: t('deployment-signature'),
+              children: (
+                <div>
+                  {(() => {
+                    const svc = data[selectedService];
+                    const depSig = svc?.deployment_signature || svc?.deploymentSignature || '';
+                    const depStr = typeof svc?.deployment === 'string' ? svc.deployment : JSON.stringify(svc?.deployment || {});
+                    const publicKey = svcKeys.find((k: string) => k.includes('public')) || '';
+                    return (
+                      <div>
+                        <Descriptions column={1} size="small" bordered style={{ marginBottom: 12 }}>
+                          <Descriptions.Item label={t('deployment-signature')}>
+                            {depSig ? (
+                              <Text code style={{ wordBreak: 'break-all', fontSize: 11 }}>{depSig}</Text>
+                            ) : (
+                              <Text type="secondary">{t('no-signature')}</Text>
+                            )}
+                          </Descriptions.Item>
+                          <Descriptions.Item label={t('deployment-hash')}>
+                            <Text code style={{ fontSize: 11 }}>
+                              {depStr ? btoa(depStr).substring(0, 32) + '...' : '-'}
+                            </Text>
+                          </Descriptions.Item>
+                        </Descriptions>
+                        {resignResult && (
+                          <Alert
+                            message={t('service-re-signed')}
+                            description={
+                              <div>
+                                <div><Text strong>{t('new-signature')}:</Text> <Text code style={{ wordBreak: 'break-all', fontSize: 11 }}>{resignResult.deploymentSignature}</Text></div>
+                              </div>
+                            }
+                            type="success"
+                            showIcon
+                            closable
+                            onClose={() => setResignResult(null)}
+                            style={{ marginBottom: 12 }}
+                          />
+                        )}
+                        <Button
+                          type="primary"
+                          icon={<ReloadOutlined />}
+                          loading={resignLoading}
+                          onClick={() => handleResign(selectedService)}
+                        >
+                          {t('re-sign-deployment')}
+                        </Button>
+                        <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
+                          {t('re-sign-hint')}
+                        </Text>
+                      </div>
+                    );
+                  })()}
                 </div>
               ),
             },
@@ -1402,6 +1488,16 @@ export default function Services() {
                           </Form.Item>
                           <Form.Item name="documentation" label={t('documentation')}>
                             <Input />
+                          </Form.Item>
+                        </div>
+                      </Collapse.Panel>
+                      <Collapse.Panel key="upgrade" header={t('upgrade-settings')}>
+                        <div>
+                          <Form.Item name="auto_upgrade" label={t('auto-upgrade')} valuePropName="checked">
+                            <Switch />
+                          </Form.Item>
+                          <Form.Item name="active_upgrade" label={t('active-upgrade')} valuePropName="checked" tooltip={t('active-upgrade-desc')}>
+                            <Switch />
                           </Form.Item>
                         </div>
                       </Collapse.Panel>

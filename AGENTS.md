@@ -21,19 +21,26 @@ the README is partly stale (e.g. it says Redis is required — it is not).
   via `POST /api/setup` and persisted in the `exchange_config` table.
 
 ## Dev commands (verified)
-- Frontend: `npm run dev` → Vite on `:8080`, proxies `/api/*` → `http://localhost:3001`.
+- Frontend: `npm run dev` → Vite on `:5173`, proxies `/api/*` → `http://localhost:3001`.
 - Backend: `npm run dev:backend` (== `node server/index.cjs`) → `:3001`.
 - Typecheck: `npm run typecheck` (`tsc --noEmit`). Build: `npm run build` (`tsc -b && vite build`).
 - There is **no lint script and no test framework** — do not run `npm run lint` / `npm test`.
+- Start scripts: `start-backend.sh`, `start-frontend.sh` (both handle port cleanup).
 
 ## Backend env (verified)
 - `DATABASE_URL` — **REQUIRED** (PostgreSQL). Server exits at startup if unset; schema
-  auto-inits via `db.initSchema()` before `app.listen`.
+  auto-inits via `db.initSchema()` before `app.listen`. Example: `postgresql://user:pass@host:5432/dbname`.
 - `PORT` — default `3001`.
 - `REDIS_URL` — OPTIONAL. If unset, the backend uses an in-memory session store and
   **all sessions are lost on restart**. The README's "Redis required" claim is stale.
 - `SESSION_TTL` (seconds, default 86400); `SESSION_ENC_KEY` (optional 64-hex; if set,
   encrypted sessions survive restarts).
+
+## Infrastructure (verified)
+- PostgreSQL: Docker container `pg-nereid` on `127.0.0.1:5432`, credentials in start scripts.
+- Exchange API: `http://192.168.123.133:3090/v1`, credentials `root/root:KAAqPww59j57tGiqcrNtK6jNrIlLkL`.
+- Agbot: Container `agbot` on Exchange server, ExchangeId `yiqisoft/agbot`.
+- Edge nodes: `192.168.123.218` (node1, root, no password), `192.168.123.219` (NUC, root, no password).
 
 ## Auth & CSRF (verified)
 - Roles: `platform` (cross-org) and `partner` (single bound org). First run requires

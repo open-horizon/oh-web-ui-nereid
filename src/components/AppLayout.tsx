@@ -24,6 +24,7 @@ import {
   CloudServerOutlined,
   SearchOutlined,
   DownOutlined,
+  HeartOutlined,
 } from '@ant-design/icons';
 import { clearSession, getConfig } from '../api/config';
 import { useT } from '../i18n/context';

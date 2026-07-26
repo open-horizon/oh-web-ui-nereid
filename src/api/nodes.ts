@@ -136,6 +136,10 @@ export const NodeAPI = {
     const qs = org ? `?org=${encodeURIComponent(org)}` : '';
     return post<any>(`/nodes/bulk/set-pattern${qs}`, { nodeIds, pattern });
   },
+  bulkSetPolicy(nodeIds: string[], policy: NodePolicy, org?: string) {
+    const qs = org ? `?org=${encodeURIComponent(org)}` : '';
+    return post<any>(`/nodes/bulk/set-policy${qs}`, { nodeIds, policy });
+  },
   transfer(nodeId: string, targetOrg: string, org?: string) {
     const s = splitOrg(nodeId);
     const orgQ = org || s.org;

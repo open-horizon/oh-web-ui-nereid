@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'react';
 import { usePolling } from '../hooks/usePolling';
 import { Table, Button, Space, Typography, message, Modal, Tag, Badge, Select, Alert, Drawer, Descriptions, List, Input, Switch, Tabs, Card, Tooltip } from 'antd';
+const { TextArea } = Input;
 import { SearchOutlined, ReloadOutlined, EyeOutlined, NodeIndexOutlined, CheckCircleOutlined, CloseCircleOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, PlusCircleOutlined, SwapOutlined } from '@ant-design/icons';
 import { NodeAPI, ExchangeNode, NodeServiceStatus, NodePolicy, OneUserInputService } from '../api/nodes';
 import { PatternAPI, ExchangePattern } from '../api/patterns';
@@ -33,6 +34,9 @@ export default function Nodes() {
   const [bulkPatternOpen, setBulkPatternOpen] = useState(false);
   const [bulkPattern, setBulkPattern] = useState<string | null>(null);
   const [bulkLoading, setBulkLoading] = useState(false);
+  const [bulkPolicyOpen, setBulkPolicyOpen] = useState(false);
+  const [bulkPolicyProps, setBulkPolicyProps] = useState('');
+  const [bulkPolicyConstraints, setBulkPolicyConstraints] = useState('');
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferNodeId, setTransferNodeId] = useState('');
   const [transferTargetOrg, setTransferTargetOrg] = useState('');
@@ -46,6 +50,19 @@ export default function Nodes() {
   const [userInputData, setUserInputData] = useState<OneUserInputService[]>([]);
   const [userInputSaving, setUserInputSaving] = useState(false);
   const [availableSvcMap, setAvailableSvcMap] = useState<Record<string, any>>({});
+
+  // Deduplicate services by org+url+arch (ignore version) for userInput selector
+  const uniqueSvcOptions = (() => {
+    const seen = new Map<string, { label: string; value: string; org: string; url: string; arch: string }>();
+    for (const [id, s] of Object.entries(availableSvcMap)) {
+      const org = id.includes('/') ? id.split('/')[0] : '';
+      const key = `${org}/${(s as any).url}/${(s as any).arch}`;
+      if (!seen.has(key)) {
+        seen.set(key, { label: `${org}/${(s as any).url}  (${(s as any).arch})`, value: id, org, url: (s as any).url || '', arch: (s as any).arch || '' });
+      }
+    }
+    return Array.from(seen.values());
+  })();
 
   useEffect(() => {
     if (drawerNode?.userInput) {
@@ -293,25 +310,25 @@ export default function Nodes() {
     setUserInputData(next);
   };
 
-  const addInputToService = (svcIdx: number) => {
+  // Convert inputs[] to multi-line key=value text
+  const inputsToText = (inputs: { name: string; value: string }[] | undefined): string => {
+    if (!inputs || inputs.length === 0) return '';
+    return inputs.map((inp) => `${inp.name}=${inp.value ?? ''}`).join('\n');
+  };
+
+  // Parse multi-line key=value text back to inputs[]
+  const textToInputs = (text: string): { name: string; value: string }[] => {
+    return text.split('\n').map((line) => line.trim()).filter(Boolean).map((line) => {
+      const idx = line.indexOf('=');
+      if (idx === -1) return { name: line, value: '' };
+      return { name: line.slice(0, idx), value: line.slice(idx + 1) };
+    });
+  };
+
+  const updateInputText = (svcIdx: number, text: string) => {
     const next = [...userInputData];
     if (!next[svcIdx]) return;
-    if (!next[svcIdx].inputs) next[svcIdx].inputs = [];
-    next[svcIdx].inputs!.push({ name: '', value: '' });
-    setUserInputData(next);
-  };
-
-  const removeInputFromService = (svcIdx: number, inpIdx: number) => {
-    const next = [...userInputData];
-    if (!next[svcIdx] || !next[svcIdx].inputs) return;
-    next[svcIdx].inputs = next[svcIdx].inputs!.filter((_: any, i: number) => i !== inpIdx);
-    setUserInputData(next);
-  };
-
-  const updateInputInService = (svcIdx: number, inpIdx: number, field: 'name' | 'value', val: string) => {
-    const next = [...userInputData];
-    if (!next[svcIdx] || !next[svcIdx].inputs) return;
-    (next[svcIdx].inputs![inpIdx] as any)[field] = val;
+    next[svcIdx].inputs = textToInputs(text);
     setUserInputData(next);
   };
 
@@ -383,6 +400,31 @@ export default function Nodes() {
       setBulkPatternOpen(false);
       setSelectedRowKeys([]);
     } catch (e: any) { message.error(e?.message || 'Bulk set pattern failed'); }
+    setBulkLoading(false);
+  };
+
+  const handleBulkSetPolicy = async () => {
+    if (!bulkPolicyProps && !bulkPolicyConstraints) return message.warning(t('please-enter-properties-or-constraints'));
+    setBulkLoading(true);
+    try {
+      let properties: any[] = [];
+      let constraints: string[] = [];
+      if (bulkPolicyProps.trim()) {
+        try { properties = JSON.parse(bulkPolicyProps); } catch { message.error(t('json-format-error')); setBulkLoading(false); return; }
+      }
+      if (bulkPolicyConstraints.trim()) {
+        constraints = bulkPolicyConstraints.split('\n').map((l: string) => l.trim()).filter(Boolean);
+      }
+      const policy = { properties, constraints };
+      const res = await NodeAPI.bulkSetPolicy(selectedRowKeys, policy, pageOrg || undefined);
+      const ok = (res?.results || []).filter((r: any) => r.ok).length;
+      const fail = selectedRowKeys.length - ok;
+      message.success(`${ok} ${t('nodes')} ${t('policy-updated')}${fail ? `, ${fail} failed` : ''}`);
+      setBulkPolicyOpen(false);
+      setBulkPolicyProps('');
+      setBulkPolicyConstraints('');
+      setSelectedRowKeys([]);
+    } catch (e: any) { message.error(e?.message || 'Bulk set policy failed'); }
     setBulkLoading(false);
   };
 
@@ -662,6 +704,13 @@ export default function Nodes() {
               }}>
                 {t('set-pattern')} ({selectedRowKeys.length})
               </Button>
+              <Button loading={bulkLoading} onClick={() => {
+                setBulkPolicyProps('');
+                setBulkPolicyConstraints('');
+                setBulkPolicyOpen(true);
+              }}>
+                {t('set-node-policy')} ({selectedRowKeys.length})
+              </Button>
             </>
           )}
         </div>
@@ -728,6 +777,40 @@ export default function Nodes() {
           onChange={setBulkPattern}
           options={availablePatterns.map((p) => ({ label: p, value: p }))}
         />
+      </Modal>
+
+      <Modal
+        title={t('set-node-policy-for') + ' ' + selectedRowKeys.length + ' ' + t('nodes')}
+        open={bulkPolicyOpen}
+        onOk={handleBulkSetPolicy}
+        onCancel={() => setBulkPolicyOpen(false)}
+        confirmLoading={bulkLoading}
+        width={560}
+      >
+        <Alert message={t('set-node-policy-batch-hint')} type="info" showIcon style={{ marginBottom: 12 }} />
+        <div style={{ marginBottom: 8 }}>
+          <Text strong>{t('properties')} (JSON)</Text>
+          <Text type="secondary" style={{ display: 'block', fontSize: 12 }}>
+            {t('node-policy-properties-hint')}
+          </Text>
+          <TextArea
+            rows={4}
+            placeholder={'[\n  { "name": "location", "value": "factory-A" }\n]'}
+            value={bulkPolicyProps}
+            onChange={(e: any) => setBulkPolicyProps(e.target.value)}
+            style={{ fontFamily: 'monospace', fontSize: 12, marginTop: 4 }}
+          />
+        </div>
+        <div>
+          <Text strong>{t('constraints')} ({t('one-per-line')})</Text>
+          <TextArea
+            rows={3}
+            placeholder={'arch == amd64\nlocation == factory-A'}
+            value={bulkPolicyConstraints}
+            onChange={(e: any) => setBulkPolicyConstraints(e.target.value)}
+            style={{ fontFamily: 'monospace', fontSize: 12, marginTop: 4 }}
+          />
+        </div>
       </Modal>
 
       <Modal
@@ -861,12 +944,12 @@ export default function Nodes() {
                         {containers.length === 0 ? (
                           <Text type="secondary">{t('no-container-status')}</Text>
                         ) : (
+                          <>
                           <Table
                             dataSource={containers}
                             rowKey={(_: any, i?: number) => i ?? 0}
                             pagination={false}
                             size="small"
-                            showHeader={false}
                             columns={[
                               {
                                 key: 'icon', width: 28,
@@ -888,8 +971,26 @@ export default function Nodes() {
                                   </Space>
                                 ),
                               },
+                              {
+                                key: 'state', width: 100,
+                                render: (_: any, c: any) => {
+                                  const s = c.state || 'unknown';
+                                  const color = s === 'running' ? 'green' : s === 'restarting' ? 'orange' : 'red';
+                                  return <Tag color={color}>{s}</Tag>;
+                                },
+                              },
                             ]}
                           />
+                          {containers.some((c: any) => c.state && c.state !== 'running') && (
+                            <Alert
+                              type="warning"
+                              showIcon
+                              style={{ marginTop: 8, fontSize: 12 }}
+                              message={t('container-abnormal-hint')}
+                              description={t('container-abnormal-desc')}
+                            />
+                          )}
+                          </>
                         )}
                       </div>
                     );
@@ -1121,52 +1222,35 @@ export default function Nodes() {
                             showSearch
                             style={{ minWidth: 300 }}
                             placeholder={t('select-a-service')}
-                            value={svc.serviceUrl ? Object.keys(availableSvcMap).find(k =>
-                              k.startsWith(svc.serviceOrgid + '/') && availableSvcMap[k].url === svc.serviceUrl && availableSvcMap[k].arch === svc.serviceArch
-                            ) : undefined}
+                            value={svc.serviceUrl ? uniqueSvcOptions.find(o =>
+                              o.org === svc.serviceOrgid && o.url === svc.serviceUrl && o.arch === svc.serviceArch
+                            )?.value : undefined}
                             onChange={(val: any) => {
-                              if (!val) return;
-                              const s = availableSvcMap[val as string];
-                              if (s) {
+                              const opt = uniqueSvcOptions.find(o => o.value === val);
+                              if (opt) {
                                 const next = [...userInputData];
-                                const org = (val as string).includes('/') ? (val as string).split('/')[0] : (getConfig().orgId || '');
-                                next[sIdx].serviceOrgid = org;
-                                next[sIdx].serviceUrl = s.url || '';
-                                next[sIdx].serviceArch = s.arch || '';
+                                next[sIdx].serviceOrgid = opt.org;
+                                next[sIdx].serviceUrl = opt.url;
+                                next[sIdx].serviceArch = opt.arch;
                                 setUserInputData(next);
                               }
                             }}
                             filterOption={(input, option) =>
                               (option?.label as string ?? '').toLowerCase().includes(input.toLowerCase())
                             }
-                            options={Object.keys(availableSvcMap).map((id) => ({ label: id, value: id }))}
+                            options={uniqueSvcOptions.map(o => ({ label: o.label, value: o.value }))}
                           />
                           <Button type="text" danger size="small" icon={<CloseCircleOutlined />} onClick={() => removeUserInputService(sIdx)} />
                         </Space>
                       }
                     >
-                      {(svc.inputs || []).map((inp: any, iIdx: number) => (
-                        <Space key={iIdx} style={{ display: 'flex', marginBottom: 6 }} align="baseline">
-                          <Input
-                            size="small"
-                            style={{ width: 180 }}
-                            placeholder={t('name')}
-                            value={inp.name}
-                            onChange={(e) => updateInputInService(sIdx, iIdx, 'name', e.target.value)}
-                          />
-                          <Input
-                            size="small"
-                            style={{ width: 180 }}
-                            placeholder={t('value')}
-                            value={String(inp.value ?? '')}
-                            onChange={(e) => updateInputInService(sIdx, iIdx, 'value', e.target.value)}
-                          />
-                          <Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => removeInputFromService(sIdx, iIdx)} />
-                        </Space>
-                      ))}
-                      <Button type="dashed" size="small" onClick={() => addInputToService(sIdx)} icon={<PlusCircleOutlined />}>
-                        {t('add-input')}
-                      </Button>
+                      <Input.TextArea
+                        rows={3}
+                        placeholder={'key1=value1\nkey2=value2'}
+                        value={inputsToText(svc.inputs)}
+                        onChange={(e) => updateInputText(sIdx, e.target.value)}
+                        style={{ fontFamily: 'monospace', fontSize: 12 }}
+                      />
                     </Card>
                   ))}
                   <Space style={{ marginTop: 8 }}>

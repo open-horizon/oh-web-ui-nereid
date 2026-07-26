@@ -96,4 +96,9 @@ export const ServiceAPI = {
     const qs = s.org ? `?org=${encodeURIComponent(s.org)}` : '';
     return post(`/services/${encodeURIComponent(s.name)}/upgrade${qs}`, opts);
   },
+  resign(serviceId: string) {
+    const s = splitOrg(serviceId);
+    const qs = s.org ? `?org=${encodeURIComponent(s.org)}` : '';
+    return post<{ deploymentSignature: string; publicKey: string }>(`/services/${encodeURIComponent(s.name)}/resign${qs}`, {});
+  },
 };

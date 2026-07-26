@@ -4,7 +4,7 @@
 
 import { useEffect, useState } from 'react';
 import { usePolling } from '../hooks/usePolling';
-import { Table, Button, Space, Typography, message, Modal, Form, Input, Select, Tag, Alert, Switch, Drawer, Tabs } from 'antd';
+import { Table, Button, Space, Typography, message, Modal, Form, Input, Select, Tag, Alert, Switch, Drawer, Tabs, Descriptions, Tooltip } from 'antd';
 import { SearchOutlined, ReloadOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, ImportOutlined, EditOutlined, DownloadOutlined } from '@ant-design/icons';
 import { MgmtPolicyAPI, MgmtPolicy } from '../api/policies';
 import { ServiceAPI, ExchangeService } from '../api/services';
@@ -118,6 +118,16 @@ const [createOpen, setCreateOpen] = useState(false);
     setNmpStatusLoading(true);
     try {
       const res = await MgmtPolicyAPI.status(id, pageOrg || undefined);
+      setNmpStatus(res);
+    } catch { setNmpStatus(null); }
+    setNmpStatusLoading(false);
+  };
+
+  const refreshStatus = async () => {
+    if (!detailMgmtId) return;
+    setNmpStatusLoading(true);
+    try {
+      const res = await MgmtPolicyAPI.status(detailMgmtId, pageOrg || undefined);
       setNmpStatus(res);
     } catch { setNmpStatus(null); }
     setNmpStatusLoading(false);
@@ -398,10 +408,79 @@ const [createOpen, setCreateOpen] = useState(false);
                 {JSON.stringify(data[detailMgmtId], null, 2)}
               </pre>
             )},
-            { key: 'status', label: t('status'), children: nmpStatusLoading ? <Text type="secondary">{t('loading')}</Text> : (
-              <pre style={{ background: '#f5f5f5', padding: 16, borderRadius: 6, overflow: 'auto', maxHeight: 500 }}>
-                {nmpStatus ? JSON.stringify(nmpStatus, null, 2) : t('no-status-data')}
-              </pre>
+            { key: 'status', label: t('status'), children: (
+              <div>
+                <div style={{ marginBottom: 8, textAlign: 'right' }}>
+                  <Button size="small" icon={<ReloadOutlined />} onClick={refreshStatus} loading={nmpStatusLoading}>{t('refresh')}</Button>
+                </div>
+                {(() => {
+              if (!nmpStatus) return <Text type="secondary">{t('no-status-data')}</Text>;
+              // Normalize status: Exchange may return { "nodes": { nodeId: {...} } } or { nodeId: {...} }
+              const statusObj = nmpStatus.status || nmpStatus;
+              const entries: { nodeId: string; info: any }[] = [];
+              if (statusObj && typeof statusObj === 'object') {
+                // Check if it has a 'nodes' sub-object
+                const src = statusObj.nodes && typeof statusObj.nodes === 'object' ? statusObj.nodes : statusObj;
+                for (const [k, v] of Object.entries(src)) {
+                  if (typeof v === 'object' && v !== null) entries.push({ nodeId: k, info: v as any });
+                }
+              }
+              if (!entries.length) {
+                // Fallback: show raw JSON
+                return <pre style={{ background: '#f5f5f5', padding: 16, borderRadius: 6, overflow: 'auto', maxHeight: 500 }}>{JSON.stringify(nmpStatus, null, 2)}</pre>;
+              }
+              const columns = [
+                { title: t('nmp-node-name'), dataIndex: 'nodeId', key: 'nodeId', render: (v: string) => <Text code>{v}</Text> },
+                {
+                  title: t('nmp-node-status-col'), dataIndex: 'info', key: 'status',
+                  render: (info: any) => {
+                    const status = info.status || info.upgradeStatus || info.agentUpgrade?.status || '';
+                    const color = status === 'completed' || status === 'done' ? 'green'
+                      : status === 'failed' || status === 'error' ? 'red'
+                      : status === 'in_progress' || status === 'in-progress' ? 'blue'
+                      : 'default';
+                    return <Tag color={color}>{status || '-'}</Tag>;
+                  },
+                },
+                {
+                  title: t('nmp-upgrade-started'), dataIndex: 'info', key: 'started',
+                  render: (info: any) => {
+                    const ts = info.started || info.upgradeStarted || info.agentUpgrade?.started || '';
+                    return ts ? fmtTime(ts) : '-';
+                  },
+                },
+                {
+                  title: t('nmp-last-updated'), dataIndex: 'info', key: 'updated',
+                  render: (info: any) => {
+                    const ts = info.lastUpdated || info.updated || '';
+                    return ts ? fmtTime(ts) : '-';
+                  },
+                },
+                {
+                  title: t('nmp-upgrade-error'), dataIndex: 'info', key: 'error',
+                  render: (info: any) => {
+                    const err = info.error || info.errorMessage || info.agentUpgrade?.error || '';
+                    return err ? <Tooltip title={err}><Tag color="red">{String(err).substring(0, 40)}</Tag></Tooltip> : '-';
+                  },
+                },
+              ];
+              return (
+                <div>
+                  <Descriptions size="small" column={2} style={{ marginBottom: 12 }}>
+                    <Descriptions.Item label={t('nmp-node-status')}>{entries.length} {t('nodes')}</Descriptions.Item>
+                  </Descriptions>
+                  <Table
+                    dataSource={entries}
+                    rowKey="nodeId"
+                    columns={columns}
+                    size="small"
+                    pagination={{ pageSize: 10, showSizeChanger: true }}
+                    scroll={{ x: 'max-content' }}
+                  />
+                </div>
+              );
+            })()}
+              </div>
             )},
           ]} />
         ) : <Text type="secondary">{t('no-data')}</Text>}

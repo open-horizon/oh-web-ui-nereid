@@ -2121,7 +2121,8 @@ app.put('/api/services/:id', async (req, res) => {
         // Version unchanged: PUT to update existing service in place
         const { status, data } = await exch(s, 'PUT', '/orgs/' + org + '/services/' + svcName, body);
         if (data && typeof data === 'object' && data.msg && (data.msg === 'ok' || String(data.msg).includes('updated'))) {
-          await exchRaw(s, 'PUT', '/orgs/' + org + '/services/' + encodeURIComponent(svcId) + '/keys/default.public.key', publicKey, 'text/plain');
+          const fullSvcId = org + '/' + svcName;
+          await exchRaw(s, 'PUT', '/orgs/' + org + '/services/' + encodeURIComponent(fullSvcId) + '/keys/default.public.key', publicKey, 'text/plain');
         }
         res.status(status).json(data);
       }
@@ -2181,6 +2182,29 @@ app.delete('/api/services/:id/keys/:keyId', async (req, res) => {
     const org = req.query.org || s.orgId;
     const { status, data } = await exch(s, 'DELETE', `/orgs/${org}/services/${svcName}/keys/${req.params.keyId}`);
     res.status(status).json(data);
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+// -- Service deployment re-sign --
+app.post('/api/services/:id/resign', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  try {
+    const svcName = decodeURIComponent(req.params.id);
+    const org = req.query.org || s.orgId;
+    // Fetch current service from Exchange
+    const { data: svcData } = await exch(s, 'GET', `/orgs/${org}/services/${svcName}`);
+    const svc = svcData?.services?.[svcName];
+    if (!svc) return res.status(404).json({ msg: 'Service not found' });
+    const deployment = typeof svc.deployment === 'string' ? svc.deployment : JSON.stringify(svc.deployment || {});
+    if (!deployment || deployment === '{}') return res.status(400).json({ msg: 'No deployment to sign' });
+    // Generate new key pair and sign
+    const { deploymentSignature, publicKey } = genAndSign(deployment);
+    // Upload new public key and update service signature
+    const keyId = 'default.public.key';
+    await exchRaw(s, 'PUT', `/orgs/${org}/services/${encodeURIComponent(svcName)}/keys/${keyId}`, publicKey, 'text/plain');
+    const { status, data } = await exch(s, 'PUT', `/orgs/${org}/services/${svcName}`, { deploymentSignature });
+    res.status(ok(status, data)).json({ deploymentSignature, publicKey, msg: data?.msg || 'ok' });
   } catch (e) { res.status(502).json({ msg: e.message }); }
 });
 
@@ -2432,7 +2456,8 @@ app.get('/api/catalog-services', async (req, res) => {
   if (!s) return res.status(401).json({ msg: 'Not logged in' });
   try {
     const { status, data } = await exch(s, 'GET', '/catalog/services');
-    res.status(ok(status, data)).json(data);
+    // Transform to { catalogServices: {...} } for frontend
+    res.status(ok(status, data)).json({ catalogServices: data?.services ?? {} });
   } catch (e) { res.status(502).json({ msg: e.message }); }
 });
 
@@ -2441,7 +2466,8 @@ app.get('/api/catalog-patterns', async (req, res) => {
   if (!s) return res.status(401).json({ msg: 'Not logged in' });
   try {
     const { status, data } = await exch(s, 'GET', '/catalog/patterns');
-    res.status(ok(status, data)).json(data);
+    // Transform to { catalogPatterns: {...} } for frontend
+    res.status(ok(status, data)).json({ catalogPatterns: data?.patterns ?? {} });
   } catch (e) { res.status(502).json({ msg: e.message }); }
 });
 
@@ -2656,6 +2682,55 @@ app.get('/api/agbots/:id/agreements', async (req, res) => {
       data.agreements = Object.fromEntries(
         Object.entries(data.agreements).filter(([, v]) => !v?.nodeOrgid || v.nodeOrgid === s.orgId),
       );
+    }
+    // Enrich agreements with node info from node statuses
+    if (data?.agreements) {
+      const agIds = Object.keys(data.agreements);
+      if (agIds.length > 0) {
+        // Fetch all nodes to find which ones have these agreements
+        try {
+          const nodesRes = await exch(s, 'GET', `/orgs/${realOrg}/nodes?attribute=id`);
+          const nodeIds = nodesRes?.data?.nodes ? Object.keys(nodesRes.data.nodes) : [];
+          // Fetch status for each node (up to 20)
+          const nodeStatuses = await Promise.all(
+            nodeIds.slice(0, 20).map(async (nid) => {
+              try {
+                const st = await exch(s, 'GET', `/orgs/${realOrg}/nodes/${encodeURIComponent(nid)}/status`);
+                // nid may already contain org prefix (e.g. "yiqisoft/NUC"), avoid doubling
+                const fullNodeId = nid.includes('/') ? nid : `${realOrg}/${nid}`;
+                return { nodeId: fullNodeId, services: st?.data?.services || [] };
+              } catch {
+                const fullNodeId = nid.includes('/') ? nid : `${realOrg}/${nid}`;
+                return { nodeId: fullNodeId, services: [] };
+              }
+            }),
+          );
+          // Build agreementId -> node mapping
+          const agToNode = {};
+          for (const ns of nodeStatuses) {
+            for (const svc of ns.services) {
+              const aid = svc.agreementId;
+              if (aid && agIds.includes(aid)) {
+                agToNode[aid] = {
+                  nodeId: ns.nodeId,
+                  containerState: svc.containerStatus?.[0]?.state || 'unknown',
+                  configState: svc.configState || '',
+                };
+              }
+            }
+          }
+          // Attach node info and agreementId to each agreement
+          for (const [aid, ag] of Object.entries(data.agreements)) {
+            ag.agreementId = aid;
+            const info = agToNode[aid];
+            if (info) {
+              ag.nodeId = info.nodeId;
+              ag.containerState = info.containerState;
+              ag.configState = info.configState;
+            }
+          }
+        } catch { /* enrichment is best-effort */ }
+      }
     }
     res.status(ok(status, data)).json(data);
   } catch (e) { res.status(502).json({ msg: e.message }); }
@@ -2964,6 +3039,29 @@ app.post('/api/nodes/bulk/set-pattern', async (req, res) => {
       const nodeId = stripOrg(org, rawId);
       try {
         const { status, data } = await exch(sess, 'PATCH', `/orgs/${org}/nodes/${nodeId}`, { pattern: fullPattern });
+        return { id: nodeId, ok: status >= 200 && status < 300, status, msg: data?.msg };
+      } catch (e) { return { id: nodeId, ok: false, msg: e.message }; }
+    }));
+    res.json({ results });
+  } catch (e) { res.status(502).json({ msg: e.message }); }
+});
+
+app.post('/api/nodes/bulk/set-policy', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  const org = req.query.org || s.orgId;
+  try {
+    const { nodeIds, policy } = req.body;
+    if (!Array.isArray(nodeIds) || nodeIds.length === 0) return res.status(400).json({ msg: 'No node IDs provided' });
+    if (!policy || typeof policy !== 'object') return res.status(400).json({ msg: 'No policy provided' });
+    const auth = req.headers['x-root-auth'] || s.auth;
+    const sess = { ...s, auth };
+    const cleanPolicy = { ...policy };
+    delete cleanPolicy.lastUpdated;
+    const results = await Promise.all(nodeIds.map(async (rawId) => {
+      const nodeId = stripOrg(org, rawId);
+      try {
+        const { status, data } = await exch(sess, 'PUT', `/orgs/${org}/nodes/${nodeId}/policy`, cleanPolicy);
         return { id: nodeId, ok: status >= 200 && status < 300, status, msg: data?.msg };
       } catch (e) { return { id: nodeId, ok: false, msg: e.message }; }
     }));

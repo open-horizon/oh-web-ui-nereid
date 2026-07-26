@@ -4,7 +4,7 @@
 
 import { useEffect, useState } from 'react';
 import { usePolling } from '../hooks/usePolling';
-import { Table, Button, Space, Typography, message, Modal, Tag, Form, Input, Select, Upload, Drawer, Descriptions, Collapse, Tooltip } from 'antd';
+import { Table, Button, Space, Typography, message, Modal, Tag, Form, Input, Select, Upload, Drawer, Descriptions, Collapse, Tooltip, Switch, InputNumber } from 'antd';
 import { SearchOutlined, ReloadOutlined, DeleteOutlined, EyeOutlined, PlusOutlined, ImportOutlined, EditOutlined, ClusterOutlined, DownloadOutlined } from '@ant-design/icons';
 
 import { DeploymentPolicyAPI, DeploymentPolicy } from '../api/policies';
@@ -286,7 +286,17 @@ export default function Policies() {
             {nodeHealth.ping_interval && (
               <Descriptions.Item label={t('node-health')}>
                 {t('ping-interval')}: {nodeHealth.ping_interval}s
+                {nodeHealth.parallel_health_check != null && <> | {t('parallel-health-check')}: {nodeHealth.parallel_health_check ? t('enabled') : t('disabled')}</>}
                 {nodeHealth.missing_heartbeat_interval && <> | {t('missing-heartbeat')}: {nodeHealth.missing_heartbeat_interval}s</>}
+              </Descriptions.Item>
+            )}
+            {versions.some((v: any) => v.upgradePolicy) && (
+              <Descriptions.Item label={t('upgrade-policy')}>
+                {versions.map((v: any, i: number) => (
+                  <Tag key={i} color={v.upgradePolicy === 'immediate' ? 'orange' : v.upgradePolicy === 'never' ? 'red' : 'blue'}>
+                    {v.version}: {v.upgradePolicy}
+                  </Tag>
+                ))}
               </Descriptions.Item>
             )}
           </Descriptions>
@@ -414,10 +424,17 @@ export default function Policies() {
     setEditOpen(true);
     editForm.resetFields();
     // Pre-fill form with current values
+    const svcVersions = policy.service?.serviceVersions || [];
+    const firstVersion = svcVersions[0] || {};
+    const nodeHealth = policy.service?.nodeHealth || {};
     editForm.setFieldsValue({
       label: policy.label || '',
       description: policy.description || '',
       constraints: (policy.constraints || []).join('\n'),
+      versionRange: firstVersion.version || '',
+      upgradePolicy: firstVersion.upgradePolicy || undefined,
+      pingInterval: nodeHealth.ping_interval ?? 60,
+      parallelHealthCheck: nodeHealth.parallel_health_check !== false,
     });
     // Find matching service
     const svcName = policy.service?.name || '';
@@ -435,6 +452,13 @@ export default function Policies() {
       }
       const svc = services[editSelectedServiceId];
       setEditing(true);
+      const upgradePolicyObj: Record<string, any> = {};
+      if (values.upgradePolicy) upgradePolicyObj.upgradePolicy = values.upgradePolicy;
+      const nodeHealthObj: Record<string, any> = {
+        ping_interval: values.pingInterval ?? 60,
+        parallel_health_check: values.parallelHealthCheck !== false,
+      };
+      const version = values.versionRange || svc.version || '1.0.0';
       const body: Record<string, any> = {
         label: values.label,
         description: values.description || '',
@@ -442,8 +466,8 @@ export default function Policies() {
           name: svc.url || editSelectedServiceId,
           org: editSelectedServiceId.includes('/') ? editSelectedServiceId.split('/')[0] : (getConfig().orgId || ''),
           arch: svc.arch || 'amd64',
-          serviceVersions: [{ version: svc.version || '1.0.0', priority: {}, upgradePolicy: {} }],
-          nodeHealth: null,
+          serviceVersions: [{ version, priority: {}, ...upgradePolicyObj }],
+          nodeHealth: nodeHealthObj,
         },
         constraints: values.constraints ? values.constraints.split('\n').filter(Boolean) : [],
         userInput: [],
@@ -475,6 +499,13 @@ export default function Policies() {
       }
       const svc = services[selectedServiceId];
       setCreating(true);
+      const upgradePolicyObj: Record<string, any> = {};
+      if (values.upgradePolicy) upgradePolicyObj.upgradePolicy = values.upgradePolicy;
+      const nodeHealthObj: Record<string, any> = {
+        ping_interval: values.pingInterval ?? 60,
+        parallel_health_check: values.parallelHealthCheck !== false,
+      };
+      const version = values.versionRange || svc.version || '1.0.0';
       const body: Record<string, any> = {
         label: values.label,
         description: values.description || '',
@@ -482,8 +513,8 @@ export default function Policies() {
           name: svc.url || selectedServiceId,
           org: selectedServiceId.includes('/') ? selectedServiceId.split('/')[0] : (getConfig().orgId || ''),
           arch: svc.arch || 'amd64',
-          serviceVersions: [{ version: svc.version || '1.0.0', priority: {}, upgradePolicy: {} }],
-          nodeHealth: { ping_interval: 60, parallel_health_check: true },
+          serviceVersions: [{ version, priority: {}, ...upgradePolicyObj }],
+          nodeHealth: nodeHealthObj,
         },
         constraints: values.constraints ? values.constraints.split('\n').filter(Boolean) : [],
         userInput: [],
@@ -617,6 +648,33 @@ export default function Policies() {
           <Form.Item name="constraints" label={t('constraints-one-per-line')}>
             <TextArea rows={3} placeholder={t('e.g. a == b')} />
           </Form.Item>
+          <Collapse size="small" style={{ marginBottom: 0 }}>
+            <Collapse.Panel key="upgrade" header={t('upgrade-settings')}>
+              <Form.Item name="versionRange" label={t('version-range')} tooltip={t('version-range-desc')}>
+                <Input placeholder={t('version-range-placeholder')} />
+              </Form.Item>
+              <Form.Item name="upgradePolicy" label={t('upgrade-policy')}>
+                <Select
+                  allowClear
+                  placeholder={t('upgrade-policy-default')}
+                  options={[
+                    { label: t('upgrade-policy-default'), value: '' },
+                    { label: t('upgrade-policy-immediate'), value: 'immediate' },
+                    { label: t('upgrade-policy-conservative'), value: 'conservative' },
+                    { label: t('upgrade-policy-never'), value: 'never' },
+                  ]}
+                />
+              </Form.Item>
+            </Collapse.Panel>
+            <Collapse.Panel key="health" header={t('node-health-config')}>
+              <Form.Item name="pingInterval" label={t('ping-interval-sec')}>
+                <InputNumber min={0} style={{ width: '100%' }} placeholder="60" />
+              </Form.Item>
+              <Form.Item name="parallelHealthCheck" label={t('parallel-health-check')} valuePropName="checked">
+                <Switch />
+              </Form.Item>
+            </Collapse.Panel>
+          </Collapse>
         </Form>
       </Modal>
 
@@ -649,6 +707,33 @@ export default function Policies() {
           <Form.Item name="constraints" label={t('constraints-one-per-line')}>
             <TextArea rows={3} placeholder={t('e.g. a == b')} />
           </Form.Item>
+          <Collapse size="small" style={{ marginBottom: 0 }}>
+            <Collapse.Panel key="upgrade" header={t('upgrade-settings')}>
+              <Form.Item name="versionRange" label={t('version-range')} tooltip={t('version-range-desc')}>
+                <Input placeholder={t('version-range-placeholder')} />
+              </Form.Item>
+              <Form.Item name="upgradePolicy" label={t('upgrade-policy')}>
+                <Select
+                  allowClear
+                  placeholder={t('upgrade-policy-default')}
+                  options={[
+                    { label: t('upgrade-policy-default'), value: '' },
+                    { label: t('upgrade-policy-immediate'), value: 'immediate' },
+                    { label: t('upgrade-policy-conservative'), value: 'conservative' },
+                    { label: t('upgrade-policy-never'), value: 'never' },
+                  ]}
+                />
+              </Form.Item>
+            </Collapse.Panel>
+            <Collapse.Panel key="health" header={t('node-health-config')}>
+              <Form.Item name="pingInterval" label={t('ping-interval-sec')}>
+                <InputNumber min={0} style={{ width: '100%' }} placeholder="60" />
+              </Form.Item>
+              <Form.Item name="parallelHealthCheck" label={t('parallel-health-check')} valuePropName="checked">
+                <Switch />
+              </Form.Item>
+            </Collapse.Panel>
+          </Collapse>
         </Form>
       </Modal>
 
