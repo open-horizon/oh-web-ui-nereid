@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import { usePolling } from '../hooks/usePolling';
 import { Table, Button, Space, Typography, message, Modal, Tag, Badge, Select, Alert, Drawer, Descriptions, List, Input, Switch, Tabs, Card, Tooltip } from 'antd';
 const { TextArea } = Input;
-import { SearchOutlined, ReloadOutlined, EyeOutlined, NodeIndexOutlined, CheckCircleOutlined, CloseCircleOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, PlusCircleOutlined, SwapOutlined } from '@ant-design/icons';
+import { SearchOutlined, ReloadOutlined, EyeOutlined, NodeIndexOutlined, CheckCircleOutlined, CloseCircleOutlined, MinusCircleOutlined, EditOutlined, DeleteOutlined, PlusCircleOutlined, SwapOutlined, MessageOutlined } from '@ant-design/icons';
 import { NodeAPI, ExchangeNode, NodeServiceStatus, NodePolicy, OneUserInputService } from '../api/nodes';
 import { PatternAPI, ExchangePattern } from '../api/patterns';
 import { ServiceAPI } from '../api/services';
@@ -90,6 +90,9 @@ export default function Nodes() {
 
   const [reRegisterCmd, setReRegisterCmd] = useState<string | null>(null);
 
+  const [nodeEvents, setNodeEvents] = useState<any[]>([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
+
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -127,6 +130,7 @@ export default function Nodes() {
     setNodeAgreements([]);
     setNodeErrors([]);
     setNodeMgmtStatus([]);
+    setNodeEvents([]);
     setDrawerOpen(true);
     loadServices(nodeId);
     const nOrg = nodeId.includes('/') ? nodeId.split('/')[0] : pageOrg;
@@ -138,10 +142,11 @@ export default function Nodes() {
     }
     setSubLoading(true);
     try {
-      const [ag, er, ms] = await Promise.allSettled([
+      const [ag, er, ms, ev] = await Promise.allSettled([
         NodeAPI.agreements(nid, nOrg),
         NodeAPI.errors(nid, nOrg),
         NodeAPI.managementStatus(nid, nOrg),
+        NodeAPI.events(nid, nOrg, 50),
       ]);
       if (ag.status === 'fulfilled') {
         const ags = ag.value?.agreements ?? {};
@@ -154,6 +159,9 @@ export default function Nodes() {
       if (ms.status === 'fulfilled') {
         const msData = ms.value?.managementStatus ?? {};
         setNodeMgmtStatus(Object.values(msData));
+      }
+      if (ev.status === 'fulfilled') {
+        setNodeEvents(ev.value?.events ?? []);
       }
     } finally { setSubLoading(false); }
   };
@@ -1129,7 +1137,65 @@ export default function Nodes() {
                 />
               ),
             },
-
+            {
+              key: 'events',
+              label: t('events'),
+              children: (
+                <div>
+                  {nodeEvents.length === 0 && (
+                    <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>{t('no-events')}</Text>
+                  )}
+                  <List
+                    loading={eventsLoading}
+                    dataSource={nodeEvents}
+                    locale={{ emptyText: t('no-events') }}
+                    renderItem={(ev: any) => {
+                      const eventName = ev.name || '';
+                      const detail = ev.detail || {};
+                      const timestamp = ev.t || '';
+                      
+                      let icon = <MessageOutlined style={{ fontSize: 16, color: '#1890ff' }} />;
+                      let title = eventName;
+                      let desc = '';
+                      
+                      if (eventName === 'container_status_change') {
+                        const container = detail.container || '';
+                        const shortContainer = container.split('-').slice(1).join('-') || container;
+                        const fromState = detail.from || '';
+                        const toState = detail.to || '';
+                        const color = toState === 'running' ? '#52c41a' : toState === 'restarting' ? '#faad14' : '#ff4d4f';
+                        icon = <MinusCircleOutlined style={{ fontSize: 16, color }} />;
+                        title = `${t('container')}: ${shortContainer}`;
+                        desc = `${fromState} → ${toState}`;
+                      } else if (eventName === 'agreement_terminated') {
+                        icon = <CloseCircleOutlined style={{ fontSize: 16, color: '#ff4d4f' }} />;
+                        title = t('agreement-terminated');
+                        desc = detail.agreementId || '-';
+                      } else if (eventName === 'agreement_created') {
+                        icon = <CheckCircleOutlined style={{ fontSize: 16, color: '#52c41a' }} />;
+                        title = t('agreement-created');
+                        desc = detail.agreementId || '-';
+                      }
+                      
+                      return (
+                        <List.Item>
+                          <List.Item.Meta
+                            avatar={icon}
+                            title={<Text>{title}</Text>}
+                            description={
+                              <div>
+                                <Text code style={{ fontSize: 11 }}>{desc}</Text>
+                                {timestamp && <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>{fmtTime(timestamp)}</Text>}
+                              </div>
+                            }
+                          />
+                        </List.Item>
+                      );
+                    }}
+                  />
+                </div>
+              ),
+            },
             {
               key: 'servicesConfig',
               label: t('services-config-state'),

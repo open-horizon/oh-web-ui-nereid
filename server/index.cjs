@@ -1892,6 +1892,35 @@ app.post('/api/nodes/:id/heartbeat', async (req, res) => {
 });
 
 // ==============================================
+// Node Events API — read from system.log
+// ==============================================
+app.get('/api/nodes/:id/events', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  const org = req.query.org || s.orgId;
+  const nodeId = decodeURIComponent(req.params.id);
+  const fullNodeId = `${org}/${nodeId}`;
+  const limit = Math.min(parseInt(req.query.limit || '100', 10), 500);
+  const eventTypes = (req.query.types || 'container_status_change,agreement_terminated,agreement_created').split(',');
+  
+  try {
+    const lines = fs.readFileSync(SYS_LOG, 'utf-8').split('\n').filter(Boolean);
+    const events = [];
+    for (const line of lines) {
+      try {
+        const entry = JSON.parse(line);
+        if (entry.type !== 'event') continue;
+        if (!eventTypes.includes(entry.name)) continue;
+        if (entry.detail?.nodeId !== fullNodeId) continue;
+        events.unshift(entry); // newest first
+        if (events.length >= limit) break;
+      } catch {}
+    }
+    res.json({ events });
+  } catch (e) { res.status(500).json({ msg: e.message }); }
+});
+
+// ==============================================
 // Deployment Policy Search
 // ==============================================
 

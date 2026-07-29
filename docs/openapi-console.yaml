@@ -17,7 +17,7 @@ info:
       PostgreSQL (required).
     - Exchange credentials are stored once at the system level and shared by
       all sessions; users never supply Exchange credentials directly.
-  version: 2.0.0
+  version: 2.1.0
   contact:
     name: NereidAI
 
@@ -42,6 +42,13 @@ tags:
   - name: Agbot Patterns
   - name: Agbot Business Policies
   - name: HA Groups
+  - name: Dashboard
+  - name: Registry
+  - name: Search
+  - name: Changes
+  - name: Agent File Version
+  - name: Secrets
+  - name: Service Instances
 
 paths:
   # =============================================================
@@ -262,7 +269,7 @@ paths:
   # =============================================================
   # BFF User Management (platform only)
   # =============================================================
-  /api/users:
+  /api/bff-users:
     get:
       tags: [Users]
       summary: List BFF users
@@ -339,7 +346,7 @@ paths:
         '409':
           description: User already exists
 
-  /api/users/{username}:
+  /api/bff-users/{username}:
     delete:
       tags: [Users]
       summary: Delete BFF user
@@ -361,8 +368,48 @@ paths:
           description: Cannot delete yourself
         '404':
           description: User not found
+    put:
+      tags: [Users]
+      summary: Update BFF user role/org/password
+      description: Platform only. Update a user's role, bound org, or password.
+      operationId: updateBffUser
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: username
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: org
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Target Exchange org for cross-org queries
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role:
+                  type: string
+                  enum: [platform, partner]
+                org:
+                  type: string
+                  description: New bound org for partner user
+                newPassword:
+                  type: string
+      responses:
+        '200':
+          description: User updated
+        '400':
+          description: Cannot change own role or org
 
-  /api/users/{username}/password:
+  /api/bff-users/{username}/password:
     put:
       tags: [Users]
       summary: Change user password
@@ -464,6 +511,42 @@ paths:
         '401':
           description: Exchange credential verification failed
 
+  /api/exchange-config/test:
+    post:
+      tags: [System]
+      summary: Test Exchange connection
+      description: Platform only. Validates Exchange credentials without persisting.
+      operationId: testExchangeConfig
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [baseURL, user, password]
+              properties:
+                baseURL:
+                  type: string
+                user:
+                  type: string
+                password:
+                  type: string
+      responses:
+        '200':
+          description: Test result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  msg:
+                    type: string
+
   # =============================================================
   # System Settings (platform only)
   # =============================================================
@@ -536,6 +619,74 @@ paths:
           description: Not authenticated
         '403':
           description: Platform role required
+
+  # =============================================================
+  # Registry
+  # =============================================================
+  /api/registry/search:
+    get:
+      tags: [Registry]
+      summary: Search Docker registry for images
+      description: Searches Docker Hub or custom registry for matching images.
+      operationId: searchRegistry
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Search query
+      responses:
+        '200':
+          description: Search results
+
+  /api/registry/tags:
+    get:
+      tags: [Registry]
+      summary: List tags for a registry image
+      operationId: listRegistryTags
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: image
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Image name (e.g. library/alpine)
+      responses:
+        '200':
+          description: Tag list
+
+  /api/registry/test:
+    post:
+      tags: [Registry]
+      summary: Test registry connectivity
+      operationId: testRegistry
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                registry_url:
+                  type: string
+                registry_insecure:
+                  type: boolean
+                registry_username:
+                  type: string
+                registry_password:
+                  type: string
+      responses:
+        '200':
+          description: Test result
 
   # =============================================================
   # API Key Management (platform and partner)
@@ -643,6 +794,76 @@ paths:
         '200':
           description: Key deleted
 
+  /api/apikeys/{id}/renew:
+    post:
+      tags: [Users]
+      summary: Renew an API key
+      description: Platform only. Generates a new key secret for the same API key id.
+      operationId: renewApiKey
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Key renewed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  key:
+                    type: string
+
+  /api/apikeys/{id}/revoke:
+    post:
+      tags: [Users]
+      summary: Revoke an API key
+      description: Platform only. Soft-revokes an API key.
+      operationId: revokeApiKey
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Key revoked
+
+  /api/apikeys/{id}/key:
+    get:
+      tags: [Users]
+      summary: Get API key plaintext
+      description: Platform only. Returns the plaintext API key value.
+      operationId: getApiKeyPlaintext
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Key plaintext
+
   /api/my-apikeys:
     get:
       tags: [Users]
@@ -698,6 +919,66 @@ paths:
       responses:
         '200':
           description: Key revoked
+
+  /api/my-apikeys/{id}:
+    delete:
+      tags: [Users]
+      summary: Delete own API key
+      description: Partner self-service. Hard-deletes a key owned by the partner's org.
+      operationId: deleteMyApiKey
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Key deleted
+
+  /api/my-apikeys/{id}/key:
+    get:
+      tags: [Users]
+      summary: Get own API key plaintext
+      description: Partner self-service. Returns the plaintext key value.
+      operationId: getMyApiKeyPlaintext
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Key plaintext
+
+  /api/my-apikeys/{id}/renew:
+    post:
+      tags: [Users]
+      summary: Renew own API key
+      description: Partner self-service. Generates a new key secret.
+      operationId: renewMyApiKey
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Key renewed
 
   # =============================================================
   # Audit Log
@@ -838,6 +1119,44 @@ paths:
                     enum: [hubadmin, system, user]
 
   # =============================================================
+  # Dashboard
+  # =============================================================
+  /api/dashboard:
+    get:
+      tags: [Dashboard]
+      summary: Rich dashboard payload
+      description: |
+        Returns node health, agreements, errors, version distribution,
+        notifications, exchange latency, org resources, and recent changes.
+        Platform aggregates across all orgs.
+      operationId: getDashboard
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      responses:
+        '200':
+          description: Dashboard data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nodeHealth:
+                    type: object
+                  unhealthyNodes:
+                    type: array
+                  recentErrors:
+                    type: array
+                  activeAgreements:
+                    type: integer
+                  exchangeLatency:
+                    type: integer
+                  orgResources:
+                    type: object
+                  recentChanges:
+                    type: array
+
+  # =============================================================
   # Organizations
   # =============================================================
   /api/organizations:
@@ -889,6 +1208,39 @@ paths:
       responses:
         '200':
           description: Operation result
+
+  /api/organizations/{orgid}/config:
+    put:
+      tags: [Organizations]
+      summary: Update org configuration
+      description: Updates heartbeat intervals, limits, label, and description for an org.
+      operationId: updateOrgConfig
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: orgid
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                description:
+                  type: string
+                label:
+                  type: string
+                heartbeatIntervals:
+                  type: object
+                limits:
+                  type: object
+      responses:
+        '200':
+          description: Configuration updated
 
   # =============================================================
   # Exchange Users (not BFF users)
@@ -1005,6 +1357,35 @@ paths:
         '200':
           description: Operation result
 
+  /api/exchange-users/{username}/changepw:
+    post:
+      tags: [Users]
+      summary: Change Exchange user password
+      description: Proxies to Exchange POST /orgs/{org}/users/{user}/changepw.
+      operationId: changeExchangeUserPassword
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: username
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [newPassword]
+              properties:
+                newPassword:
+                  type: string
+      responses:
+        '200':
+          description: Password changed
+
   # =============================================================
   # Nodes
   # =============================================================
@@ -1093,6 +1474,45 @@ paths:
       responses:
         '200':
           description: Operation result
+    put:
+      tags: [Nodes]
+      summary: Create or update a node (upsert)
+      operationId: upsertNode
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/OrgQuery'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Node created or updated
+    delete:
+      tags: [Nodes]
+      summary: Delete a node
+      operationId: deleteNode
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/OrgQuery'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Node deleted
 
   /api/nodes/{id}/services:
     get:
@@ -1160,6 +1580,489 @@ paths:
       responses:
         '200':
           description: Node agreements
+
+  /api/nodes/{id}/errors:
+    get:
+      tags: [Nodes]
+      summary: Get node errors
+      operationId: getNodeErrors
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Node errors
+    put:
+      tags: [Nodes]
+      summary: Update node errors
+      operationId: updateNodeErrors
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Errors updated
+    delete:
+      tags: [Nodes]
+      summary: Delete node errors
+      operationId: deleteNodeErrors
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Errors deleted
+
+  /api/nodes/{id}/managementStatus:
+    get:
+      tags: [Nodes]
+      summary: Get node management status (NMP)
+      operationId: getNodeManagementStatus
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Management status
+
+  /api/nodes/{id}/status:
+    get:
+      tags: [Nodes]
+      summary: Get node status
+      operationId: getNodeStatus
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Node status
+    put:
+      tags: [Nodes]
+      summary: Update node status
+      operationId: updateNodeStatus
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Status updated
+    delete:
+      tags: [Nodes]
+      summary: Delete node status
+      operationId: deleteNodeStatus
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Status deleted
+
+  /api/nodes/{id}/heartbeat:
+    post:
+      tags: [Nodes]
+      summary: Post node heartbeat
+      operationId: postNodeHeartbeat
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Heartbeat posted
+
+  /api/nodes/{id}/services_configstate:
+    post:
+      tags: [Nodes]
+      summary: Set service config state on a node
+      operationId: setNodeServicesConfigState
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Config state updated
+
+  /api/nodes/{id}/events:
+    get:
+      tags: [Nodes]
+      summary: Read node events from system log
+      description: "Filters by node ID. Default event types: container_status_change, agreement_terminated, agreement_created."
+      operationId: getNodeEvents
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+        - name: types
+          in: query
+          schema:
+            type: string
+          description: Comma-separated event types to filter
+      responses:
+        '200':
+          description: Node events
+
+  /api/nodes/{id}/transfer:
+    post:
+      tags: [Nodes]
+      summary: Transfer node to a different org
+      operationId: transferNode
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [targetOrg]
+              properties:
+                targetOrg:
+                  type: string
+      responses:
+        '200':
+          description: Node transferred
+
+  /api/nodes/{id}/agreements/{agreementId}:
+    delete:
+      tags: [Nodes]
+      summary: Cancel a specific agreement on a node
+      operationId: deleteNodeAgreement
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: agreementId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Agreement cancelled
+
+  /api/nodes/bulk/delete:
+    post:
+      tags: [Nodes]
+      summary: Delete multiple nodes
+      operationId: bulkDeleteNodes
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nodeIds]
+              properties:
+                nodeIds:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Bulk delete results
+
+  /api/nodes/bulk/set-pattern:
+    post:
+      tags: [Nodes]
+      summary: Set pattern on multiple nodes
+      operationId: bulkSetNodePattern
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nodeIds, pattern]
+              properties:
+                nodeIds:
+                  type: array
+                  items:
+                    type: string
+                pattern:
+                  type: string
+      responses:
+        '200':
+          description: Pattern set on nodes
+
+  /api/nodes/bulk/set-policy:
+    post:
+      tags: [Nodes]
+      summary: Set policy on multiple nodes
+      operationId: bulkSetNodePolicy
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nodeIds, policy]
+              properties:
+                nodeIds:
+                  type: array
+                  items:
+                    type: string
+                policy:
+                  type: object
+      responses:
+        '200':
+          description: Policy set on nodes
+
+  # =============================================================
+  # Search
+  # =============================================================
+  /api/search/nodes/service:
+    post:
+      tags: [Search]
+      summary: Search nodes by service
+      operationId: searchNodesByService
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Matching nodes
+
+  /api/search/nodes/error:
+    post:
+      tags: [Search]
+      summary: Search nodes by error
+      operationId: searchNodesByError
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Matching nodes
+
+  /api/search/nodes/error/all:
+    get:
+      tags: [Search]
+      summary: Get all node errors
+      operationId: getAllNodeErrors
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/OrgQuery'
+      responses:
+        '200':
+          description: All node errors
+
+  /api/search/nodehealth:
+    post:
+      tags: [Search]
+      summary: Search node health
+      operationId: searchNodeHealth
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Node health results
+
+  /api/policies/{id}/search:
+    post:
+      tags: [Search]
+      summary: Search nodes compatible with a deployment policy
+      operationId: searchPolicyCompatibleNodes
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Compatible nodes
+
+  /api/patterns/{id}/search:
+    post:
+      tags: [Search]
+      summary: Search nodes compatible with a deployment pattern
+      operationId: searchPatternCompatibleNodes
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Compatible nodes
+
+  # =============================================================
+  # Changes / Notifications
+  # =============================================================
+  /api/changes:
+    post:
+      tags: [Changes]
+      summary: Post changes notification
+      operationId: postChanges
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Changes posted
+
+  /api/changes/maxchangeid:
+    get:
+      tags: [Changes]
+      summary: Get max change ID
+      operationId: getMaxChangeId
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      responses:
+        '200':
+          description: Max change ID
+
+  /api/myorgs:
+    post:
+      tags: [System]
+      summary: Get my organizations
+      operationId: getMyOrgs
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      responses:
+        '200':
+          description: My orgs
 
   # =============================================================
   # Services
@@ -1243,6 +2146,230 @@ paths:
       responses:
         '200':
           description: Deleted successfully
+    get:
+      tags: [Services]
+      summary: Get a single service
+      operationId: getService
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/OrgQuery'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Service detail
+
+  /api/services/{id}/keys:
+    get:
+      tags: [Services]
+      summary: List service public keys
+      operationId: listServiceKeys
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Service keys
+    post:
+      tags: [Services]
+      summary: Upload a service public key
+      operationId: uploadServiceKey
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+      responses:
+        '200':
+          description: Key uploaded
+
+  /api/services/{id}/keys/{keyId}:
+    delete:
+      tags: [Services]
+      summary: Delete a service public key
+      operationId: deleteServiceKey
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: keyId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Key deleted
+
+  /api/services/{id}/resign:
+    post:
+      tags: [Services]
+      summary: Re-sign service deployment with new key pair
+      operationId: resignService
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Service re-signed
+
+  /api/services/{id}/dockauths:
+    get:
+      tags: [Services]
+      summary: List service Docker auths
+      operationId: listServiceDockAuths
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Docker auths list
+    post:
+      tags: [Services]
+      summary: Create service Docker auth
+      operationId: createServiceDockAuth
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Docker auth created
+
+  /api/services/{id}/dockauths/{authId}:
+    delete:
+      tags: [Services]
+      summary: Delete service Docker auth
+      operationId: deleteServiceDockAuth
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: authId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Docker auth deleted
+
+  /api/services/{id}/archive:
+    post:
+      tags: [Services]
+      summary: Archive a service (soft delete)
+      operationId: archiveService
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Service archived
+
+  /api/services/{id}/unarchive:
+    post:
+      tags: [Services]
+      summary: Unarchive a service
+      operationId: unarchiveService
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Service unarchived
+
+  /api/services/{id}/upgrade:
+    post:
+      tags: [Services]
+      summary: Set service upgrade policy
+      operationId: setUpgradePolicy
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                auto_upgrade:
+                  type: boolean
+                active_upgrade:
+                  type: boolean
+      responses:
+        '200':
+          description: Upgrade policy set
 
   # =============================================================
   # Patterns
@@ -1344,6 +2471,29 @@ paths:
         '200':
           description: Delete result
 
+  /api/patterns/{id}/nodehealth:
+    post:
+      tags: [Patterns]
+      summary: Get node health for a pattern
+      operationId: getPatternNodeHealth
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Node health results
+
   # =============================================================
   # Deployment Policies
   # =============================================================
@@ -1389,6 +2539,28 @@ paths:
           description: Create result
 
   /api/policies/{id}:
+    put:
+      tags: [Deployment Policies]
+      summary: Update deployment policy
+      operationId: updatePolicy
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Update result
     delete:
       tags: [Deployment Policies]
       summary: Delete deployment policy
@@ -1503,6 +2675,24 @@ paths:
       responses:
         '200':
           description: Delete result
+
+  /api/mgmtpolicies/{id}/status:
+    get:
+      tags: [Management Policies]
+      summary: Get NMP (Node Management Policy) status detail
+      operationId: getMgmtPolicyStatus
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: NMP status detail
 
   # =============================================================
   # Catalog
@@ -1758,6 +2948,108 @@ paths:
         '200':
           description: Unbind success
 
+  /api/agbots/admin-login:
+    post:
+      tags: [Agbots]
+      summary: Authenticate as agbot admin
+      description: Verifies credentials against Exchange and returns base64 auth token. Does not create a session.
+      operationId: agbotAdminLogin
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user, password]
+              properties:
+                user:
+                  type: string
+                password:
+                  type: string
+      responses:
+        '200':
+          description: Auth token
+
+  /api/agbots/{id}/agreements:
+    get:
+      tags: [Agbots]
+      summary: List agreements for an agbot
+      description: Enriches each agreement with node container state and config state.
+      operationId: listAgbotAgreements
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/OrgQuery'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Agreement list
+
+  /api/agbots/{id}/heartbeat:
+    post:
+      tags: [Agbots]
+      summary: Post agbot heartbeat
+      operationId: postAgbotHeartbeat
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Heartbeat posted
+
+  /api/agbots/{id}/msgs:
+    get:
+      tags: [Agbots]
+      summary: Get agbot messages
+      operationId: getAgbotMessages
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Agbot messages
+    post:
+      tags: [Agbots]
+      summary: Send agbot message
+      operationId: sendAgbotMessage
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Message sent
+
   # =============================================================
   # HA Groups
   # =============================================================
@@ -1883,6 +3175,127 @@ paths:
       responses:
         '200':
           description: Node removed
+
+  # =============================================================
+  # Agent File Version
+  # =============================================================
+  /api/agentfileversion:
+    get:
+      tags: [Agent File Version]
+      summary: Get agent file version
+      operationId: getAgentFileVersion
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      responses:
+        '200':
+          description: Agent file version
+    put:
+      tags: [Agent File Version]
+      summary: Set agent file version
+      operationId: setAgentFileVersion
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Version set
+    delete:
+      tags: [Agent File Version]
+      summary: Delete agent file version
+      operationId: deleteAgentFileVersion
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      responses:
+        '200':
+          description: Version deleted
+
+  # =============================================================
+  # Secrets
+  # =============================================================
+  /api/secrets:
+    get:
+      tags: [Secrets]
+      summary: List secrets
+      description: Returns empty object. Secrets are managed by Vault/OpenBao, not Exchange.
+      operationId: listSecrets
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      responses:
+        '200':
+          description: Secret list
+    post:
+      tags: [Secrets]
+      summary: Create secret
+      description: Stub endpoint. Returns 400 with message to use Secrets Manager.
+      operationId: createSecret
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      responses:
+        '400':
+          description: Secrets not managed through Exchange
+
+  /api/secrets/{name}:
+    delete:
+      tags: [Secrets]
+      summary: Delete secret
+      description: Stub endpoint. Returns 400 with message to use Secrets Manager.
+      operationId: deleteSecret
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '400':
+          description: Secrets not managed through Exchange
+
+  # =============================================================
+  # Service Instances
+  # =============================================================
+  /api/service-instances:
+    get:
+      tags: [Service Instances]
+      summary: List all service instances across nodes and orgs
+      description: Aggregates across all nodes and enriches with node status.
+      operationId: listServiceInstances
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      responses:
+        '200':
+          description: Service instance list
+
+  /api/service-instances/{id}:
+    get:
+      tags: [Service Instances]
+      summary: Get a specific service instance
+      description: Instance ID format is nodeId/serviceKey.
+      operationId: getServiceInstance
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Service instance detail
 
 components:
   securitySchemes:

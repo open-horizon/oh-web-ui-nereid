@@ -176,4 +176,10 @@ export const NodeAPI = {
     const qs = orgQ ? `?org=${encodeURIComponent(orgQ)}` : '';
     return post(`/nodes/${encodeURIComponent(s.name)}/heartbeat${qs}`, {});
   },
+  events(nodeId: string, org?: string, limit = 100) {
+    const s = splitOrg(nodeId);
+    const orgQ = org || s.org;
+    const qs = orgQ ? `?org=${encodeURIComponent(orgQ)}&limit=${limit}` : `?limit=${limit}`;
+    return get<{ events: any[] }>(`/nodes/${encodeURIComponent(s.name)}/events${qs}`);
+  },
 };

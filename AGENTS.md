@@ -64,6 +64,14 @@ the README is partly stale (e.g. it says Redis is required — it is not).
 - **"All Organizations" view:** when platform selects it (no `?org=`), the backend
   aggregates all non-`root` orgs server-side. `root` is excluded from org dropdowns.
 
+### EdgeX Container DNS Resolution Issue (CRITICAL)
+- **Problem**: EdgeX services (e.g., `edgex-app-gateway`) fail to start in Open Horizon because they try to resolve hostnames via Docker DNS, but OH prefixes container names with `{agreementId}-`, so the DNS name doesn't match.
+- **Error**: `listen tcp: lookup edgex-app-service-gateway on 127.0.0.11:53: no such host`
+- **Root cause**: EdgeX services are designed for Docker Compose where service names are used as hostnames. In OH, container names are `{agreementId}-{serviceName}`, breaking DNS resolution.
+- **Symptoms**: Container exits with code 255 → Docker restarts (policy=always) → GovernanceWorker detects restarting container → terminates agreement (reason 103) → all containers deleted → agbot creates new agreement → cycle repeats.
+- **Solution**: Modify service definition to use correct hostname or add DNS alias. This must be fixed in the EdgeX service definition, not in the UI.
+- **Workaround**: SSH to node and check `docker logs <container>` to identify which service is failing.
+
 ## Conventions
 - Comments explain *why*; add i18n translation comments for new UI text (strings live in
   `src/i18n/zh.ts` + `src/i18n/context.tsx`).
