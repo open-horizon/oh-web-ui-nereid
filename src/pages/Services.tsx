@@ -326,7 +326,7 @@ export default function Services() {
   const [form] = Form.useForm();
   const [importForm] = Form.useForm();
   const [importMode, setImportMode] = useState<'paste' | 'upload'>('paste');
-  const [importJsonText, setImportJsonText] = useState('');
+
   const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
   const [selectedService, setSelectedService] = useState<string | null>(null);
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -528,7 +528,13 @@ export default function Services() {
   const exportService = (id: string) => {
     const svc = data[id];
     if (!svc) return;
-    const blob = new Blob([JSON.stringify(svc, null, 2)], { type: 'application/json' });
+    // Strip Exchange metadata so exported JSON is directly reimportable
+    const clean = { ...svc };
+    delete clean.owner;
+    delete clean.lastUpdated;
+    delete clean.organization;
+    delete clean.name;
+    const blob = new Blob([JSON.stringify(clean, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -574,7 +580,6 @@ export default function Services() {
     setImportOpen(true);
     setImportOrg(pageOrg);
     setImportMode('paste');
-    setImportJsonText('');
     importForm.resetFields();
   };
 
@@ -585,7 +590,6 @@ export default function Services() {
     const reader = new FileReader();
     reader.onload = (ev) => {
       const text = ev.target?.result as string;
-      setImportJsonText(text);
       importForm.setFieldsValue({ json: text });
     };
     reader.readAsText(file);
@@ -1024,18 +1028,11 @@ export default function Services() {
               />
             </Form.Item>
           )}
-          {importMode === 'upload' ? (
-            <Form.Item label={t('upload-json-file')}>
-              <input type="file" accept=".json" onChange={handleFileSelect} />
-            </Form.Item>
-          ) : null}
+          <Form.Item label={t('upload-json-file')}>
+            <input type="file" accept=".json" onChange={handleFileSelect} />
+          </Form.Item>
           <Form.Item name="json" label={t('service-definition-json')} rules={[{ required: true, message: t('please-enter-service-definition-json') }]}>
-            <TextArea
-              rows={12}
-              value={importMode === 'upload' ? importJsonText : undefined}
-              onChange={(e) => { if (importMode === 'paste') setImportJsonText(e.target.value); }}
-              placeholder={defaultServiceJSON}
-            />
+            <TextArea rows={12} placeholder={defaultServiceJSON} />
           </Form.Item>
         </Form>
       </Modal>
