@@ -97,6 +97,8 @@ NereidAI/
 
 ## 🚦 Getting Started (Local Development)
 
+> For full installation details — environment variables, PostgreSQL setup, Exchange configuration, and first-time setup — see **[INSTALL.md](INSTALL.md)**.
+
 ### 1. Install Dependencies
 
 ```bash
@@ -109,7 +111,7 @@ npm install
     ```bash
     npm run dev:backend
     ```
-    Listens on `http://localhost:3001`. Requires a reachable Redis (or falls back to in-memory) and an Exchange endpoint.
+    Listens on `http://localhost:3001`. Requires `DATABASE_URL` (PostgreSQL) and optionally Redis. See [INSTALL.md](INSTALL.md) for environment variable reference.
 
 *   **Start Vite Frontend**:
     ```bash
@@ -153,7 +155,7 @@ make docker-up
 
 - Open **https://&lt;host&gt;:8443/** (HTTP on `8090` redirects to HTTPS).
 - The first launch auto-generates a self-signed certificate at `/etc/nginx/ssl`. For production, mount real certificates there instead (see below).
-- First-time start requires visiting the UI to complete the **Setup** form (create admin account + Exchange connection).
+- First-time start requires visiting the UI to complete the **Setup** form (create admin account + Exchange connection). See **[INSTALL.md § First-time Exchange configuration](INSTALL.md#4-first-time-exchange-configuration-setup-form)** for details.
 
 ### Backend Environment Variables
 
