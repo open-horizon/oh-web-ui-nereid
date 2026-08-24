@@ -40,7 +40,7 @@ The Nginx front end terminates TLS and reverse-proxies `/api` to the backend. Po
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | `3001` | BFF listen port |
-| `DATABASE_URL` | — | **Required.** PostgreSQL connection string (e.g. `postgres://nereid:nereidpass@postgres:5432/nereid`) |
+| `DATABASE_URL` | — | **Required.** PostgreSQL connection string for the BFF's **own** database (e.g. `postgres://nereid:nereidpass@postgres:5432/nereid`). Never point this at the Exchange's database — see [DATABASE.md](DATABASE.md) |
 | `REDIS_URL` | — | Redis connection string (optional; when unset uses in-memory session store) |
 | `SESSION_TTL` | `86400` | Session idle lifetime (seconds, default 24h) |
 | `SESSION_ABS_TTL` | `28800` | Session absolute timeout (seconds, default 8h) |

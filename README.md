@@ -247,6 +247,7 @@ A `Makefile` is provided to speed up common workflows.
 - **Code of Conduct**: see [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 - **Security Policy**: see [SECURITY.md](SECURITY.md) (please report vulnerabilities privately)
 - **Production Guide**: see [docs/PRODUCTION.md](docs/PRODUCTION.md)
+- **Database**: see [docs/DATABASE.md](docs/DATABASE.md) (schema, `DATABASE_URL` setup, troubleshooting)
 
 ---
 
