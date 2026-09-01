@@ -1,12 +1,92 @@
+#
+# Local docker build stack (test environment) — SEPARATE from the production
+# docker-compose.yaml (ghcr images). Every resource is isolated from prod:
+#   - unique container names (suffix "-dev")
+#   - unique host ports (frontend :8091, pg :5434)
+#   - unique volumes / network created by the "nereid-dev" project name.
+#
+# Use via:  make docker-dev-up / docker-dev-down / ...
+# These define their own redis + postgres + locally built backend/frontend.
+#
 services:
+  redis:
+    container_name: open-horizon-exchangeui-redis-dev
+    image: redis:6.2.2-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis-data-dev:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  postgres:
+    container_name: open-horizon-exchangeui-postgres-dev
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_DB=nereid
+      - POSTGRES_USER=nereid
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-nereidpass}
+    volumes:
+      - postgres-data-dev:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nereid -d nereid"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   open-horizon-exchangeui-backend:
+    container_name: open-horizon-exchangeui-backend-dev
     build:
       context: .
       target: backend
     image: nereid-exchangeui-backend:latest
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=development
+      - PORT=3001
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgres://nereid:${POSTGRES_PASSWORD:-nereidpass}@postgres:5432/nereid
+      - SESSION_TTL=86400
+      - SESSION_ABS_TTL=28800
+      - SESSION_ENC_KEY=${SESSION_ENC_KEY:-}
+    volumes:
+      - nereid-logs-dev:/app/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3001/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
   open-horizon-exchangeui-frontend:
+    container_name: open-horizon-exchangeui-frontend-dev
     build:
       context: .
       target: frontend
     image: nereid-exchangeui-frontend:latest
+    restart: unless-stopped
+    ports:
+      - "8091:80"
+    volumes:
+      # Override the prod nginx config (which proxies to the prod *backend* and
+      # forces TLS) with a dev variant that proxies to this dev backend over HTTP.
+      - ./docker/nginx.dev.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      open-horizon-exchangeui-backend:
+        condition: service_healthy
+
+volumes:
+  nereid-logs-dev:
+  redis-data-dev:
+  postgres-data-dev:

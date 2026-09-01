@@ -48,6 +48,28 @@ function generateCaptcha(): { a: number; b: number; operator: string; answer: nu
   return { a, b, operator, answer };
 }
 
+// Generate a strong random password (>= 12 chars) with mixed character classes.
+function generateStrongPassword(): string {
+  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const lower = 'abcdefghijkmnopqrstuvwxyz';
+  const digits = '23456789';
+  const symbols = '!@#$%^&*()-_=+[]{};:,.<>?';
+  const all = upper + lower + digits + symbols;
+  const rand = (n: number) => Math.floor(crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32 * n);
+  const length = 16;
+  // Guarantee at least one of each class, then fill the rest from all chars.
+  const pw: string[] = [upper[rand(upper.length)], lower[rand(lower.length)], digits[rand(digits.length)], symbols[rand(symbols.length)]];
+  for (let i = pw.length; i < length; i++) {
+    pw.push(all[rand(all.length)]);
+  }
+  // Shuffle to avoid a predictable class prefix.
+  for (let i = pw.length - 1; i > 0; i--) {
+    const j = rand(i + 1);
+    [pw[i], pw[j]] = [pw[j], pw[i]];
+  }
+  return pw.join('');
+}
+
 export default function Login() {
   const { t, lang, setLang } = useT();
   const navigate = useNavigate();
@@ -243,7 +265,51 @@ export default function Login() {
       <Form.Item label={t('admin-username')} name="adminUser" rules={[{ required: true, message: t('please-enter-admin-username') }]}>
         <Input placeholder="admin" />
       </Form.Item>
-      <Form.Item label={t('admin-password')} name="adminPassword" rules={[{ required: true, message: t('please-enter-admin-password') }]}>
+      <Form.Item
+        label={t('admin-password')}
+        name="adminPassword"
+        rules={[
+          { required: true, message: t('please-enter-admin-password') },
+          { min: 8, message: t('password-too-short') },
+        ]}
+      >
+        <Input.Password
+          placeholder="********"
+          addonAfter={
+            <Button
+              type="text"
+              size="small"
+              icon={<ReloadOutlined />}
+              style={{ color: '#1677ff' }}
+              onClick={() => {
+                const pwd = generateStrongPassword();
+                setupForm.setFieldValue('adminPassword', pwd);
+                setupForm.setFieldValue('confirmAdminPassword', pwd);
+                message.success(t('password-generated'));
+              }}
+              title={t('generate-password')}
+            >
+              {t('generate-password')}
+            </Button>
+          }
+        />
+      </Form.Item>
+      <Form.Item
+        label={t('confirm-password')}
+        name="confirmAdminPassword"
+        dependencies={['adminPassword']}
+        rules={[
+          { required: true, message: t('please-re-enter-password') },
+          ({ getFieldValue }) => ({
+            validator(_, value) {
+              if (!value || getFieldValue('adminPassword') === value) {
+                return Promise.resolve();
+              }
+              return Promise.reject(new Error(t('passwords-do-not-match')));
+            },
+          }),
+        ]}
+      >
         <Input.Password placeholder="********" />
       </Form.Item>
       <Form.Item label={t('exchange-url')} name="baseURL" rules={[{ required: true, message: t('please-enter-exchange-url') }]}>
