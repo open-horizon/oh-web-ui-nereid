@@ -76,13 +76,14 @@ NereidAI/
 │   ├── index.cjs           # Backend entrypoint (routes, auth, Redis session, proxying)
 │   └── sign-utils.cjs      # Cryptographic utils (RSA-PSS SHA-256 generator/signer)
 ├── docker/
-│   └── nginx-entrypoint.sh # Generates self-signed TLS cert if none is mounted
+│   ├── nginx-entrypoint.sh # Generates self-signed TLS cert if none is mounted
+│   └── nginx.dev.conf      # Nginx config for the local docker-dev-* stack
 ├── deploy/                 # Open Horizon Hub & Agbot Deployment Templates
 ├── docs/                   # Documentation and API specs (openapi.yaml)
 ├── nginx.conf              # Nginx TLS + reverse-proxy + security headers
 ├── Dockerfile              # Multi-stage: backend runtime + nginx frontend
 ├── docker-compose.yaml     # Production compose (ghcr.io images, redis + postgres)
-├── docker-compose.dev.yaml # Dev override: local build instead of ghcr pull
+├── docker-compose.dev.yaml # Isolated local-build dev stack (project "nereid-dev")
 ├── Makefile                # Build, dev, docker helpers
 ├── scripts/                # Offline image export/load helpers
 ├── .github/                # CI (ci.yml), publish (publish.yml), dependabot, templates
@@ -109,17 +110,27 @@ npm install
 
 ### 2. Run the Development Servers
 
+Use `make dev-all` to start the whole stack (PostgreSQL container + backend + frontend) with one command. It is idempotent and **kills any existing dev servers** before starting, so re-running it is safe:
+
+```bash
+make dev-all
+```
+
+Or start each piece individually:
+
 *   **Start BFF Proxy Server**:
     ```bash
-    npm run dev:backend
+    make dev-backend   # or: npm run dev:backend
     ```
     Listens on `http://localhost:3001`. Requires `DATABASE_URL` (PostgreSQL) and optionally Redis. See [INSTALL.md](INSTALL.md) for environment variable reference.
 
 *   **Start Vite Frontend**:
     ```bash
-    npm run dev
+    make dev-frontend   # or: npm run dev
     ```
     Frontend requests to `/api/*` are proxied to the BFF at `http://localhost:3001`.
+
+Stop everything with `make dev-stop` (keeps the dev database) or `make dev-clean` (also removes build artifacts and the dev database).
 
 > **Note**: In production the front end is served by Nginx over HTTPS (see Docker Deployment). Local dev uses plain HTTP and the browser dev server.
 
@@ -134,7 +145,12 @@ The project ships a multi-stage `Dockerfile` and two Compose files. Choose your 
 | **Production** (pull) | `make docker-up` | Pulls from `ghcr.io/nereidai/*` |
 | **Development** (build) | `make docker-dev-up` | Builds locally from source |
 
-Services:
+> The `docker-dev-*` stack is **fully isolated** from production: it runs under a
+> separate Compose project (`nereid-dev`), uses its own containers (`*-dev` suffix),
+> its own volumes, and its own postgres (`127.0.0.1:5434`) — so `docker-dev-up` and
+> `docker-up` can run side by side without colliding, including their databases.
+
+Services (production compose):
 
 | Service | Image | Purpose | Port |
 |---|---|---|---|
@@ -142,6 +158,10 @@ Services:
 | `postgres` | `postgres:16-alpine` | Database for BFF (audit, settings, users) | internal |
 | `open-horizon-exchangeui-backend` | ghcr or local | BFF API proxy | `3001` (internal) |
 | `open-horizon-exchangeui-frontend` | ghcr or local | Nginx + static assets + TLS | `8090` (HTTP→HTTPS), `8443` (HTTPS) |
+
+Dev stack (`docker-dev-*`): the frontend is served over plain HTTP on `8091`, and
+postgres is exposed on `127.0.0.1:5434`; the backend/redis keep default internal
+ports, so neither collides with production.
 
 ### Build & Launch
 
@@ -156,8 +176,9 @@ make docker-up
 ```
 
 - Open **https://&lt;host&gt;:8443/** (HTTP on `8090` redirects to HTTPS).
+- For the local `docker-dev-*` stack, open **http://&lt;host&gt;:8091/** (plain HTTP, no TLS).
 - The first launch auto-generates a self-signed certificate at `/etc/nginx/ssl`. For production, mount real certificates there instead (see below).
-- First-time start requires visiting the UI to complete the **Setup** form (create admin account + Exchange connection). See **[INSTALL.md § First-time Exchange configuration](INSTALL.md#4-first-time-exchange-configuration-setup-form)** for details.
+- First-time start requires visiting the UI to complete the **Setup** form (create admin account + Exchange connection). The Setup form includes a **random strong-password generator** and **confirm-password** validation. See **[INSTALL.md § First-time Exchange configuration](INSTALL.md#4-first-time-exchange-configuration-setup-form)** for details.
 
 ### Backend Environment Variables
 
@@ -231,15 +252,30 @@ A `Makefile` is provided to speed up common workflows.
 
 | Command | Description |
 |---|---|
+| **Local Development (npm)** | |
 | `make install` | Install npm packages locally |
 | `make build` | Compile and build the React app to `dist/` |
-| `make dev-backend`| Run backend BFF in development mode |
-| `make dev-frontend`| Run frontend Vite in development mode |
-| `make docker-up` | Pull GHCR images & start containers (production) |
-| `make docker-down` | Stop and remove production containers |
-| `make docker-dev-build`| Build Docker images from local source |
-| `make docker-dev-up` | Build (if needed) & start containers from local source |
-| `make docker-dev-down` | Stop and remove local containers |
+| `make dev-pg` | Start a dedicated PostgreSQL for the BFF (idempotent), writes `.env` |
+| `make dev-backend` | Run the backend BFF in development mode (kills any existing one first) |
+| `make dev-frontend` | Run the Vite frontend dev server (kills any existing one first) |
+| `make dev-all` | (Re)start pg + backend + frontend with one command |
+| `make dev-stop` | Stop backend & frontend & the dev database (keeps pg data) |
+| `make dev-clean` | Stop everything + remove build artifacts (`dist/`) and the dev database |
+| **Docker (ghcr.io images — production)** | |
+| `make docker-up` | Pull GHCR images & start production containers |
+| `make docker-down` | Stop and remove production containers (keeps data volumes) |
+| `make docker-clean` | Stop and remove containers **and** their data volumes |
+| `make docker-logs` | Tail production container logs |
+| `make docker-ps` | Show production stack status |
+| **Docker (local build — development/test, isolated project `nereid-dev`)** | |
+| `make docker-dev-build` | Build Docker images from local source |
+| `make docker-dev-up` | Build (if needed) & start the local dev stack (isolated from prod) |
+| `make docker-dev-down` | Stop the local dev stack (keeps data volumes) |
+| `make docker-dev-clean` | Stop the local dev stack **and** remove data volumes |
+| `make docker-dev-logs` | Tail local dev stack logs |
+| `make docker-dev-ps` | Show local dev stack status |
+| `make docker-build` | Alias for `docker-dev-build` |
+| **Maintenance** | |
 | `make clean` | Delete temporary files, `dist/`, and `node_modules/` |
 
 ---

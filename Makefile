@@ -16,7 +16,7 @@ ENV_FILE = .env
 # out of the box without the caller having to set DATABASE_URL manually.
 DATABASE_URL_DEV = postgres://$(PG_USER):$(PG_PASS)@127.0.0.1:$(PG_HOST_PORT)/$(PG_DB)
 
-.PHONY: help install build dev-pg dev-backend dev-frontend dev-all dev-stop dev-clean docker-build docker-up docker-down docker-down-clean docker-logs docker-ps docker-dev-up docker-dev-build docker-dev-down docker-dev-down-clean docker-dev-logs docker-dev-ps clean lint test images-export images-load
+.PHONY: help install build dev-pg dev-backend dev-frontend dev-all dev-stop dev-clean docker-build docker-up docker-down docker-clean docker-logs docker-ps docker-dev-up docker-dev-build docker-dev-down docker-dev-clean docker-dev-logs docker-dev-ps clean lint test images-export images-load
 
 # Default target
 help:
@@ -35,7 +35,7 @@ help:
 	@echo "Docker (ghcr.io images - production):"
 	@echo "  make docker-up     - Pull & start containers from GitHub Container Registry"
 	@echo "  make docker-down   - Stop and remove containers (keeps data volumes)"
-	@echo "  make docker-down-clean - Stop and remove containers AND data volumes"
+	@echo "  make docker-clean - Stop and remove containers AND data volumes"
 	@echo "  make docker-logs   - Tail container logs"
 	@echo "  make docker-ps     - Show production stack status"
 	@echo ""
@@ -43,7 +43,7 @@ help:
 	@echo "  make docker-dev-build - Build Docker images from local source"
 	@echo "  make docker-dev-up    - Build & start the local dev stack (isolated from prod)"
 	@echo "  make docker-dev-down  - Stop local dev stack (keeps data volumes)"
-	@echo "  make docker-dev-down-clean - Stop local dev stack AND remove data volumes"
+	@echo "  make docker-dev-clean - Stop local dev stack AND remove data volumes"
 	@echo "  make docker-dev-logs  - Tail local dev stack logs"
 	@echo "  make docker-dev-ps    - Show local dev stack status"
 	@echo ""
@@ -153,7 +153,7 @@ docker-down:
 	docker compose -f $(COMPOSE_FILE) down
 
 # Stop and remove containers AND their data volumes (postgres/redis data lost).
-docker-down-clean:
+docker-clean:
 	docker compose -f $(COMPOSE_FILE) down -v
 
 docker-logs:
@@ -181,7 +181,7 @@ docker-dev-down:
 	docker compose -p nereid-dev -f $(COMPOSE_DEV_FILE) down
 
 # Stop dev containers AND remove dev data volumes.
-docker-dev-down-clean:
+docker-dev-clean:
 	docker compose -p nereid-dev -f $(COMPOSE_DEV_FILE) down -v
 
 docker-dev-logs:
