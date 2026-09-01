@@ -8,6 +8,8 @@ Nereid Exchange UI is a modern, lightweight Web Management Portal and BFF (Backe
 
 It provides an intuitive visual interface to simplify the service lifecycle and edge resource management in Open Horizon. With NereidAI, operators can seamlessly manage edge nodes, service definitions, deployment patterns, deployment policies, management policies, Agreement Bots (AgBots), and High Availability (HA) node groups.
 
+![screenshot](./docs/screenshot.png)
+
 ---
 
 ## 🚀 Key Features
@@ -228,7 +230,7 @@ To run directly from GHCR (production), use `make docker-up` — this pulls the 
 A `Makefile` is provided to speed up common workflows.
 
 | Command | Description |
-|---|---|---|
+|---|---|
 | `make install` | Install npm packages locally |
 | `make build` | Compile and build the React app to `dist/` |
 | `make dev-backend`| Run backend BFF in development mode |
