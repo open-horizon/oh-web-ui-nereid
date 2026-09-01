@@ -1,6 +1,9 @@
 COMPOSE_FILE = docker-compose.yaml
 COMPOSE_DEV_FILE = docker-compose.dev.yaml
 
+# Prefer docker; fall back to podman if docker is not in PATH.
+DOCKER := $(shell command -v docker 2>/dev/null || command -v podman 2>/dev/null)
+
 # Local dev PostgreSQL (used by dev-pg / dev-all). Dedicated to the BFF so it never
 # collides with the Exchange or EdgeX databases. Listens on a non-default host port.
 PG_CONTAINER = nereid-dev-pg
@@ -66,12 +69,13 @@ build:
 	npm run build
 
 dev-pg:
-	@if docker ps -a --format '{{.Names}}' | grep -qx '$(PG_CONTAINER)'; then \
+	@if [ -z "$(DOCKER)" ]; then echo "ERROR: neither docker nor podman found in PATH" >&2; exit 1; fi
+	@if $(DOCKER) ps -a --format '{{.Names}}' | grep -qx '$(PG_CONTAINER)'; then \
 		echo ">> $(PG_CONTAINER) exists, starting if stopped..."; \
-		docker start $(PG_CONTAINER) >/dev/null 2>&1 || true; \
+		$(DOCKER) start $(PG_CONTAINER) >/dev/null 2>&1 || true; \
 	else \
 		echo ">> Creating $(PG_CONTAINER)..."; \
-		docker run -d --name $(PG_CONTAINER) \
+		$(DOCKER) run -d --name $(PG_CONTAINER) \
 			-e POSTGRES_DB=$(PG_DB) \
 			-e POSTGRES_USER=$(PG_USER) \
 			-e POSTGRES_PASSWORD=$(PG_PASS) \
@@ -80,12 +84,16 @@ dev-pg:
 	fi
 	@echo ">> Waiting for PostgreSQL on 127.0.0.1:$(PG_HOST_PORT)..."
 	@for i in $$(seq 1 30); do \
-		if docker exec $(PG_CONTAINER) pg_isready -U $(PG_USER) -d $(PG_DB) >/dev/null 2>&1; then break; fi; \
+		if $(DOCKER) exec $(PG_CONTAINER) pg_isready -U $(PG_USER) -d $(PG_DB) >/dev/null 2>&1; then break; fi; \
 		sleep 1; \
 	done
 	@if [ ! -f $(ENV_FILE) ]; then cp $(ENV_FILE).example $(ENV_FILE); fi
 	@if grep -q '^DATABASE_URL=' $(ENV_FILE); then \
-		sed -i 's#^DATABASE_URL=.*#DATABASE_URL=$(DATABASE_URL_DEV)#' $(ENV_FILE); \
+		if sed --version 2>/dev/null | grep -q GNU; then \
+			sed -i 's#^DATABASE_URL=.*#DATABASE_URL=$(DATABASE_URL_DEV)#' $(ENV_FILE); \
+		else \
+			sed -i '' 's#^DATABASE_URL=.*#DATABASE_URL=$(DATABASE_URL_DEV)#' $(ENV_FILE); \
+		fi; \
 	else \
 		echo 'DATABASE_URL=$(DATABASE_URL_DEV)' >> $(ENV_FILE); \
 	fi
@@ -96,7 +104,7 @@ dev-backend:
 	@pkill -f 'server/index\.cjs' 2>/dev/null || true
 	@sleep 1
 	@echo ">> Starting backend (background)..."
-	@setsid nohup npm run dev:backend > /tmp/nereid-backend.log 2>&1 < /dev/null & \
+	@nohup npm run dev:backend > /tmp/nereid-backend.log 2>&1 < /dev/null & \
 	  echo "   backend pid $$!"
 	@echo ">> Backend starting, logs: /tmp/nereid-backend.log"
 
@@ -105,7 +113,7 @@ dev-frontend:
 	@pkill -f 'node_modules/\.bin/vite' 2>/dev/null || true
 	@sleep 1
 	@echo ">> Starting frontend (background)..."
-	@setsid nohup npm run dev > /tmp/nereid-frontend.log 2>&1 < /dev/null & \
+	@nohup npm run dev > /tmp/nereid-frontend.log 2>&1 < /dev/null & \
 	  echo "   frontend pid $$!"
 	@echo ">> Frontend starting, logs: /tmp/nereid-frontend.log"
 
@@ -122,8 +130,8 @@ dev-stop:
 	@echo ">> Stopping dev servers..."
 	@pkill -f 'server/index\.cjs' 2>/dev/null || true
 	@pkill -f 'node_modules/\.bin/vite' 2>/dev/null || true
-	@if docker ps -a --format '{{.Names}}' | grep -qx '$(PG_CONTAINER)'; then \
-		docker stop $(PG_CONTAINER) >/dev/null 2>&1; \
+	@if $(DOCKER) ps -a --format '{{.Names}}' | grep -qx '$(PG_CONTAINER)'; then \
+		$(DOCKER) stop $(PG_CONTAINER) >/dev/null 2>&1; \
 		echo ">> Stopped $(PG_CONTAINER)"; \
 	else \
 		echo ">> $(PG_CONTAINER) not found"; \
@@ -136,8 +144,8 @@ dev-clean:
 	@echo ">> Stopping dev servers..."
 	@pkill -f 'server/index\.cjs' 2>/dev/null || true
 	@pkill -f 'node_modules/\.bin/vite' 2>/dev/null || true
-	@if docker ps -a --format '{{.Names}}' | grep -qx '$(PG_CONTAINER)'; then \
-		docker rm -f $(PG_CONTAINER) >/dev/null 2>&1; \
+	@if $(DOCKER) ps -a --format '{{.Names}}' | grep -qx '$(PG_CONTAINER)'; then \
+		$(DOCKER) rm -f $(PG_CONTAINER) >/dev/null 2>&1; \
 	fi
 	@echo ">> Removing build artifacts..."
 	@rm -rf dist

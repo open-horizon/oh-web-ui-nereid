@@ -164,6 +164,30 @@ production, mount real certificates there instead.
 
 ---
 
+## 7. Verifying the Exchange connection
+
+After setup, the Exchange version string is stored in `exchange_config.version` and
+returned in the login response. You can also verify directly:
+
+```bash
+curl -u root/root http://<exchange-host>:3090/v1/admin/version
+```
+
+---
+
+## Quick reference: local lab credentials
+
+| Item | Value |
+|---|---|
+| Exchange URL | `http://192.168.123.133:3090` |
+| Exchange credentials | `root/root:KAAqPww59j57tGiqcrNtK6jNrIlLkL` |
+| PostgreSQL | `127.0.0.1:5432` (container `pg-nereid`) |
+| Agbot | `yiqisoft/agbot` on Exchange server |
+
+> These are lab-only defaults. Replace with real credentials in any non-development environment.
+
+---
+
 ## Troubleshooting
 
 - **`/api/me` returns `401 {"msg":"Not logged in"}` after login** — the browser did
