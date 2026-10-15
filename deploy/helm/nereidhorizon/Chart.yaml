@@ -1,0 +1,20 @@
+# Copyright (C) 2026 YIQISOFT
+# SPDX-License-Identifier: Apache-2.0
+#
+# Helm chart for the NereidAI Open-Horizon Exchange UI. Deploys the Express BFF
+# backend, the nginx-served React frontend and a dedicated PostgreSQL instance
+# (required by the BFF; never share it with the Exchange's own database).
+apiVersion: v2
+# Must stay lowercase: Rancher's --generate-name builds the release name as
+# "<chart>-0-<timestamp>" and Helm rejects release names containing capitals.
+name: nereidhorizon
+description: NereidAI Open-Horizon Exchange UI (BFF backend + nginx frontend + PostgreSQL)
+type: application
+version: 0.0.1
+appVersion: "v0.0.1"
+keywords:
+  - open-horizon
+  - edge
+  - nereidai
+maintainers:
+  - name: YIQISOFT

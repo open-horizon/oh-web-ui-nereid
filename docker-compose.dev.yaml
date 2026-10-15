@@ -6,22 +6,9 @@
 #   - unique volumes / network created by the "nereid-dev" project name.
 #
 # Use via:  make docker-dev-up / docker-dev-down / ...
-# These define their own redis + postgres + locally built backend/frontend.
+# These define their own postgres + locally built backend/frontend.
 #
 services:
-  redis:
-    container_name: open-horizon-exchangeui-redis-dev
-    image: redis:6.2.2-alpine
-    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
-    volumes:
-      - redis-data-dev:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-
   postgres:
     container_name: open-horizon-exchangeui-postgres-dev
     image: postgres:16-alpine
@@ -50,16 +37,21 @@ services:
     environment:
       - NODE_ENV=development
       - PORT=3001
-      - REDIS_URL=redis://redis:6379
       - DATABASE_URL=postgres://nereid:${POSTGRES_PASSWORD:-nereidpass}@postgres:5432/nereid
       - SESSION_TTL=86400
       - SESSION_ABS_TTL=28800
-      - SESSION_ENC_KEY=${SESSION_ENC_KEY:-}
+      # 32-byte (64 hex) master key for encrypting sessions at rest.
+      - SESSION_ENC_KEY=${SESSION_ENC_KEY:?SESSION_ENC_KEY is required (64 hex chars)}
+      # Optional OpenID Connect SSO; unset OIDC_ISSUER to disable.
+      - OIDC_ISSUER=${OIDC_ISSUER:-}
+      - OIDC_CLIENT_ID=${OIDC_CLIENT_ID:-}
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET:-}
+      - OIDC_REDIRECT_URI=${OIDC_REDIRECT_URI:-}
+      - OIDC_LOCAL_LOGIN_ENABLED=${OIDC_LOCAL_LOGIN_ENABLED:-true}
+      - OIDC_INSECURE_SKIP_VERIFY=${OIDC_INSECURE_SKIP_VERIFY:-false}
     volumes:
       - nereid-logs-dev:/app/logs
     depends_on:
-      redis:
-        condition: service_healthy
       postgres:
         condition: service_healthy
     healthcheck:
@@ -88,5 +80,4 @@ services:
 
 volumes:
   nereid-logs-dev:
-  redis-data-dev:
   postgres-data-dev:

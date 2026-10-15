@@ -5,10 +5,11 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Table, Button, Space, Typography, message, Modal, Form, Input, Select, Tag, Descriptions, Checkbox,
+  Table, Button, Space, Typography, message, Modal, Form, Input, Select, Tag, Descriptions, Checkbox, Popconfirm,
 } from 'antd';
 import {
   ReloadOutlined, DeleteOutlined, PlusOutlined, UserOutlined, EditOutlined, InfoCircleOutlined, KeyOutlined,
+  StopOutlined, CheckCircleOutlined,
 } from '@ant-design/icons';
 import { getConfig } from '../api/config';
 import { BffUserAPI, BffUser } from '../api/bffUsers';
@@ -124,11 +125,12 @@ export default function BffUsers() {
     setEditOpen(true);
   };
 
-  const handleDelete = (username: string, org?: string | null) => {
+  const handleDelete = (user: BffUser) => {
+    const { username, org } = user;
     let div: HTMLDivElement | null = null;
     Modal.confirm({
       title: t('confirm-deletion') + ': ' + username + (org ? ` (${org})` : ''),
-      content: org ? (
+      content: org && user.authType !== 'oidc' ? (
         <div ref={(el) => { div = el; }}>
           <p>{t('are-you-sure-you-want-to-delete-this-user')}</p>
           <Checkbox
@@ -139,11 +141,13 @@ export default function BffUsers() {
             {t('also-delete-exchange-user')}
           </Checkbox>
         </div>
-      ) : null,
+      ) : (
+        <p>{t('are-you-sure-you-want-to-delete-this-user')}</p>
+      ),
       onOk: async () => {
         try {
           const delExchange = div?.dataset.deleteExchange === 'true';
-          await BffUserAPI.delete(username, org || undefined, delExchange);
+          await BffUserAPI.delete(user, delExchange);
           message.success(t('deleted'));
           load();
         } catch (err: any) {
@@ -153,8 +157,29 @@ export default function BffUsers() {
     });
   };
 
+  const handleToggleDisabled = async (user: BffUser) => {
+    try {
+      await BffUserAPI.setDisabled(user, !user.disabled);
+      message.success(t('updated'));
+      load();
+    } catch (err: any) {
+      message.error(err.message);
+    }
+  };
+
   const columns = [
-    { title: t('username'), dataIndex: 'username', key: 'username' },
+    {
+      title: t('username'),
+      dataIndex: 'username',
+      key: 'username',
+      render: (v: string, row: BffUser) => (
+        <Space size={4}>
+          {v}
+          {row.authType === 'oidc' && <Tag color="geekblue">{t('sso')}</Tag>}
+          {row.bootstrap && <Tag color="gold">{t('bootstrap')}</Tag>}
+        </Space>
+      ),
+    },
     {
       title: t('role'),
       dataIndex: 'role',
@@ -166,6 +191,20 @@ export default function BffUsers() {
       ),
     },
     { title: t('organization'), dataIndex: 'org', key: 'org', render: (v: string | null) => v || '—' },
+    {
+      title: t('email'),
+      dataIndex: 'email',
+      key: 'email',
+      render: (v: string | null) => v || '—',
+    },
+    {
+      title: t('status'),
+      dataIndex: 'disabled',
+      key: 'disabled',
+      render: (v: boolean | undefined) => (
+        <Tag color={v ? 'default' : 'green'}>{v ? t('disabled') : t('enabled')}</Tag>
+      ),
+    },
     {
       title: t('created'),
       dataIndex: 'createdAt',
@@ -182,17 +221,22 @@ export default function BffUsers() {
             <Button size="small" icon={<InfoCircleOutlined />} onClick={() => { setDetailUser(row); setDetailOpen(true); }}>
               {t('details')}
             </Button>
-            <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(row)}>
-              {t('edit')}
-            </Button>
+            {row.authType !== 'oidc' ? (
+              <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(row)}>
+                {t('edit')}
+              </Button>
+            ) : (
+              <Button
+                size="small"
+                icon={row.disabled ? <CheckCircleOutlined /> : <StopOutlined />}
+                onClick={() => handleToggleDisabled(row)}
+                disabled={isSelf}
+              >
+                {row.disabled ? t('enable') : t('disable')}
+              </Button>
+            )}
               {!isSelf && (
-                <Button danger size="small" icon={<DeleteOutlined />} onClick={() => {
-                  if (row.username === config.username && (!row.org || row.org === config.userOrg)) {
-                    message.warning(t('cannot-delete-yourself'));
-                    return;
-                  }
-                  handleDelete(row.username, row.org);
-                }}>
+                <Button danger size="small" icon={<DeleteOutlined />} onClick={() => handleDelete(row)}>
                   {t('delete')}
                 </Button>
               )}
@@ -223,7 +267,7 @@ export default function BffUsers() {
       <Text type="secondary">{t('manage-backend-for-frontend-user-accounts-and-roles')}</Text>
       <br /><br />
 
-      <Table rowKey={(r: BffUser) => `${r.username}::${r.org || ''}`} loading={loading} columns={columns} dataSource={data} pagination={{ pageSize: 10 }} size="middle" />
+      <Table rowKey={(r: BffUser) => `${r.username}::${r.org || ''}::${r.issuer || ''}`} loading={loading} columns={columns} dataSource={data} pagination={{ pageSize: 10 }} size="middle" />
 
       <Modal
         title={t('create-bff-user')}
@@ -372,6 +416,25 @@ export default function BffUsers() {
               </Tag>
             </Descriptions.Item>
             <Descriptions.Item label={t('organization')}>{detailUser.org || '—'}</Descriptions.Item>
+            <Descriptions.Item label={t('auth-type')}>
+              <Tag color={detailUser.authType === 'oidc' ? 'geekblue' : 'default'}>
+                {detailUser.authType === 'oidc' ? t('sso') : t('local')}
+              </Tag>
+            </Descriptions.Item>
+            {detailUser.email && (
+              <Descriptions.Item label={t('email')}>{detailUser.email}</Descriptions.Item>
+            )}
+            {detailUser.issuer && (
+              <Descriptions.Item label={t('issuer')}>{detailUser.issuer}</Descriptions.Item>
+            )}
+            {detailUser.subject && (
+              <Descriptions.Item label={t('subject')}>{detailUser.subject}</Descriptions.Item>
+            )}
+            <Descriptions.Item label={t('status')}>
+              <Tag color={detailUser.disabled ? 'default' : 'green'}>
+                {detailUser.disabled ? t('disabled') : t('enabled')}
+              </Tag>
+            </Descriptions.Item>
             <Descriptions.Item label={t('created')}>
               {detailUser.createdAt ? fmtTime(detailUser.createdAt) : '—'}
             </Descriptions.Item>

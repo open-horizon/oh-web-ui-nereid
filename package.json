@@ -14,7 +14,7 @@
     "@ant-design/icons": "^6.3.2",
     "antd": "^6.6.2",
     "express": "^5.2.1",
-    "ioredis": "^6.0.0",
+    "openid-client": "^5.7.1",
     "pg": "^8.23.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",

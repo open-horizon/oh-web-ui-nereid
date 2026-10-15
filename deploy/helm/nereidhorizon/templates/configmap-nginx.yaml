@@ -1,0 +1,84 @@
+{{- /*
+Copyright (C) 2026 YIQISOFT
+SPDX-License-Identifier: Apache-2.0
+
+nginx site config for the frontend container. The image ships the same config
+with the /api/ upstream hardcoded to the docker-compose service name and with
+an HTTP->HTTPS redirect; neither works in the cluster. Here Traefik terminates
+TLS at the edge, so nginx serves plain HTTP only and proxies /api/ to the
+in-cluster backend Service.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "nereidhorizon.fullname" . }}-nginx
+  labels:
+    {{- include "nereidhorizon.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name localhost;
+
+        root /usr/share/nginx/html;
+        index index.html;
+
+        # Security headers
+        add_header X-Frame-Options "DENY" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header Referrer-Policy "no-referrer" always;
+        add_header Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'" always;
+        add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+
+        # Serve static assets with cache headers
+        location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+            expires 1y;
+            add_header Cache-Control "public, immutable";
+            try_files $uri =404;
+        }
+
+        # Proxy API requests to backend (cookie is forwarded automatically)
+        location /api/ {
+            proxy_pass http://{{ include "nereidhorizon.backendSvcName" . }}:3001;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection 'upgrade';
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Agbot-Auth $http_x_agbot_auth;
+            proxy_set_header X-Root-Auth $http_x_root_auth;
+            proxy_cache_bypass $http_upgrade;
+            proxy_read_timeout 60s;
+            proxy_send_timeout 60s;
+        }
+
+        # NS ticket SSO callback. NS redirects the browser here with ?ticket=...;
+        # it must reach the backend rather than the SPA fallback. Prefix match
+        # (^~) also wins over the static-asset regex location.
+        location ^~ /auth/ns-callback {
+            proxy_pass http://{{ include "nereidhorizon.backendSvcName" . }}:3001;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_read_timeout 60s;
+            proxy_send_timeout 60s;
+        }
+
+        # SPA fallback: serve index.html for all non-API routes
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+
+        # Gzip compression
+        gzip on;
+        gzip_vary on;
+        gzip_min_length 1024;
+        gzip_proxied any;
+        gzip_types text/plain text/css text/xml text/javascript application/javascript application/xml application/json application/x-font-ttf font/opentype image/svg+xml;
+    }

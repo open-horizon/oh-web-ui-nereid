@@ -5,19 +5,26 @@ info:
     BFF (Backend-For-Frontend) proxy for the Open Horizon Exchange API.
 
     **Authentication:**
-    - Session cookie (`nereid_sid`): HttpOnly, SameSite=Strict, Secure on HTTPS.
+    - Session cookie (`nereid_sid`): HttpOnly, SameSite=Lax, Secure on HTTPS.
     - CSRF protection: Mutating requests (POST/PUT/PATCH/DELETE) require both
       the `nereid_csrf` cookie and the `X-Csrf-Token` header with matching values.
-    - Public endpoints (health, setup-status, setup, login) do not require auth.
+    - Public endpoints (health, setup-status, setup, login, oidc) do not require auth.
     - Two BFF roles exist: `platform` (full access) and `partner` (read-only
       on Exchange resources + self-service API key management).
+    - Local password login may be disabled (`OIDC_LOCAL_LOGIN_ENABLED=false`);
+      the bootstrap admin can always sign in at `/login?local=1`.
+    - Generic OpenID Connect SSO (authorization code + PKCE) is available at
+      `/api/oidc/login` when `OIDC_ISSUER` is configured. Roles are derived
+      from a group claim (platform group + `nereidhorizon-partner-<org>`
+      prefixes); users are JIT-provisioned and identified by `(issuer, subject)`.
 
     **Data layer:**
-    - Local BFF users, Exchange config, API keys, and audit log are stored in
-      PostgreSQL (required).
+    - Local BFF users, Exchange config, API keys, audit log, and server-side
+      sessions are stored in PostgreSQL (required). Sessions are encrypted with
+      AES-256-GCM under `SESSION_ENC_KEY`.
     - Exchange credentials are stored once at the system level and shared by
       all sessions; users never supply Exchange credentials directly.
-  version: 2.1.0
+  version: 2.2.0
   contact:
     name: NereidAI
 
@@ -74,6 +81,15 @@ paths:
                   exchangeConfigured:
                     type: boolean
                     description: Exchange connection has been configured
+                  oidcEnabled:
+                    type: boolean
+                    description: OpenID Connect SSO is configured (OIDC_ISSUER set)
+                  oidcConfigured:
+                    type: boolean
+                    description: All required OIDC settings are present
+                  localLoginEnabled:
+                    type: boolean
+                    description: Local password login is permitted for regular users
 
   /api/setup:
     post:
@@ -130,12 +146,16 @@ paths:
   /api/login:
     post:
       tags: [Auth]
-      summary: BFF user login
+      summary: BFF user login (local password)
       description: |
         Authenticates against the local BFF user store. On success, sets the
         `nereid_sid` HttpOnly session cookie and the `nereid_csrf` cookie.
         The CSRF token is also returned in the JSON body for the SPA to use
         in the `X-Csrf-Token` header on mutating requests.
+
+        Rate limited: five failed attempts per (IP, username) within five
+        minutes lock further attempts with `429`. Returns `403` when local
+        login is disabled (only the bootstrap admin may still sign in).
       operationId: login
       requestBody:
         required: true
@@ -151,6 +171,9 @@ paths:
                 password:
                   type: string
                   example: admin123
+                org:
+                  type: string
+                  description: Optional bound org for partner accounts with duplicate usernames
       responses:
         '200':
           description: Login successful
@@ -181,6 +204,15 @@ paths:
                     type: string
                     nullable: true
                     description: Partner user's bound org (null for platform)
+                  availableOrgs:
+                    type: array
+                    items:
+                      type: string
+                    description: Orgs this session may operate on
+                  authType:
+                    type: string
+                    enum: [local, oidc]
+                    example: local
                   csrfToken:
                     type: string
                     description: CSRF token (also set as cookie)
@@ -188,12 +220,63 @@ paths:
           description: Exchange not configured
         '401':
           description: Invalid credentials
+        '403':
+          description: Account disabled, or local login disabled (use SSO or /login?local=1)
+        '429':
+          description: Too many failed attempts
+
+  /api/oidc/login:
+    get:
+      tags: [Auth]
+      summary: Start OpenID Connect SSO login
+      description: |
+        Redirects the browser to the IdP authorization endpoint using the
+        authorization-code flow with PKCE. `state`, `nonce`, and the PKCE
+        verifier are sealed in a short-lived `nereid_oidc` HttpOnly cookie.
+        Failures redirect to `/login?oidc_error=<code>`.
+      operationId: oidcLogin
+      responses:
+        '302':
+          description: Redirect to the IdP authorization endpoint (or back to /login?oidc_error=...)
+
+  /api/oidc/callback:
+    get:
+      tags: [Auth]
+      summary: OpenID Connect SSO callback
+      description: |
+        Exchanges the authorization code, validates the ID token, maps the
+        group claim to a BFF role, JIT-provisions or updates the federated
+        user, and issues the normal session cookies. On any failure it clears
+        the state cookie and redirects to `/login?oidc_error=<code>` where
+        `<code>` is one of: `state_missing`, `state_invalid`, `idp_denied`,
+        `callback_invalid`, `no_group`, `ambiguous_groups`,
+        `invalid_org_claim`, `unknown_org`, `email_unverified`,
+        `account_disabled`, `callback_failed`, `oidc_unavailable`,
+        `oidc_disabled`, `not_configured`.
+      operationId: oidcCallback
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirect to `/` on success, or `/login?oidc_error=<code>` on failure
 
   /api/logout:
     post:
       tags: [Auth]
       summary: Logout
-      description: Destroys the server-side session and clears cookies.
+      description: |
+        Destroys the server-side session and clears cookies. For OIDC sessions
+        the provider's end-session URL is returned so the SPA can also complete
+        RP-initiated logout upstream.
       operationId: logout
       security:
         - SessionCookie: []
@@ -209,6 +292,12 @@ paths:
                   ok:
                     type: boolean
                     example: true
+                  redirect:
+                    type: string
+                    nullable: true
+                    description: IdP end-session URL for OIDC sessions, else null
+        '403':
+          description: CSRF validation failed
 
   /api/me:
     get:
@@ -242,8 +331,58 @@ paths:
                   org:
                     type: string
                     nullable: true
+                  availableOrgs:
+                    type: array
+                    items:
+                      type: string
+                  authType:
+                    type: string
+                    enum: [local, oidc]
+                  email:
+                    type: string
+                    nullable: true
+                  csrfToken:
+                    type: string
         '401':
           description: Not authenticated
+
+  /api/switch-org:
+    post:
+      tags: [Auth]
+      summary: Switch effective org (partner multi-org)
+      description: |
+        Partner accounts granted multiple orgs via SSO groups may switch the
+        effective org. The target must be one of the orgs captured at last
+        login (`availableOrgs`). Platform accounts cannot switch.
+      operationId: switchOrg
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [org]
+              properties:
+                org:
+                  type: string
+                  example: acme
+      responses:
+        '200':
+          description: Org switched
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  orgId:
+                    type: string
+        '403':
+          description: Not a partner, or org not granted by SSO
 
   # =============================================================
   # Health
@@ -302,6 +441,25 @@ paths:
                         createdAt:
                           type: string
                           format: date-time
+                        email:
+                          type: string
+                          nullable: true
+                        issuer:
+                          type: string
+                          nullable: true
+                          description: OIDC issuer (null for local accounts)
+                        subject:
+                          type: string
+                          nullable: true
+                          description: OIDC subject (null for local accounts)
+                        disabled:
+                          type: boolean
+                        bootstrap:
+                          type: boolean
+                          description: The break-glass bootstrap admin
+                        authType:
+                          type: string
+                          enum: [local, oidc]
     post:
       tags: [Users]
       summary: Create BFF user
@@ -350,7 +508,11 @@ paths:
     delete:
       tags: [Users]
       summary: Delete BFF user
-      description: Platform only. Cannot delete yourself.
+      description: |
+        Platform only. Cannot delete yourself or the bootstrap admin. OIDC users
+        are identified by the `issuer`/`subject` query params; local users are
+        identified by `username` (+ optional `org`). Set `deleteExchangeUser=true`
+        to also delete the corresponding Exchange user (local partner accounts).
       operationId: deleteBffUser
       security:
         - SessionCookie: []
@@ -361,11 +523,35 @@ paths:
           required: true
           schema:
             type: string
+        - name: org
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Disambiguates cross-org duplicate local usernames
+        - name: issuer
+          in: query
+          required: false
+          schema:
+            type: string
+          description: OIDC issuer (with subject) to delete a federated user
+        - name: subject
+          in: query
+          required: false
+          schema:
+            type: string
+          description: OIDC subject (with issuer) to delete a federated user
+        - name: deleteExchangeUser
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: Also delete the matching Exchange user
       responses:
         '200':
           description: User deleted
         '400':
-          description: Cannot delete yourself
+          description: Cannot delete yourself or the bootstrap admin
         '404':
           description: User not found
     put:
@@ -438,6 +624,59 @@ paths:
       responses:
         '200':
           description: Password changed
+
+  /api/bff-users/{username}/disabled:
+    put:
+      tags: [Users]
+      summary: Enable/disable a BFF user
+      description: |
+        Platform only. Disabling is preferred over deletion for OIDC users
+        because deletion would be silently undone by JIT provisioning on the
+        next login. The bootstrap admin cannot be disabled. OIDC users are
+        identified by the `issuer`/`subject` query params; local users by
+        `username` (+ optional `org`).
+      operationId: setBffUserDisabled
+      security:
+        - SessionCookie: []
+        - CsrfToken: []
+      parameters:
+        - name: username
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: org
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: issuer
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: subject
+          in: query
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [disabled]
+              properties:
+                disabled:
+                  type: boolean
+      responses:
+        '200':
+          description: User updated
+        '400':
+          description: Cannot disable the bootstrap admin
+        '404':
+          description: User not found
 
   # =============================================================
   # Exchange Configuration (platform only)

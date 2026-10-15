@@ -1,22 +1,6 @@
 version: '3.8'
 
 services:
-  redis:
-    image: redis:6.2.2-alpine
-    container_name: open-horizon-exchangeui-redis
-    restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
-    volumes:
-      - redis-data:/data
-    networks:
-      - nereid-network
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-
   postgres:
     image: postgres:16-alpine
     container_name: open-horizon-exchangeui-postgres
@@ -43,18 +27,29 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3001
-      - REDIS_URL=redis://redis:6379
       - DATABASE_URL=postgres://nereid:${POSTGRES_PASSWORD:-nereidpass}@postgres:5432/nereid
       - SESSION_TTL=86400
       - SESSION_ABS_TTL=28800
-      # SESSION_ENC_KEY is the 32-byte master key (hex) used for AES-256-GCM encryption
-      # of Exchange credentials at rest. Override in production via secret/env file.
-      - SESSION_ENC_KEY=${SESSION_ENC_KEY:-}
+      # SESSION_ENC_KEY is the 32-byte master key (hex) used for AES-256-GCM
+      # encryption of session payloads at rest in PostgreSQL. REQUIRED: without
+      # it a random key is generated per boot and every session is lost on
+      # restart. Provide 64 hex chars.
+      - SESSION_ENC_KEY=${SESSION_ENC_KEY:?SESSION_ENC_KEY is required (64 hex chars)}
+      # Optional OpenID Connect single sign-on. Leave OIDC_ISSUER unset to
+      # disable SSO and use local password login only.
+      - OIDC_ISSUER=${OIDC_ISSUER:-}
+      - OIDC_CLIENT_ID=${OIDC_CLIENT_ID:-}
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET:-}
+      - OIDC_REDIRECT_URI=${OIDC_REDIRECT_URI:-}
+      - OIDC_SCOPES=${OIDC_SCOPES:-openid profile email}
+      - OIDC_ROLE_CLAIM=${OIDC_ROLE_CLAIM:-groups}
+      - OIDC_PLATFORM_GROUP=${OIDC_PLATFORM_GROUP:-nereidhorizon-platform}
+      - OIDC_PARTNER_GROUP_PREFIX=${OIDC_PARTNER_GROUP_PREFIX:-nereidhorizon-partner-}
+      - OIDC_LOCAL_LOGIN_ENABLED=${OIDC_LOCAL_LOGIN_ENABLED:-true}
+      - OIDC_INSECURE_SKIP_VERIFY=${OIDC_INSECURE_SKIP_VERIFY:-false}
     volumes:
       - nereid-logs:/app/logs
     depends_on:
-      redis:
-        condition: service_healthy
       postgres:
         condition: service_healthy
     networks:
@@ -85,7 +80,5 @@ networks:
 
 volumes:
   nereid-logs:
-
-  redis-data:
 
   postgres-data:

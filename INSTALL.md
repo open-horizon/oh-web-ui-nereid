@@ -21,9 +21,9 @@ to the Open Horizon Exchange REST API.
   dedicated to the BFF — never the Open Horizon Exchange's own database (both define
   a `users` table with incompatible shapes, and the BFF's startup migration would
   attempt to drop the Exchange's primary key). See [docs/DATABASE.md](docs/DATABASE.md).
-- **Redis** (optional). Used for session storage. If unset, the backend falls back to
-  an in-memory session store; all sessions are lost on restart. The BFF talks to the
-  Exchange over HTTP and never needs Exchange database credentials.
+  PostgreSQL also stores sessions, so **sessions survive backend restarts**.
+- **An optional OpenID Connect provider** for SSO. Set the `OIDC_*` variables to enable
+  it; leave `OIDC_ISSUER` unset to use only local password login.
 - **An Open Horizon Exchange** the BFF can reach over HTTP, with a **hub-level
   superuser** account (e.g. `root/root`) for first-time setup.
 
@@ -39,23 +39,64 @@ targets).
 |---|---|---|
 | `PORT` | `3001` | BFF listen port |
 | `DATABASE_URL` | — (required) | BFF's own PostgreSQL connection string |
-| `REDIS_URL` | `redis://redis:6379` | Redis connection string (optional; unset = in-memory sessions) |
-| `SESSION_TTL` | `1800` | Session idle lifetime in seconds (30 min) |
-| `SESSION_ENC_KEY` | _(auto-generated)_ | 32-byte master key as 64 hex chars for AES-256-GCM. Override in production to persist across restarts. |
+| `SESSION_TTL` | `86400` | Session idle lifetime in seconds (24 h) |
+| `SESSION_ABS_TTL` | `28800` | Absolute session lifetime in seconds (8 h) |
+| `SESSION_ENC_KEY` | _(generated per boot)_ | 32-byte master key as 64 hex chars for AES-256-GCM. **Set it** so sessions survive restarts. |
+| `OIDC_ISSUER` | _(unset)_ | OIDC issuer URL; unset disables SSO |
+| `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | — | OIDC client credentials |
+| `OIDC_REDIRECT_URI` | — | Public callback URL, e.g. `https://host/api/oidc/callback` |
+| `OIDC_SCOPES` | `openid profile email` | Requested scopes |
+| `OIDC_ROLE_CLAIM` | `groups` | Claim holding group membership |
+| `OIDC_PLATFORM_GROUP` | `nereidhorizon-platform` | Group granting the platform role |
+| `OIDC_PARTNER_GROUP_PREFIX` | `nereidhorizon-partner-` | Group prefix mapping to an Exchange org |
+| `OIDC_LOCAL_LOGIN_ENABLED` | `true` | Set `false` to disable local password login |
+| `OIDC_INSECURE_SKIP_VERIFY` | `false` | Skip TLS verification of the IdP (dev only) |
 
 Example `.env` (matching the local `make dev-pg` database):
 
 ```env
 PORT=3001
 DATABASE_URL=postgres://nereid:nereidpass@127.0.0.1:5433/nereid
-REDIS_URL=redis://redis:6379
-SESSION_TTL=1800
+SESSION_TTL=86400
 SESSION_ENC_KEY=
+# OIDC (optional)
+# OIDC_ISSUER=https://sso.example.com/auth/realms/nereidai
+# OIDC_CLIENT_ID=nereidhorizon
+# OIDC_CLIENT_SECRET=...
+# OIDC_REDIRECT_URI=https://nereidhorizon.example.com/api/oidc/callback
 ```
 
-> `SESSION_ENC_KEY` is optional. When empty, the server generates and persists a key in
-> `.session.key` (mode `0600`). In production, always set it via a secret so the key
-> survives restarts and is not auto-generated per host.
+> `SESSION_ENC_KEY` is optional in dev. When empty, the server generates and persists a
+> key in `logs/.session.key` (mode `0600`). In production always set it via a secret so
+> the key survives restarts and is not auto-generated per host.
+
+### 2.1 Single sign-on (OIDC)
+
+When `OIDC_ISSUER` is set, the login page shows a **Sign in with SSO** button. Roles are
+mapped from the `OIDC_ROLE_CLAIM` group claim:
+
+- Membership in `OIDC_PLATFORM_GROUP` → `platform` role.
+- Each `OIDC_PARTNER_GROUP_PREFIX<org>` group → a partner binding to Exchange org `<org>`
+  (org must match `^[a-z0-9][a-z0-9-]*$` and exist in the Exchange).
+
+OIDC logins are **fail-closed**: no matching group, conflicting platform+partner groups,
+a malformed org, an org that does not exist, an unverified email, or a disabled account
+all reject the login with a localized error. Federated users are JIT-provisioned and
+keyed by `(issuer, subject)` — never merged by username or email. Disabling a federated
+user in the BFF takes precedence over a later SSO login (disabling is preferred over
+deletion, which JIT provisioning would silently undo).
+
+Set `OIDC_LOCAL_LOGIN_ENABLED=false` to hide the password form for regular users. The
+bootstrap admin can always reach the password form at `/login?local=1` (break-glass).
+
+`OIDC_ROLE_CLAIM` may be a dotted path for nested claims; against Keycloak without a
+groups mapper use `realm_access.roles` and name the realm roles
+`nereidhorizon-platform` / `nereidhorizon-partner-<org>`.
+
+When the issuer's certificate comes from an internal CA, keep TLS verification on and
+point the backend at that CA with `NODE_EXTRA_CA_CERTS=/path/to/ca.pem` (compose/npm) or
+`oidc.caBundleSecret` in the Helm chart. `OIDC_INSECURE_SKIP_VERIFY=true` is for local
+development only.
 
 ---
 
@@ -155,12 +196,17 @@ production, mount real certificates there instead.
 
 ## 6. Sessions and security
 
-- The session id is an opaque random token in an `HttpOnly; Secure; SameSite` cookie.
+- The session id is an opaque random token in an `HttpOnly; Secure; SameSite=Lax` cookie.
 - Mutations require a CSRF double-submit token (`X-Csrf-Token` header + matching
   cookie) set during login.
 - Exchange `Basic` credentials are encrypted with AES-256-GCM before storage.
-- Without Redis, sessions are in-memory: **restarting the backend invalidates all
-  sessions and users must re-login.** Set `REDIS_URL` for persistent sessions.
+- Sessions live in PostgreSQL, so **restarting the backend does not invalidate them**
+  (provided `SESSION_ENC_KEY` is stable). Idle (`SESSION_TTL`) and absolute
+  (`SESSION_ABS_TTL`) timeouts still apply.
+- Local login is rate-limited: five failed attempts per (IP, username) within five
+  minutes lock further attempts.
+- OIDC sessions perform RP-initiated logout when the provider publishes an
+  `end_session_endpoint`.
 
 ---
 

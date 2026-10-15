@@ -1,0 +1,40 @@
+{{/*
+Copyright (C) 2026 YIQISOFT
+SPDX-License-Identifier: Apache-2.0
+
+Post-install guidance. The BFF serves a blank catalog until the Exchange
+connection is configured once via POST /api/setup, so point the operator at
+that step explicitly.
+*/}}
+NereidHorizon {{ .Chart.Version }} (app {{ .Chart.AppVersion }}) has been installed.
+
+1. Wait for the rollout:
+   kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "nereidhorizon.fullname" . }}-backend
+
+2. Open the UI:
+   https://{{ .Values.ingress.host }}
+
+3. First run only: configure the Exchange base URL with a hub-level account,
+   e.g. against a port-forward (kubectl -n {{ .Release.Namespace }} port-forward
+   svc/{{ include "nereidhorizon.fullname" . }}-backend 3001):
+
+   curl -X POST http://127.0.0.1:3001/api/setup \
+     -H 'Content-Type: application/json' \
+     -d '{"adminUser":"admin","adminPassword":"<bff-admin-password>","baseURL":"http://<exchange-host>:3090","user":"root/root","password":"<hub-admin-password>"}'
+
+   The base URL must NOT include the /v1 suffix; the BFF appends it.
+
+Images come from the private Harbor project hub.yiqisoft.cn/nereidai; the
+harbor-registry-secret is only created when registryCredentials.username is
+set at install time.
+{{- if .Values.oidc.enabled }}
+
+Single sign-on is enabled. Register the user groups on the IdP:
+  - {{ .Values.oidc.platformGroup }} (platform administrators)
+  - {{ .Values.oidc.partnerGroupPrefix }}<org> (one per Exchange org)
+{{- if not .Values.oidc.localLoginEnabled }}
+
+Local password login is disabled for regular users; the bootstrap admin can
+still sign in at https://{{ .Values.ingress.host }}/login?local=1.
+{{- end }}
+{{- end }}

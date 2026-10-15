@@ -1,0 +1,40 @@
+{{- /*
+Copyright (C) 2026 YIQISOFT
+SPDX-License-Identifier: Apache-2.0
+
+Edge ingress. Traefik performs the TLS edge with a certificate issued by the
+internal-ca cluster issuer; the backend nginx pod speaks plain HTTP, so no
+backend-protocol annotation is needed.
+*/ -}}
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "nereidhorizon.fullname" . }}
+  labels:
+    {{- include "nereidhorizon.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+  annotations:
+    cert-manager.io/cluster-issuer: internal-ca
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "nereidhorizon.fullname" . }}
+                port:
+                  number: 80
+{{- end }}

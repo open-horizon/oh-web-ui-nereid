@@ -1,0 +1,130 @@
+# Copyright (C) 2026 YIQISOFT
+# SPDX-License-Identifier: Apache-2.0
+#
+# Default deployment values for nereidhorizon. Images live in the private
+# Harbor project hub.yiqisoft.cn/nereidai; image tags default to
+# Chart.appVersion when left empty.
+
+# Pull secret created by templates/pull-secret.yaml from registryCredentials
+# below. Harbor project nereidai is private, so the secret is required.
+global:
+  imagePullSecrets:
+    - name: harbor-registry-secret
+
+# Credentials rendered into harbor-registry-secret. MUST be supplied at
+# install time (-f creds.yaml or --set), otherwise pulls from the private
+# Harbor project fail with ImagePullBackOff.
+registryCredentials:
+  registry: hub.yiqisoft.cn
+  username: ""
+  password: ""
+  email: ""
+
+nameOverride: ""
+fullnameOverride: ""
+
+backend:
+  image:
+    registry: hub.yiqisoft.cn
+    repository: nereidai/nereidhorizon-backend
+    tag: ""
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  nodeSelector: {}
+  sessionTtl: 86400
+  sessionAbsTtl: 28800
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+frontend:
+  image:
+    registry: hub.yiqisoft.cn
+    repository: nereidai/nereidhorizon-frontend
+    tag: ""
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  nodeSelector: {}
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 128Mi
+
+# Dedicated PostgreSQL for the BFF. Disable only when externalDatabase.url is
+# set to a database that is NOT the Exchange's own PostgreSQL.
+postgres:
+  enabled: true
+  image: postgres:16-alpine
+  auth:
+    database: nereid
+    username: nereid
+    # Empty: a random password is generated once and kept in the release Secret.
+    password: ""
+  # PG data must live on block storage (local-path); NFS root-squash prevents
+  # the postgres user from chmod-ing PGDATA.
+  persistence:
+    enabled: true
+    size: 8Gi
+    storageClass: local-path
+  resources: {}
+
+externalDatabase:
+  # Full connection URL, e.g. postgresql://user:pass@host:5432/nereid
+  url: ""
+
+# Generic OpenID Connect single sign-on (authorization code + PKCE). Disabled
+# when oidc.issuer is empty, in which case only local password login is used.
+# Client secrets are rendered into the release Secret and never stored in
+# values in plaintext for production; supply clientSecret at install time.
+oidc:
+  enabled: false
+  # Issuer URL, e.g. https://sso.yiqisoft.cn/auth/realms/nereidai
+  issuer: ""
+  clientId: ""
+  clientSecret: ""
+  # Public callback URL as registered on the IdP, e.g.
+  # https://nereidhorizon.yiqisoft.cn/api/oidc/callback
+  redirectUri: ""
+  scopes: "openid profile email"
+  roleClaim: "groups"
+  platformGroup: "nereidhorizon-platform"
+  partnerGroupPrefix: "nereidhorizon-partner-"
+  # Set true to disable the local password form for regular users; the
+  # bootstrap admin can always still reach /login?local=1.
+  localLoginEnabled: true
+  insecureSkipVerify: false
+  # Name of a Secret in the release namespace with key ca.crt holding the CA
+  # that signs the IdP. Needed when the issuer uses a cluster-internal CA
+  # (e.g. cert-manager internal-ca): it is mounted into the container and
+  # exposed via NODE_EXTRA_CA_CERTS, so TLS verification stays on.
+  caBundleSecret: ""
+
+# NereidSphere (NS) ticket-based SSO. When enabled, this is the primary SSO
+# mode (takes precedence over OIDC in the UI). Disabled when ns.baseUrl is empty.
+ns:
+  enabled: true
+  # NS base URL, e.g. https://nereidsphere.yiqisoft.cn
+  baseUrl: ""
+  # Product ID as registered in NS (must match NS product config)
+  productId: ""
+  # Shared secret for ticket verification (must match NS product ssoSecret)
+  clientSecret: ""
+  # Callback path on NS (must match NS product ssoCallbackPath)
+  callbackPath: "/auth/ns-callback"
+
+# Traefik terminates TLS at the edge (certificate issued by the internal-ca
+# cluster issuer), so nginx serves plain HTTP on 80 only.
+ingress:
+  enabled: true
+  className: traefik
+  host: nereidhorizon.yiqisoft.cn
+  tls:
+    enabled: true
+    secretName: nereidhorizon-tls

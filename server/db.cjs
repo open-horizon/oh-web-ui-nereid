@@ -23,12 +23,27 @@ pool.on('error', (e) => console.error('[db] pool error:', e.message));
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
   username   TEXT NOT NULL,
-  hash       TEXT NOT NULL,
-  salt       TEXT NOT NULL,
+  hash       TEXT,
+  salt       TEXT,
   role       TEXT NOT NULL CHECK (role IN ('platform','partner')),
   org        TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  email      TEXT,
+  issuer     TEXT,
+  subject    TEXT,
+  disabled   BOOLEAN NOT NULL DEFAULT false,
+  bootstrap  BOOLEAN NOT NULL DEFAULT false
 );
+
+CREATE TABLE IF NOT EXISTS sessions (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT,
+  ciphertext TEXT NOT NULL,
+  born_at    BIGINT NOT NULL,
+  seen_at    BIGINT NOT NULL,
+  expire_at  TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_expire ON sessions(expire_at);
 
 CREATE TABLE IF NOT EXISTS api_keys (
   id         TEXT PRIMARY KEY,
@@ -89,12 +104,25 @@ async function initSchema() {
         await c.query(SCHEMA);
         // Migration: add key_plain column for existing tables
         await c.query('ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_plain TEXT');
-        // Migration: change username PK → composite unique (org,username) to allow same
-        // username across different orgs. Platform users (org=NULL) are globally unique;
-        // partner users (org=xxx) are unique per org.
+        // Migration: OIDC identity columns + disabled/bootstrap flags. OIDC
+        // users have no local password, so hash/salt become nullable.
+        await c.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT');
+        await c.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS issuer TEXT');
+        await c.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS subject TEXT');
+        await c.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled BOOLEAN NOT NULL DEFAULT false");
+        await c.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS bootstrap BOOLEAN NOT NULL DEFAULT false");
+        await c.query('ALTER TABLE users ALTER COLUMN hash DROP NOT NULL');
+        await c.query('ALTER TABLE users ALTER COLUMN salt DROP NOT NULL');
+        // Drop the legacy primary key (username) from the original schema.
         await c.query('ALTER TABLE users DROP CONSTRAINT IF EXISTS users_pkey');
-        await c.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_platform_unique ON users(username) WHERE org IS NULL');
-        await c.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_partner_unique ON users(username, org) WHERE org IS NOT NULL');
+        // Migration: identity-scoped uniqueness. Local accounts keep the old
+        // (username[, org]) uniqueness; OIDC accounts are unique per (issuer,
+        // subject) and may reuse any username (logins never key on username).
+        await c.query('DROP INDEX IF EXISTS idx_users_platform_unique');
+        await c.query('DROP INDEX IF EXISTS idx_users_partner_unique');
+        await c.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_local_platform_unique ON users(username) WHERE issuer IS NULL AND org IS NULL');
+        await c.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_local_partner_unique ON users(username, org) WHERE issuer IS NULL AND org IS NOT NULL');
+        await c.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_identity ON users(issuer, subject) WHERE issuer IS NOT NULL');
         console.log('[db] schema ready');
         return;
       } finally {
@@ -118,34 +146,77 @@ function query(text, params) {
 }
 
 // ---------------- Users ----------------
+// Row shape shared by every user-facing query.
+const USER_COLS = 'username, role, org, created_at, email, issuer, subject, disabled, bootstrap';
+
 // Returns all BFF user accounts (without passwords)
 async function loadUsers() {
-  const { rows } = await query('SELECT username, role, org, created_at FROM users ORDER BY created_at');
-  return rows.map((r) => ({ username: r.username, role: r.role, org: r.org, createdAt: r.created_at }));
+  const { rows } = await query(`SELECT ${USER_COLS} FROM users ORDER BY created_at`);
+  return rows.map((r) => ({
+    username: r.username, role: r.role, org: r.org, createdAt: r.created_at,
+    email: r.email || null, issuer: r.issuer || null, subject: r.subject || null,
+    disabled: r.disabled, bootstrap: r.bootstrap,
+    authType: r.issuer ? 'oidc' : 'local',
+  }));
 }
-// Lookup a single user by username and optional org.
+// Lookup a single LOCAL user by username and optional org.
 // When org is provided (partner), scopes the lookup to that org.
-// When omitted, only matches platform users (org IS NULL).
+// When omitted, only matches local platform users (org IS NULL).
+// OIDC users never authenticate with a password and are excluded.
 async function getUser(username, org) {
   const { rows } = org
-    ? await query('SELECT * FROM users WHERE username = $1 AND org = $2', [username, org])
-    : await query('SELECT * FROM users WHERE username = $1 AND org IS NULL', [username]);
+    ? await query('SELECT * FROM users WHERE username = $1 AND org = $2 AND issuer IS NULL', [username, org])
+    : await query('SELECT * FROM users WHERE username = $1 AND org IS NULL AND issuer IS NULL', [username]);
   return rows[0] || null;
 }
-// Create a new BFF user with pre-computed password hash+salt
-async function createUser({ username, hash, salt, role, org, createdAt }) {
+// Look up an OIDC-federated user by its stable (issuer, subject) identity.
+async function getOidcUser(issuer, subject) {
+  const { rows } = await query('SELECT * FROM users WHERE issuer = $1 AND subject = $2', [issuer, subject]);
+  return rows[0] || null;
+}
+// Sync role/org/email/display name of an OIDC user against the latest claims.
+// Group membership is authoritative at the IdP and re-evaluated every login.
+async function updateOidcUser(issuer, subject, { username, role, org, email }) {
   await query(
-    'INSERT INTO users(username, hash, salt, role, org, created_at) VALUES($1,$2,$3,$4,$5,$6)',
-    [username, hash, salt, role, org || null, createdAt || new Date().toISOString()],
+    `UPDATE users SET username=$3, role=$4, org=$5, email=$6 WHERE issuer=$1 AND subject=$2`,
+    [issuer, subject, username, role, org || null, email || null],
   );
 }
-// Delete a BFF user account by username and optional org.
+// Create a new BFF user. Local accounts provide hash+salt; OIDC accounts
+// provide issuer+subject and leave the password columns NULL.
+async function createUser({ username, hash, salt, role, org, createdAt, email, issuer, subject, bootstrap }) {
+  await query(
+    `INSERT INTO users(username, hash, salt, role, org, created_at, email, issuer, subject, bootstrap)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+    [
+      username, hash || null, salt || null, role, org || null,
+      createdAt || new Date().toISOString(), email || null, issuer || null, subject || null,
+      bootstrap || false,
+    ],
+  );
+}
+// Delete a LOCAL BFF user account by username and optional org.
 // Partner users must provide org to disambiguate cross-org duplicates.
 async function deleteUser(username, org) {
   if (org) {
-    await query('DELETE FROM users WHERE username = $1 AND org = $2', [username, org]);
+    await query('DELETE FROM users WHERE username = $1 AND org = $2 AND issuer IS NULL', [username, org]);
   } else {
-    await query('DELETE FROM users WHERE username = $1 AND org IS NULL', [username]);
+    await query('DELETE FROM users WHERE username = $1 AND org IS NULL AND issuer IS NULL', [username]);
+  }
+}
+// Delete an OIDC-federated user by its stable identity.
+async function deleteOidcUser(issuer, subject) {
+  await query('DELETE FROM users WHERE issuer = $1 AND subject = $2', [issuer, subject]);
+}
+// Enable/disable a user. OIDC users are disabled rather than deleted so a
+// re-login cannot silently JIT-recreate an access the admin intended to revoke.
+async function setUserDisabled(issuer, username, org, disabled) {
+  if (issuer) {
+    await query('UPDATE users SET disabled=$3 WHERE issuer=$1 AND subject=$2', [issuer, username, disabled]);
+  } else if (org) {
+    await query('UPDATE users SET disabled=$3 WHERE username=$1 AND org=$2 AND issuer IS NULL', [username, org, disabled]);
+  } else {
+    await query('UPDATE users SET disabled=$2 WHERE username=$1 AND org IS NULL AND issuer IS NULL', [username, disabled]);
   }
 }
 // Update a user's password hash+salt (used for password changes)
@@ -296,14 +367,56 @@ async function saveSetting(key, value) {
   );
 }
 
+// ---------------- Server sessions (encrypted) ----------------
+// PostgreSQL is the authoritative session store; the process keeps an
+// in-memory working set for synchronous handler access. ciphertext is the
+// AES-256-GCM blob produced by the server. ttlSec drives idle expiry;
+// seenAt/bornAt are epoch milliseconds for local timing decisions.
+async function saveSession(id, { userId, ciphertext, bornAt, seenAt, ttlSec }) {
+  await query(
+    `INSERT INTO sessions(id, user_id, ciphertext, born_at, seen_at, expire_at)
+     VALUES($1,$2,$3,$4,$5, now() + ($6 || ' seconds')::interval)
+     ON CONFLICT (id) DO UPDATE SET
+       user_id=EXCLUDED.user_id, ciphertext=EXCLUDED.ciphertext,
+       seen_at=EXCLUDED.seen_at, expire_at=EXCLUDED.expire_at`,
+    [id, userId || null, ciphertext, bornAt, seenAt, String(ttlSec)],
+  );
+}
+// Load a session row. Returns null when absent or already expired.
+async function loadSession(id) {
+  const { rows } = await query(
+    'SELECT id, user_id, ciphertext, born_at, seen_at FROM sessions WHERE id=$1 AND expire_at > now()',
+    [id],
+  );
+  return rows[0] || null;
+}
+// Slide the idle-expiry window forward on activity.
+async function touchSessionRow(id, seenAt, ttlSec) {
+  await query(
+    "UPDATE sessions SET seen_at=$2, expire_at=now() + ($3 || ' seconds')::interval WHERE id=$1",
+    [id, seenAt, String(ttlSec)],
+  );
+}
+async function deleteSession(id) {
+  await query('DELETE FROM sessions WHERE id=$1', [id]);
+}
+// Background cleanup of expired rows (called by the server sweeper).
+async function deleteExpiredSessions() {
+  await query('DELETE FROM sessions WHERE expire_at <= now()');
+}
+
 module.exports = {
   pool,
   initSchema,
   query,
   loadUsers,
   getUser,
+  getOidcUser,
+  updateOidcUser,
   createUser,
   deleteUser,
+  deleteOidcUser,
+  setUserDisabled,
   updatePassword,
   updateUser,
   loadExchangeConfig,
@@ -321,4 +434,9 @@ module.exports = {
   listAudit,
   loadSettings,
   saveSetting,
+  saveSession,
+  loadSession,
+  touchSessionRow,
+  deleteSession,
+  deleteExpiredSessions,
 };

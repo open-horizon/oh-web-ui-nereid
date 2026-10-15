@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useOutlet, useNavigate, useLocation } from 'react-router-dom';
-import { Layout, Menu, Button, Tag, Typography, theme, Select, Drawer, Dropdown } from 'antd';
+import { Layout, Menu, Button, Tag, Typography, theme, Select, Drawer, Dropdown, message } from 'antd';
 import { MenuOutlined } from '@ant-design/icons';
 import {
   DashboardOutlined,
@@ -26,7 +26,7 @@ import {
   DownOutlined,
   HeartOutlined,
 } from '@ant-design/icons';
-import { clearSession, getConfig } from '../api/config';
+import { clearSession, getConfig, setOrgId } from '../api/config';
 import { useT } from '../i18n/context';
 import ChangesNotification from './ChangesNotification';
 
@@ -61,6 +61,8 @@ export default function AppLayout() {
   const { token: themeToken } = theme.useToken();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileDrawer, setMobileDrawer] = useState(false);
+  const [orgSwitching, setOrgSwitching] = useState(false);
+  const [, forceRender] = useState(0);
   const isMobile = useIsMobile();
   const config = getConfig();
   const { t, lang, setLang } = useT();
@@ -108,9 +110,48 @@ export default function AppLayout() {
   const menuItems = config.role === 'platform' ? platformMenu : partnerMenu;
 
   const handleLogout = async () => {
-    await fetch('/api/logout', { method: 'POST' }).catch(() => {});
+    let redirect: string | null = null;
+    try {
+      const res = await fetch('/api/logout', {
+        method: 'POST',
+        headers: { 'X-Csrf-Token': config.csrfToken || '' },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        redirect = data?.redirect || null;
+      }
+    } catch { /* ignore */ }
     clearSession();
-    navigate('/login');
+    // For OIDC sessions the backend returns the IdP end-session URL so the
+    // upstream SSO session is also terminated; otherwise fall back to /login.
+    if (redirect) {
+      window.location.href = redirect;
+    } else {
+      navigate('/login');
+    }
+  };
+
+  // Partners granted multiple orgs via SSO groups may switch the effective org.
+  const canSwitchOrg = config.role === 'partner' && (config.availableOrgs?.length ?? 0) > 1;
+
+  const handleSwitchOrg = async (org: string) => {
+    if (org === config.orgId) return;
+    setOrgSwitching(true);
+    try {
+      const res = await fetch('/api/switch-org', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Csrf-Token': config.csrfToken || '' },
+        body: JSON.stringify({ org }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.msg || 'switch failed');
+      setOrgId(org);
+      forceRender((n) => n + 1);
+    } catch (err: any) {
+      message.error(err?.message || String(err));
+    } finally {
+      setOrgSwitching(false);
+    }
   };
 
   const selectedKey = '/' + location.pathname.split('/').filter(Boolean)[0];
@@ -203,6 +244,17 @@ export default function AppLayout() {
             <Text type="secondary">
               <HddOutlined /> {config.orgId}
             </Text>
+            {canSwitchOrg && (
+              <Select
+                value={config.orgId}
+                loading={orgSwitching}
+                onChange={handleSwitchOrg}
+                options={(config.availableOrgs || []).map((o) => ({ value: o, label: o }))}
+                size="small"
+                style={{ minWidth: 140 }}
+                placeholder={t('switch-organization')}
+              />
+            )}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
             <Select

@@ -1,16 +1,20 @@
 # AGENTS.md — NereidAI Open-Horizon Exchange UI
 
-Compact guidance for OpenCode sessions. Every line is something an agent would likely
-miss without help. Trust executable source (scripts, config, code) over prose docs;
-the README is partly stale (e.g. it says Redis is required — it is not).
+> **Read the root treaty first — it is mandatory.** This repository is governed by the
+> NereidAI root treaty at [`../AGENTS.md`](../AGENTS.md) (workspace root): license headers,
+> comments, change principles, verification policy, process/runtime safety, repository
+> boundaries, working style, commits, generic i18n/docs rules, architecture invariants,
+> and the English coaching protocol. This file contains **project-specific rules only**;
+> it may tighten the treaty but never weaken it, and it never repeats it.
 
-## Behavior
-- Be concise and direct; answer with as few lines as possible; no preamble/postamble; no emojis unless asked.
-- Do not commit or push unless explicitly requested.
-- Don't surprise the user — confirm before risky/irreversible operations.
-- Reference code as `file_path:line_number`.
-- **CRITICAL: Never speculate or make up technical claims.** Only state what is directly confirmed by documentation, source code, or the user. When unsure about a technical mechanism, ask the user for direction instead of fabricating an explanation. If you cannot find clear evidence in docs/code, say so rather than inventing.
-- **CRITICAL: Before doing any time-consuming reasoning, investigation, or complex logical operations, ALWAYS ask the user first.** Do not waste time and resources on autonomous research without permission. Ask for clarification on where the problem is, then proceed.
+Compact project memory. Every line is something an agent would likely miss without help.
+Trust executable source (scripts, config, code) over prose docs; the README is partly stale
+(e.g. it says Redis is required — it is not).
+
+## Working Style (project-specific tightening)
+
+- **Before any time-consuming investigation or complex reasoning, ask the user first**
+  where the problem is; do not spend resources on autonomous research without permission.
 
 ## Stack & Layout
 - Frontend: React 18 + Vite + TypeScript + Ant Design 5, React Router v6 (`src/`).
@@ -54,10 +58,10 @@ the README is partly stale (e.g. it says Redis is required — it is not).
   the key binding (caller cannot choose org).
 
 ## Operational gotchas (learned the hard way)
-- **One backend per port.** Starting a second `node server/index.cjs` while `:3001` is
-  bound fails silently (EADDRINUSE) and you keep serving the OLD code. Kill the existing
-  PID before restarting. After any restart, in-memory sessions are wiped → users must
-  re-login.
+- **Restarting `:3001` wipes sessions.** A second `node server/index.cjs` while `:3001` is
+  bound fails silently on EADDRINUSE and the OLD code keeps serving (generic one-server-per-
+  port rule: treaty §5) — kill the existing PID first, then expect users to re-login unless
+  `SESSION_ENC_KEY` is set.
 - **Platform create flows require an org.** Service/Pattern/Policy/Agbot creation in the
   UI defaults to the current page-org filter and errors if none is chosen; the backend
   rejects `?org=root` for platform. Never assume a default org.
@@ -73,8 +77,11 @@ the README is partly stale (e.g. it says Redis is required — it is not).
 - **Workaround**: SSH to node and check `docker logs <container>` to identify which service is failing.
 
 ## Conventions
-- Comments explain *why*; add i18n translation comments for new UI text (strings live in
-  `src/i18n/zh.ts` + `src/i18n/context.tsx`).
+- **Version is `v0.0.1` — never bump it.** `VERSION`, `deploy/helm/nereidhorizon/Chart.yaml`
+  and any image tag stay at `0.0.1`/`v0.0.1`; do not raise them on your own. Only the user
+  changes the version, and only on explicit request.
+- New UI strings go in `src/i18n/zh.ts` with the translation-comment convention wired in
+  `src/i18n/context.tsx` (generic i18n rules: treaty §9).
 - New API clients go in `src/api/*.ts` mirroring the existing per-resource modules.
 
 ## Open Horizon Architecture & Agent Container Lifecycle
