@@ -3536,6 +3536,74 @@ paths:
         '200':
           description: Service instance detail
 
+  # =============================================================
+  # NereidSphere integration (machine-to-machine via NS gateway)
+  # =============================================================
+  /v1/integration/ns/tenants:
+    get:
+      tags: [NereidSphere Integration]
+      summary: List tenants (Exchange orgs) for the NS admin console
+      description: |
+        Called by the NereidSphere admin console **through the NS gateway**
+        (`/p/horizon/v1/integration/ns/tenants`). The gateway strips inbound
+        copies and stamps `X-NS-Integration-Secret` (this product's SSO secret)
+        and the verified `X-User-Roles` header; no browser session is involved.
+        Deliberately outside `/api/` so the regular session/CSRF guards do not
+        apply.
+      operationId: listIntegrationTenants
+      parameters:
+        - name: X-NS-Integration-Secret
+          in: header
+          required: true
+          description: Product SSO secret, stamped by the NS gateway only.
+          schema:
+            type: string
+        - name: X-User-Roles
+          in: header
+          required: true
+          description: Comma-joined NS suite roles; must contain `admin` or `operator`.
+          schema:
+            type: string
+            example: admin,user
+      responses:
+        '200':
+          description: Exchange org list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    tenant_id:
+                      type: string
+                    tenant_name:
+                      type: string
+                  required: [tenant_id, tenant_name]
+              example:
+                - tenant_id: myorg
+                  tenant_name: myorg
+                - tenant_id: acme-labs
+                  tenant_name: acme-labs
+        '401':
+          description: Missing or wrong integration secret
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Caller lacks the admin/operator suite role
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: Exchange org list unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
 components:
   securitySchemes:
     SessionCookie:
@@ -3560,6 +3628,12 @@ components:
       example: myorg
 
   schemas:
+    Error:
+      type: object
+      properties:
+        msg:
+          type: string
+      required: [msg]
     ServiceDeploymentServices:
       type: object
       description: Deployment image definition (keyed by service name)

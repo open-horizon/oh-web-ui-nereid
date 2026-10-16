@@ -51,6 +51,10 @@ targets).
 | `OIDC_PARTNER_GROUP_PREFIX` | `nereidhorizon-partner-` | Group prefix mapping to an Exchange org |
 | `OIDC_LOCAL_LOGIN_ENABLED` | `true` | Set `false` to disable local password login |
 | `OIDC_INSECURE_SKIP_VERIFY` | `false` | Skip TLS verification of the IdP (dev only) |
+| `NS_BASE_URL` | _(unset)_ | NereidSphere base URL; set to enable NS ticket SSO (preferred over OIDC) |
+| `NS_PRODUCT_ID` | _(unset)_ | NS product token, fixed to `horizon` |
+| `NS_CLIENT_SECRET` | _(unset)_ | Per-product SSO secret; must match the product secret in NS |
+| `NS_CALLBACK_PATH` | `/auth/ns-callback` | Public ticket landing route (proxied to the backend by nginx) |
 
 Example `.env` (matching the local `make dev-pg` database):
 
@@ -70,10 +74,22 @@ SESSION_ENC_KEY=
 > key in `logs/.session.key` (mode `0600`). In production always set it via a secret so
 > the key survives restarts and is not auto-generated per host.
 
-### 2.1 Single sign-on (OIDC)
+### 2.1 Single sign-on
 
-When `OIDC_ISSUER` is set, the login page shows a **Sign in with SSO** button. Roles are
-mapped from the `OIDC_ROLE_CLAIM` group claim:
+Two coexisting SSO front doors share one session/role model:
+
+1. **NereidSphere ticket mode (default when configured).** Set `NS_BASE_URL`,
+   `NS_PRODUCT_ID=horizon`, and `NS_CLIENT_SECRET` (equal to the product's
+   `sso_secret` in NS). The browser logs in at NS; NS mints a single-use
+   ticket, redirects to `/auth/ns-callback`, and the BFF verifies it
+   server-to-server. Authorization comes from the ticket's `groups` claim:
+   - `/nereidhorizon/<org>/platform` → `platform` role;
+   - `/nereidhorizon/<org>/partner` → `partner` bound to Exchange org `<org>`
+     (multiple groups → switchable orgs);
+   - `/nereidlink/...`, `/nereidforge/...` and other products' groups are ignored.
+2. **Direct OIDC mode.** When only `OIDC_ISSUER` is set, the login page shows a
+   **Sign in with SSO** button and roles are mapped from the `OIDC_ROLE_CLAIM`
+   group claim:
 
 - Membership in `OIDC_PLATFORM_GROUP` → `platform` role.
 - Each `OIDC_PARTNER_GROUP_PREFIX<org>` group → a partner binding to Exchange org `<org>`

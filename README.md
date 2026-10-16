@@ -200,6 +200,10 @@ make docker-up
 | `OIDC_PARTNER_GROUP_PREFIX` | `nereidhorizon-partner-` | Group prefix mapping to an Exchange org |
 | `OIDC_LOCAL_LOGIN_ENABLED` | `true` | Set `false` to disable local password login |
 | `OIDC_INSECURE_SKIP_VERIFY` | `false` | Skip TLS verification of the IdP (dev only) |
+| `NS_BASE_URL` | _(unset)_ | NereidSphere base URL; enables NS ticket SSO (default front door when set) |
+| `NS_PRODUCT_ID` | _(unset)_ | NS product token (`horizon`) |
+| `NS_CLIENT_SECRET` | _(unset)_ | Per-product SSO secret shared with NS |
+| `NS_CALLBACK_PATH` | `/auth/ns-callback` | Public ticket landing route |
 
 ---
 
@@ -209,7 +213,7 @@ make docker-up
 - **Browser attack surface**: The session identifier is an opaque random token in an `HttpOnly; Secure; SameSite=Lax` cookie. It is unreadable by JavaScript (XSS-resistant) and validated together with a CSRF double-submit token on every mutation.
 - **Transport security**: All browser traffic is served over HTTPS (TLS 1.2/1.3). HTTP is redirected to HTTPS. HSTS is enabled.
 - **Session lifetime**: idle TTL (`SESSION_TTL`) plus an absolute TTL (`SESSION_ABS_TTL`), enforced by an in-memory sweeper and expired-row cleanup in PostgreSQL. Logout immediately invalidates the session and clears the cookie.
-- **SSO safety**: OIDC logins are fail-closed — unmapped or ambiguous group claims, missing/malformed org claims, unverified email, and disabled accounts are all rejected. Users are identified by `(issuer, subject)`, never merged by username/email.
+- **SSO safety**: SSO logins (NereidSphere ticket or direct OIDC) are fail-closed — unmapped, malformed or ambiguous group claims, missing/unknown Exchange orgs, unverified email, and disabled accounts are all rejected. NS gateway integration calls additionally require the secret `X-NS-Integration-Secret` header and an admin/operator suite role. Federated users are identified by `(issuer, subject)`, never merged by username/email.
 - **Input safety**: Request bodies are filtered through strict field whitelists (`serviceBody`, `patternBody`, `sanitizeBody`) to prevent payload pollution.
 - **Auditability**: Every API call, Exchange call, and auth event (login/logout/node_register) is recorded with timestamp, user, method, path, status, and duration in `system.log` / `audit.log`.
 - **Durability**: Sessions are stored in PostgreSQL, so a backend restart or a second replica preserves logins (no in-memory-only degradation).

@@ -1052,6 +1052,42 @@ app.get('/auth/ns-callback', async (req, res) => {
   }
 });
 
+// NS console tenant (Exchange org) picker. The NS admin console fetches this
+// through the NS gateway at /p/horizon/v1/integration/ns/tenants; the gateway
+// strips inbound copies and stamps X-NS-Integration-Secret (this product's
+// SSO secret) on this exact path plus the verified X-User-Roles header. The
+// path is intentionally outside /api/ (the global session/CSRF guards only
+// cover /api/), so authentication happens entirely inside this handler.
+app.get('/v1/integration/ns/tenants', async (req, res) => {
+  const provided = req.headers['x-ns-integration-secret'];
+  const expected = ns.cfg.clientSecret || '';
+  const okSecret = typeof provided === 'string' && provided.length > 0 &&
+    expected.length > 0 && provided.length === expected.length &&
+    crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
+  if (!okSecret) return res.status(401).json({ msg: 'invalid integration secret' });
+
+  const roles = String(req.headers['x-user-roles'] || '')
+    .split(',').map((r) => r.trim()).filter(Boolean);
+  if (!roles.includes('admin') && !roles.includes('operator')) {
+    return res.status(403).json({ msg: 'admin role required' });
+  }
+
+  if (!exchangeConfig.configured) return res.status(502).json({ msg: 'org list unavailable' });
+  try {
+    const adminSess = { baseURL: exchangeConfig.baseURL, auth: exchangeConfig.auth, orgId: 'root' };
+    const r = await exch(adminSess, 'GET', '/orgs');
+    if (r.status !== 200 || !r.data || !r.data.orgs) {
+      return res.status(502).json({ msg: 'org list unavailable' });
+    }
+    const orgs = Object.keys(r.data.orgs).sort();
+    logEvent('ns.tenants_list', { count: orgs.length }, 'root');
+    return res.json(orgs.map((org) => ({ tenant_id: org, tenant_name: org })));
+  } catch (e) {
+    console.warn('[ns] tenant list failed:', e.message);
+    return res.status(502).json({ msg: 'org list unavailable' });
+  }
+});
+
 // ---- Local BFF user management (platform only) ----
 app.get('/api/bff-users', requireRole('platform'), async (req, res) => {
   const users = await db.loadUsers();

@@ -50,6 +50,10 @@ is required and also stores sessions, so logins survive backend restarts.
 | `OIDC_PLATFORM_GROUP` | `nereidhorizon-platform` | Group granting the platform role |
 | `OIDC_PARTNER_GROUP_PREFIX` | `nereidhorizon-partner-` | Group prefix mapping to an Exchange org |
 | `OIDC_LOCAL_LOGIN_ENABLED` | `true` | Set `false` to disable local password login |
+| `NS_BASE_URL` | _(unset)_ | NereidSphere base URL; set to enable NS ticket SSO (preferred over OIDC) |
+| `NS_PRODUCT_ID` | _(unset)_ | NS product token, fixed to `horizon` |
+| `NS_CLIENT_SECRET` | _(unset)_ | Per-product SSO secret; must match the product secret in NS |
+| `NS_CALLBACK_PATH` | `/auth/ns-callback` | Public ticket landing route |
 
 Create a `.env` from `.env.example` and set at least `DATABASE_URL` and `SESSION_ENC_KEY` in
 production.
@@ -126,7 +130,60 @@ override the image in `docker-compose.yaml`.
 - **Session master key**: set `SESSION_ENC_KEY` (64 hex chars) via a secret so the key
   is stable across restarts and container recreation.
 
-## 6.1 Single sign-on (OIDC)
+## 6.1 Single sign-on (NereidSphere ticket, default; direct OIDC also supported)
+
+The BFF supports two coexisting SSO front doors over the same session/role
+model. When `NS_BASE_URL` is configured the **NereidSphere (NS) ticket** flow is
+the default; direct OIDC remains available as a fallback when only `OIDC_*` is
+set. Local password login always remains for the bootstrap admin
+(`/login?local=1`).
+
+### NereidSphere ticket mode (suite deployment)
+
+Set the `NS_*` variables (the Helm chart renders them from `ns:` values):
+
+| Variable | Purpose |
+|---|---|
+| `NS_BASE_URL` | NS base URL, e.g. `https://nereidsphere.example.com`; unset disables NS |
+| `NS_PRODUCT_ID` | Product token registered in NS, fixed to `horizon` |
+| `NS_CLIENT_SECRET` | Per-product SSO secret; must equal `products[horizon].sso_secret` in NS |
+| `NS_CALLBACK_PATH` | Public ticket callback, defaults to `/auth/ns-callback` |
+
+The browser logs in at NS, which mints a single-use ticket and redirects to the
+callback; the BFF exchanges it server-to-server at
+`POST {NS}/api/v1/auth/ticket/verify` with the `X-NS-Client-Id` /
+`X-NS-Client-Secret` headers. NS product assignments are Keycloak realm groups
+named **`/nereidhorizon/{exchange-org}/{role}`** with `role` ∈ `platform|partner`
+(the middle segment is an Exchange org id, `^[a-z0-9][a-z0-9-]*$`):
+
+- `/nereidhorizon/<org>/platform` → `platform` role (cross-org);
+- `/nereidhorizon/<org>/partner` → `partner` bound to that org; several
+  assignments become switchable orgs (`availableOrgs`).
+
+Groups of other suite products (`/nereidlink/...`, `/nereidforge/...`) are
+ignored. The mapping is fail-closed: no Horizon group (`no_group`), malformed
+path/org/role (`invalid_org_claim`), a partner org missing from the Exchange
+(`unknown_org`), simultaneous platform+partner (`ambiguous_groups`), and
+disabled accounts all reject the login. Memberships are re-evaluated on every
+login and overwrite the federated user's role/org, so removing the assignment
+in NS removes access on the next login.
+
+The NS admin console renders its tenant picker from
+
+```
+GET /v1/integration/ns/tenants
+  -> [{ "tenant_id": "myorg", "tenant_name": "myorg" }, ...]
+```
+
+reached **through the NS gateway** (`/p/horizon/v1/integration/ns/tenants`).
+The gateway is the only caller that can set `X-NS-Integration-Secret` (it
+strips inbound copies and stamps the product's `sso_secret` on this path); the
+BFF rejects a missing/mismatched secret with **401**, and also requires the
+gateway-injected `X-User-Roles` to contain `admin` or `operator` (**403**).
+Exchange failure returns **502**. The endpoint is deliberately outside `/api/`
+and never trusts browser-supplied identity headers.
+
+### Direct OIDC mode
 
 Set the `OIDC_*` variables to enable SSO. On the IdP:
 

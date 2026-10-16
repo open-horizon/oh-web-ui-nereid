@@ -27,14 +27,20 @@ NereidHorizon {{ .Chart.Version }} (app {{ .Chart.AppVersion }}) has been instal
 Images come from the private Harbor project hub.yiqisoft.cn/nereidai; the
 harbor-registry-secret is only created when registryCredentials.username is
 set at install time.
-{{- if .Values.oidc.enabled }}
+{{- if .Values.ns.enabled }}
 
-Single sign-on is enabled. Register the user groups on the IdP:
+NereidSphere ticket SSO is enabled (default front door). Assign product access
+in the NS admin console; it creates the IdP groups /nereidhorizon/{org}/platform
+and /nereidhorizon/{org}/partner. The NS product "horizon" must be mode=ns with
+sso_secret={{ .Values.ns.clientSecret }} and tenants_path=/v1/integration/ns/tenants.
+{{- else if .Values.oidc.enabled }}
+
+Single sign-on is enabled (direct OIDC). Register the user groups on the IdP:
   - {{ .Values.oidc.platformGroup }} (platform administrators)
   - {{ .Values.oidc.partnerGroupPrefix }}<org> (one per Exchange org)
-{{- if not .Values.oidc.localLoginEnabled }}
+{{- end }}
+{{- if and .Values.oidc.enabled (not .Values.oidc.localLoginEnabled) }}
 
 Local password login is disabled for regular users; the bootstrap admin can
 still sign in at https://{{ .Values.ingress.host }}/login?local=1.
-{{- end }}
 {{- end }}

@@ -12,11 +12,13 @@
 //
 // Configuration is environment-driven (NS_*); NS mode is disabled when
 // NS_BASE_URL is unset. It coexists with the direct-OIDC module in oidc.cjs:
-// both are just login front doors over the same BFF session/role model, so
-// the Keycloak group->role mapping is shared (OIDC_PLATFORM_GROUP /
-// OIDC_PARTNER_GROUP_PREFIX) — a single realm-role assignment governs both.
+// both are login front doors over the same BFF session/role model. The NS
+// admin console grants one product tenant + role per account as Keycloak
+// realm groups named /nereidhorizon/{exchange-org}/{platform|partner}; the
+// ticket identity carries those full group paths (see resolveRole below).
 
 const ORG_RE = /^[a-z0-9][a-z0-9-]*$/;
+const HORIZON_PREFIX = '/nereidhorizon/';
 
 const cfg = {
   enabled: !!process.env.NS_BASE_URL,
@@ -24,10 +26,6 @@ const cfg = {
   productId: process.env.NS_PRODUCT_ID || '',
   clientSecret: process.env.NS_CLIENT_SECRET || '',
   callbackPath: process.env.NS_CALLBACK_PATH || '/auth/ns-callback',
-  // Same realm-role names as direct OIDC, so authorization is identical
-  // regardless of which login front door was used.
-  platformGroup: process.env.OIDC_PLATFORM_GROUP || 'nereidhorizon-platform',
-  partnerPrefix: process.env.OIDC_PARTNER_GROUP_PREFIX || 'nereidhorizon-partner-',
 };
 
 function status() {
@@ -38,9 +36,10 @@ function status() {
 }
 
 // Exchange a single-use ticket for the verified identity.
-// NS responds 200 { identity: {sub,email,name,preferred_username,roles}, to }
-// or 401 (bad product credentials) / 4xx (TICKET_*). Throws an Error whose
-// message is a stable, UI-localizable code.
+// NS responds 200 { identity: {sub,email,name,preferred_username,roles,
+// groups}, to } or 401 (bad product credentials) / 4xx (TICKET_*). Throws an
+// Error whose message is a stable, UI-localizable code. `groups` is omitempty
+// at NS: absent (never null) when the user has no suite assignments.
 async function verifyTicket(ticket) {
   if (!cfg.enabled) throw new Error('ns_disabled');
   if (!ticket || typeof ticket !== 'string') throw new Error('ticket_missing');
@@ -89,32 +88,53 @@ async function verifyTicket(ticket) {
     name: id.name || null,
     email: id.email || null,
     roles: Array.isArray(id.roles) ? id.roles.map(String) : [],
+    // NS suite product assignments as full realm-group paths
+    // (/nereidhorizon/{org}/{role}); absent when the user has none.
+    groups: Array.isArray(id.groups) ? id.groups.map(String) : [],
     // Final in-product destination requested at login (relative path, may be '').
     to: typeof data.to === 'string' ? data.to : '',
     issuer: cfg.baseUrl,
   };
 }
 
-// Map the realm roles carried by the ticket to a BFF role and (for partners)
-// bound Exchange orgs. Identical rules to direct OIDC: fail closed on
-// ambiguity, malformed org ids, or no recognizable group.
-function resolveRole(identity) {
-  const groups = identity.roles || [];
-  const isPlatform = groups.includes(cfg.platformGroup);
-  const orgs = [...new Set(
-    groups
-      .filter((g) => typeof g === 'string' && g.startsWith(cfg.partnerPrefix))
-      .map((g) => g.slice(cfg.partnerPrefix.length))
-      .filter((o) => ORG_RE.test(o)),
-  )].sort();
-  const malformed = groups.some(
-    (g) => typeof g === 'string' && g.startsWith(cfg.partnerPrefix) && !ORG_RE.test(g.slice(cfg.partnerPrefix.length)),
-  );
-  if (isPlatform && orgs.length > 0) return { error: 'ambiguous_groups' };
+// parseHorizonGroups maps the NS product-assignment group paths
+// (/nereidhorizon/{org}/{platform|partner}) to a BFF role and (for partners)
+// bound Exchange orgs. Entries of other suite products are ignored. Fail
+// closed on a malformed path/org/role or on a simultaneous platform+partner
+// assignment, so an IdP misconfiguration is an explicit signal rather than a
+// silent privilege escalation.
+function parseHorizonGroups(groups) {
+  let isPlatform = false;
+  const orgs = [];
+  let malformed = false;
+
+  for (const g of groups) {
+    if (typeof g !== 'string' || !g.startsWith(HORIZON_PREFIX)) continue; // other products
+    const parts = g.slice(HORIZON_PREFIX.length).split('/');
+    if (parts.length !== 2 || !parts[0] || !parts[1]) { malformed = true; continue; }
+    const [org, role] = parts;
+    if (role === 'platform') {
+      isPlatform = true;
+    } else if (role === 'partner') {
+      if (!ORG_RE.test(org)) { malformed = true; continue; }
+      if (!orgs.includes(org)) orgs.push(org);
+    } else {
+      malformed = true; // unknown role key
+    }
+  }
+
   if (malformed) return { error: 'invalid_org_claim' };
+  if (isPlatform && orgs.length > 0) return { error: 'ambiguous_groups' };
   if (isPlatform) return { role: 'platform' };
-  if (orgs.length > 0) return { role: 'partner', orgs };
+  if (orgs.length > 0) return { role: 'partner', orgs: orgs.sort() };
   return { error: 'no_group' };
+}
+
+// Map the ticket identity to a BFF role and orgs. Only identity.groups (the
+// /nereidhorizon/... paths) is authoritative; identity.roles holds suite-level
+// roles (user/operator/admin) and is intentionally not consulted.
+function resolveRole(identity) {
+  return parseHorizonGroups(identity?.groups || []);
 }
 
 // Validate a post-login destination: NS only ever returns a relative in-app
@@ -128,6 +148,7 @@ module.exports = {
   cfg,
   status,
   verifyTicket,
+  parseHorizonGroups,
   resolveRole,
   safeRedirectPath,
 };

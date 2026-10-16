@@ -42,6 +42,10 @@ spec:
       labels:
         {{- include "nereidhorizon.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: frontend
+      annotations:
+        # Restart nginx when the mounted ConfigMap content changes (subPath
+        # mounts do not update on their own).
+        checksum/nginx-config: {{ include (print $.Template.BasePath "/configmap-nginx.yaml") . | sha256sum }}
     spec:
       {{- include "nereidhorizon.imagePullSecrets" . | nindent 6 }}
       {{- with .Values.frontend.nodeSelector }}
