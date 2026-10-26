@@ -54,3 +54,14 @@ deploy/*.cfg
 deploy/*.json
 !deploy/*.example.json
 !deploy/*.example.cfg
+
+# Node / frontend tool caches
+.npm/
+.yarn/
+.yarn/cache/
+.pnp.*
+.parcel-cache/
+.cache/
+.vite/
+.eslintcache
+.stylelintcache
