@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/NereidAI/Open-Horizon-ExchangeUI/actions/workflows/ci.yml/badge.svg)](https://github.com/NereidAI/Open-Horizon-ExchangeUI/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Architecture](https://img.shields.io/badge/architecture-amd64%2C%20arm64-green)](https://github.com/NereidAI/Open-Horizon-ExchangeUI/pkgs/container/open-horizon-exchangeui-backend)
+[![Contributors](https://img.shields.io/github/contributors/NereidAI/Open-Horizon-ExchangeUI)](https://github.com/NereidAI/Open-Horizon-ExchangeUI/graphs/contributors)
 [![GHCR](https://img.shields.io/badge/Images-GHCR-blue)](https://github.com/NereidAI/Open-Horizon-ExchangeUI/pkgs/container/open-horizon-exchangeui-backend)
 
 Nereid Exchange UI is a modern, lightweight Web Management Portal and BFF (Backend-For-Frontend) proxy gateway designed specifically for the **Open Horizon Management Hub**.
@@ -101,7 +103,18 @@ NereidAI/
 
 ---
 
-## 🚦 Getting Started (Local Development)
+## Prerequisites
+
+- **Node.js 20+ and npm** for local development.
+- **PostgreSQL** for the BFF's own database; do not use the Open Horizon Exchange database.
+- **Docker or Podman** for the bundled local database and Docker Compose deployments.
+- An Open Horizon Exchange reachable by the BFF, with a hub-level account for initial setup.
+
+See [INSTALL.md](INSTALL.md) for full requirements and environment-variable details.
+
+## Installation
+
+### Local development
 
 > For full installation details — environment variables, PostgreSQL setup, Exchange configuration, and first-time setup — see **[INSTALL.md](INSTALL.md)**.
 
@@ -136,6 +149,10 @@ Or start each piece individually:
 Stop everything with `make dev-stop` (keeps the dev database) or `make dev-clean` (also removes build artifacts and the dev database).
 
 > **Note**: In production the front end is served by Nginx over HTTPS (see Docker Deployment). Local dev uses plain HTTP and the browser dev server.
+
+## Usage
+
+For local development, open the Vite URL shown by `make dev-frontend` (default `http://localhost:8080`) and complete the first-time Setup form to create the initial platform account and connect to the Exchange. For container deployments, see [Docker Deployment](#-docker-deployment) and [INSTALL.md](INSTALL.md).
 
 ---
 
@@ -293,7 +310,21 @@ A `Makefile` is provided to speed up common workflows.
 | `make docker-dev-ps` | Show local dev stack status |
 | `make docker-build` | Alias for `docker-dev-build` |
 | **Maintenance** | |
+| `make help` | Show available Makefile commands |
 | `make clean` | Delete temporary files, `dist/`, and `node_modules/` |
+| `make lint` | Run TypeScript type checking |
+| `make test` | Placeholder that reports no Makefile test script is configured |
+| **Offline / Air-Gapped** | |
+| `make images-export` | Build and export images to `nereid-images.tar` |
+| `make images-load` | Load images from `nereid-images.tar` |
+
+### Debugging
+
+- For requirements, environment configuration, and common login or database startup failures, see [INSTALL.md — Troubleshooting](INSTALL.md#troubleshooting).
+- During local development, inspect `/tmp/nereid-backend.log` and `/tmp/nereid-frontend.log`, written by the `make dev-*` targets.
+- For container deployments, use `make docker-ps` and `make docker-logs`; for the isolated local-build stack, use `make docker-dev-ps` and `make docker-dev-logs`.
+- For PostgreSQL schema, connection, and database-specific troubleshooting, see [docs/DATABASE.md](docs/DATABASE.md).
+- Run the existing backend unit test directly with `node --test server/ns.test.cjs`; `make test` currently does not run it.
 
 ---
 
