@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Card, Form, Input, Button, Typography, message, Alert, Spin, Select, Checkbox, Space } from 'antd';
-import { HddOutlined, InfoCircleOutlined, SafetyOutlined, ReloadOutlined } from '@ant-design/icons';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Card, Form, Input, Button, Typography, message, Alert, Spin, Select, Checkbox, Space, Divider } from 'antd';
+import { HddOutlined, InfoCircleOutlined, SafetyOutlined, ReloadOutlined, CloudOutlined } from '@ant-design/icons';
 import { saveSession } from '../api/config';
 import { useT } from '../i18n/context';
 
@@ -14,7 +14,28 @@ const { Title, Text } = Typography;
 interface SetupStatus {
   needsSetup: boolean;
   exchangeConfigured: boolean;
+  // Direct OIDC (authorization-code + PKCE) front door.
+  oidcEnabled?: boolean;
+  oidcConfigured?: boolean;
+  // NereidSphere ticket front door (preferred when configured).
+  nsEnabled?: boolean;
+  nsConfigured?: boolean;
+  localLoginEnabled?: boolean;
 }
+
+// SSO callback error codes (shared by the NS-ticket and direct-OIDC front
+// doors); unknown codes fall through to a generic failure text.
+const SSO_ERROR_CODES = [
+  // shared authorization/role mapping
+  'no_group', 'ambiguous_groups', 'invalid_org_claim', 'unknown_org',
+  'account_disabled', 'callback_failed', 'not_configured',
+  // direct OIDC only
+  'state_missing', 'state_invalid', 'idp_denied', 'callback_invalid',
+  'email_unverified', 'oidc_unavailable', 'oidc_disabled',
+  // NS ticket only
+  'ns_disabled', 'ns_unavailable', 'ns_unreachable', 'ns_unauthorized',
+  'ns_invalid_response', 'ns_mode_mismatch', 'ticket_missing', 'ticket_invalid',
+];
 
 // Captcha generation: single digit arithmetic (+, -, ×, ÷)
 function generateCaptcha(): { a: number; b: number; operator: string; answer: number } {
@@ -73,6 +94,9 @@ function generateStrongPassword(): string {
 export default function Login() {
   const { t, lang, setLang } = useT();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  // Both front doors report failure as ?<door>_error=... (NS ticket or OIDC).
+  const ssoErrorCode = searchParams.get('ns_error') || searchParams.get('oidc_error');
   const [loading, setLoading] = useState(false);
   const [ready, setReady] = useState(false);
   const [status, setStatus] = useState<SetupStatus>({ needsSetup: false, exchangeConfigured: false });
@@ -104,16 +128,14 @@ export default function Login() {
         // default to login mode if undeterminable
       }
       
-      // Read saved credentials from localStorage
+      // Read remembered username (never the password) from localStorage
       const savedUsername = localStorage.getItem('remembered_username') || '';
-      const savedPassword = localStorage.getItem('remembered_password') || '';
       const savedOrg = localStorage.getItem('remembered_org') || '';
       const isRemembered = localStorage.getItem('remember_me') === 'true';
-      
+
       if (isRemembered && savedUsername) {
         loginForm.setFieldsValue({
           username: savedUsername,
-          password: savedPassword,
           org: savedOrg,
         });
         setRememberMe(true);
@@ -152,6 +174,9 @@ export default function Login() {
       orgId: data.orgId,
       version: data.version,
       csrfToken: data.csrfToken,
+      authType: data.authType,
+      availableOrgs: data.availableOrgs,
+      email: data.email,
     });
     return true;
   }
@@ -170,12 +195,12 @@ export default function Login() {
     try {
       await doLogin(values.username, values.password, values.org || undefined);
       
-      // Remember password functionality
+      // Remember username only; passwords are never stored client-side.
       if (rememberMe) {
         localStorage.setItem('remember_me', 'true');
         localStorage.setItem('remembered_username', values.username);
-        localStorage.setItem('remembered_password', values.password);
         localStorage.setItem('remembered_org', values.org || '');
+        localStorage.removeItem('remembered_password');
       } else {
         localStorage.removeItem('remember_me');
         localStorage.removeItem('remembered_username');
@@ -259,6 +284,17 @@ export default function Login() {
   }
 
   const isSetup = status.needsSetup;
+  // ?local=1 forces the password form (break-glass) even when local login is
+  // disabled for regular users, so the bootstrap admin can always get in.
+  const forceLocal = searchParams.get('local') === '1';
+  // NS ticket is the default front door; fall back to direct OIDC when NS is
+  // not configured. Both lead to the same BFF session/role model.
+  const nsReady = status.nsEnabled === true && status.nsConfigured === true;
+  const oidcReady = status.oidcEnabled === true && status.oidcConfigured !== false;
+  const ssoMode: 'ns' | 'oidc' | null = nsReady ? 'ns' : oidcReady ? 'oidc' : null;
+  const ssoLoginPath = ssoMode === 'ns' ? '/api/auth/sso/login' : '/api/oidc/login';
+  const localEnabled = status.localLoginEnabled !== false || forceLocal;
+  const showSso = !isSetup && ssoMode !== null;
 
   const setupTab = (
     <Form form={setupForm} layout="vertical" onFinish={handleSetup}>
@@ -427,7 +463,41 @@ export default function Login() {
             {setupTab}
           </>
         ) : (
-          loginTab
+          <>
+            {ssoErrorCode && (
+              <Alert
+                type="error"
+                showIcon
+                closable
+                message={t('sso-login-failed')}
+                description={
+                  SSO_ERROR_CODES.includes(ssoErrorCode)
+                    ? t(`oidc-error-${ssoErrorCode}`)
+                    : t('oidc-error-callback_failed')
+                }
+                style={{ marginBottom: 16 }}
+              />
+            )}
+            {showSso && (
+              <Button
+                type="primary"
+                block
+                icon={<CloudOutlined />}
+                style={{ marginBottom: localEnabled ? 16 : 0 }}
+                onClick={() => { window.location.href = ssoLoginPath; }}
+              >
+                {t('sign-in-with-sso')}
+              </Button>
+            )}
+            {showSso && localEnabled && <Divider plain>{t('or')}</Divider>}
+            {localEnabled ? (
+              loginTab
+            ) : (
+              <Text type="secondary" style={{ display: 'block', textAlign: 'center', fontSize: 12 }}>
+                {t('local-login-disabled-hint')}
+              </Text>
+            )}
+          </>
         )}
         <Text type="secondary" style={{ fontSize: 12, display: 'block', textAlign: 'center', marginTop: 8 }}>
           <InfoCircleOutlined /> {t('credentials-are-session-only')}

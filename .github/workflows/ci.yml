@@ -42,4 +42,6 @@ jobs:
         with:
           node-version: '20'
       - name: Check server syntax
-        run: node --check server/index.cjs && node --check server/sign-utils.cjs
+        run: node --check server/index.cjs && node --check server/sign-utils.cjs && node --check server/ns.cjs && node --check server/oidc.cjs
+      - name: Backend unit tests
+        run: node --test server/ns.test.cjs

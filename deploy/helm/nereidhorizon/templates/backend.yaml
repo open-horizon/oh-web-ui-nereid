@@ -1,0 +1,162 @@
+{{- /*
+Copyright (C) 2026 YIQISOFT
+SPDX-License-Identifier: Apache-2.0
+
+Express BFF backend. It runs its schema migration before listening and exits
+when DATABASE_URL is unset, so initContainers gate startup on PostgreSQL being
+reachable.
+*/ -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "nereidhorizon.backendSvcName" . }}
+  labels:
+    {{- include "nereidhorizon.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  type: ClusterIP
+  ports:
+    - port: 3001
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "nereidhorizon.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "nereidhorizon.fullname" . }}-backend
+  labels:
+    {{- include "nereidhorizon.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  replicas: {{ .Values.backend.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "nereidhorizon.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: backend
+  template:
+    metadata:
+      labels:
+        {{- include "nereidhorizon.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: backend
+    spec:
+      {{- include "nereidhorizon.imagePullSecrets" . | nindent 6 }}
+      {{- with .Values.backend.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.postgres.enabled }}
+      initContainers:
+        - name: wait-for-postgres
+          image: {{ .Values.postgres.image | quote }}
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - "until pg_isready -h {{ include "nereidhorizon.postgresSvcName" . }} -U {{ .Values.postgres.auth.username }} -d {{ .Values.postgres.auth.database }}; do echo waiting for postgres; sleep 2; done"
+      {{- end }}
+      containers:
+        - name: backend
+          image: {{ include "nereidhorizon.backendImage" . | quote }}
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          ports:
+            - containerPort: 3001
+              name: http
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "3001"
+            - name: SESSION_TTL
+              value: {{ .Values.backend.sessionTtl | quote }}
+            - name: SESSION_ABS_TTL
+              value: {{ .Values.backend.sessionAbsTtl | quote }}
+            - name: SESSION_ENC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "nereidhorizon.fullname" . }}
+                  key: session-enc-key
+            - name: DATABASE_URL
+              {{- if .Values.postgres.enabled }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "nereidhorizon.fullname" . }}
+                  key: database-url
+              {{- else }}
+              value: {{ .Values.externalDatabase.url | quote }}
+              {{- end }}
+            {{- if .Values.oidc.enabled }}
+            - name: OIDC_ISSUER
+              value: {{ .Values.oidc.issuer | quote }}
+            - name: OIDC_CLIENT_ID
+              value: {{ .Values.oidc.clientId | quote }}
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "nereidhorizon.fullname" . }}
+                  key: oidc-client-secret
+            - name: OIDC_REDIRECT_URI
+              value: {{ .Values.oidc.redirectUri | quote }}
+            - name: OIDC_SCOPES
+              value: {{ .Values.oidc.scopes | quote }}
+            - name: OIDC_ROLE_CLAIM
+              value: {{ .Values.oidc.roleClaim | quote }}
+            - name: OIDC_PLATFORM_GROUP
+              value: {{ .Values.oidc.platformGroup | quote }}
+            - name: OIDC_PARTNER_GROUP_PREFIX
+              value: {{ .Values.oidc.partnerGroupPrefix | quote }}
+            - name: OIDC_LOCAL_LOGIN_ENABLED
+              value: {{ .Values.oidc.localLoginEnabled | quote }}
+            - name: OIDC_INSECURE_SKIP_VERIFY
+              value: {{ .Values.oidc.insecureSkipVerify | quote }}
+            {{- if .Values.oidc.caBundleSecret }}
+            - name: NODE_EXTRA_CA_CERTS
+              value: /etc/ssl/certs/nereid-oidc-ca.pem
+            {{- end }}
+            {{- else }}
+            - name: OIDC_LOCAL_LOGIN_ENABLED
+              value: "true"
+            {{- end }}
+            {{- if .Values.ns.enabled }}
+            - name: NS_BASE_URL
+              value: {{ .Values.ns.baseUrl | quote }}
+            - name: NS_PRODUCT_ID
+              value: {{ .Values.ns.productId | quote }}
+            - name: NS_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "nereidhorizon.fullname" . }}
+                  key: ns-client-secret
+            - name: NS_CALLBACK_PATH
+              value: {{ .Values.ns.callbackPath | quote }}
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          {{- if and .Values.oidc.enabled .Values.oidc.caBundleSecret }}
+          volumeMounts:
+            - name: oidc-ca
+              mountPath: /etc/ssl/certs/nereid-oidc-ca.pem
+              subPath: ca.crt
+              readOnly: true
+          {{- end }}
+      {{- if and .Values.oidc.enabled .Values.oidc.caBundleSecret }}
+      volumes:
+        - name: oidc-ca
+          secret:
+            secretName: {{ .Values.oidc.caBundleSecret }}
+      {{- end }}

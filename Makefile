@@ -160,7 +160,7 @@ docker-up:
 docker-down:
 	docker compose -f $(COMPOSE_FILE) down
 
-# Stop and remove containers AND their data volumes (postgres/redis data lost).
+# Stop and remove containers AND their data volumes (postgres data lost).
 docker-clean:
 	docker compose -f $(COMPOSE_FILE) down -v
 
@@ -174,7 +174,7 @@ docker-ps:
 # Docker (local build — development/test).
 #
 # Runs a FULLY ISOLATED stack from production: it uses ONLY docker-compose.dev.yaml
-# (which defines its own redis/postgres/backend/frontend) under a DIFFERENT project
+# (which defines its own postgres/backend/frontend) under a DIFFERENT project
 # name ("nereid-dev"). So `docker-dev-up` and `docker-up` can coexist without the
 # dev containers colliding with the ghcr production containers.
 # ==========================================
@@ -184,7 +184,7 @@ docker-dev-build:
 docker-dev-up:
 	docker compose -p nereid-dev -f $(COMPOSE_DEV_FILE) up -d --build
 
-# Stop dev containers but keep dev data volumes (postgres/redis data preserved).
+# Stop dev containers but keep dev data volumes (postgres data preserved).
 docker-dev-down:
 	docker compose -p nereid-dev -f $(COMPOSE_DEV_FILE) down
 

@@ -20,9 +20,10 @@ It provides an intuitive visual interface to simplify the service lifecycle and 
 
 2. **Secure Session Authentication (production-grade)**
    - Exchange credentials are **never stored in the browser** and **never persisted in plaintext** on the server.
-   - On login, the BFF verifies the Exchange credentials, encrypts them with **AES-256-GCM** (server-side master key), and persists them in **Redis** with a 30-minute idle TTL.
-   - The browser only holds an opaque `sessionId` in an **HttpOnly + Secure + SameSite=Strict** cookie (inaccessible to JavaScript, not sent cross-site).
-   - Idle sessions expire automatically; logout destroys the session and clears the cookie.
+   - On login, the BFF verifies the Exchange credentials, encrypts them with **AES-256-GCM** (server-side master key), and persists the session in **PostgreSQL** with an idle TTL.
+   - The browser only holds an opaque `nereid_sid` in an **HttpOnly + Secure + SameSite=Lax** cookie (inaccessible to JavaScript).
+   - Idle sessions expire automatically; logout destroys the session and clears the cookie. Sessions survive backend restarts because they live in PostgreSQL, not memory.
+   - **Single Sign-On**: optional generic **OpenID Connect** (authorization code + PKCE) support. Roles are derived from a group claim, users are JIT-provisioned, and local password login can be disabled (`OIDC_LOCAL_LOGIN_ENABLED=false`) while the bootstrap admin keeps a break-glass `/login?local=1` entry.
 
 3. **Automated Deployment Signing & Key Management**
    - When creating or updating service definitions, the BFF proxy **automatically signs deployment configurations** using the RSA-PSS SHA-256 algorithm.
@@ -52,8 +53,8 @@ It provides an intuitive visual interface to simplify the service lifecycle and 
 ## 🛠️ Tech Stack
 
 - **Frontend**: React 18, Vite 5, React Router v6, Ant Design v5, TypeScript
-- **Backend (BFF Proxy)**: Express 5, Node.js (Crypto API), ioredis (Redis client)
-- **Session Store**: Redis (optional; falls back to in-memory), AES-256-GCM encrypted credentials at rest
+- **Backend (BFF Proxy)**: Express 5, Node.js (Crypto API), `openid-client` (OIDC), `pg` (PostgreSQL)
+- **Session Store**: PostgreSQL (required), AES-256-GCM encrypted sessions at rest
 - **Deployment**: Docker & Docker Compose, Nginx (TLS reverse proxy)
 
 ---
@@ -73,7 +74,9 @@ NereidAI/
 │   ├── App.tsx             # Route config, providers, session bootstrap
 │   └── main.tsx            # React application mount entrypoint
 ├── server/                 # BFF Proxy Server (Express)
-│   ├── index.cjs           # Backend entrypoint (routes, auth, Redis session, proxying)
+│   ├── index.cjs           # Backend entrypoint (routes, auth, PG session store, OIDC, proxying)
+│   ├── db.cjs              # PostgreSQL layer (schema + CRUD)
+│   ├── oidc.cjs            # OpenID Connect (discovery, login, callback, role mapping)
 │   └── sign-utils.cjs      # Cryptographic utils (RSA-PSS SHA-256 generator/signer)
 ├── docker/
 │   ├── nginx-entrypoint.sh # Generates self-signed TLS cert if none is mounted
@@ -82,7 +85,7 @@ NereidAI/
 ├── docs/                   # Documentation and API specs (openapi.yaml)
 ├── nginx.conf              # Nginx TLS + reverse-proxy + security headers
 ├── Dockerfile              # Multi-stage: backend runtime + nginx frontend
-├── docker-compose.yaml     # Production compose (ghcr.io images, redis + postgres)
+├── docker-compose.yaml     # Production compose (ghcr.io images, postgres)
 ├── docker-compose.dev.yaml # Isolated local-build dev stack (project "nereid-dev")
 ├── Makefile                # Build, dev, docker helpers
 ├── scripts/                # Offline image export/load helpers
@@ -122,7 +125,7 @@ Or start each piece individually:
     ```bash
     make dev-backend   # or: npm run dev:backend
     ```
-    Listens on `http://localhost:3001`. Requires `DATABASE_URL` (PostgreSQL) and optionally Redis. See [INSTALL.md](INSTALL.md) for environment variable reference.
+    Listens on `http://localhost:3001`. Requires `DATABASE_URL` (PostgreSQL). See [INSTALL.md](INSTALL.md) for environment variable reference.
 
 *   **Start Vite Frontend**:
     ```bash
@@ -154,14 +157,13 @@ Services (production compose):
 
 | Service | Image | Purpose | Port |
 |---|---|---|---|
-| `redis` | `redis:6.2.2-alpine` | Encrypted session store (TTL, optional) | internal |
-| `postgres` | `postgres:16-alpine` | Database for BFF (audit, settings, users) | internal |
+| `postgres` | `postgres:16-alpine` | Database for BFF (sessions, audit, settings, users) | internal |
 | `open-horizon-exchangeui-backend` | ghcr or local | BFF API proxy | `3001` (internal) |
 | `open-horizon-exchangeui-frontend` | ghcr or local | Nginx + static assets + TLS | `8090` (HTTP→HTTPS), `8443` (HTTPS) |
 
 Dev stack (`docker-dev-*`): the frontend is served over plain HTTP on `8091`, and
-postgres is exposed on `127.0.0.1:5434`; the backend/redis keep default internal
-ports, so neither collides with production.
+postgres is exposed on `127.0.0.1:5434`; the backend keeps its default internal
+port, so neither collides with production.
 
 ### Build & Launch
 
@@ -184,22 +186,37 @@ make docker-up
 
 | Variable | Default | Description |
 |---|---|---|
+| `DATABASE_URL` | _(required)_ | PostgreSQL connection string |
 | `PORT` | `3001` | BFF listen port |
-| `REDIS_URL` | `redis://redis:6379` | Redis connection string |
-| `SESSION_TTL` | `1800` | Session idle lifetime in seconds (30 min) |
-| `SESSION_ENC_KEY` | _(auto-generated)_ | 32-byte master key as 64 hex chars for AES-256-GCM. Override in production to persist across restarts. |
+| `SESSION_TTL` | `86400` | Session idle lifetime in seconds (24 h) |
+| `SESSION_ABS_TTL` | `28800` | Absolute session lifetime in seconds (8 h) |
+| `SESSION_ENC_KEY` | _(generated per boot)_ | 32-byte master key as 64 hex chars for AES-256-GCM. **Set it in production** so sessions survive restarts. |
+| `OIDC_ISSUER` | _(unset)_ | OIDC issuer URL; unset disables SSO |
+| `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | — | OIDC client credentials |
+| `OIDC_REDIRECT_URI` | — | Public callback URL, e.g. `https://host/api/oidc/callback` |
+| `OIDC_SCOPES` | `openid profile email` | Requested scopes |
+| `OIDC_ROLE_CLAIM` | `groups` | Claim holding group membership |
+| `OIDC_PLATFORM_GROUP` | `nereidhorizon-platform` | Group granting the platform role |
+| `OIDC_PARTNER_GROUP_PREFIX` | `nereidhorizon-partner-` | Group prefix mapping to an Exchange org |
+| `OIDC_LOCAL_LOGIN_ENABLED` | `true` | Set `false` to disable local password login |
+| `OIDC_INSECURE_SKIP_VERIFY` | `false` | Skip TLS verification of the IdP (dev only) |
+| `NS_BASE_URL` | _(unset)_ | NereidSphere base URL; enables NS ticket SSO (default front door when set) |
+| `NS_PRODUCT_ID` | _(unset)_ | NS product token (`horizon`) |
+| `NS_CLIENT_SECRET` | _(unset)_ | Per-product SSO secret shared with NS |
+| `NS_CALLBACK_PATH` | `/auth/ns-callback` | Public ticket landing route |
 
 ---
 
 ## 🔒 Security Model (for Audit)
 
-- **Credential confidentiality**: Exchange `Basic` credentials are encrypted with **AES-256-GCM** (`server/index.cjs`) using a server-side master key before being written to Redis. Redis never stores plaintext credentials. The master key file (`/app/.session.key`) is created with `0600` permissions.
-- **Browser attack surface**: The session identifier is an opaque random token in an `HttpOnly; Secure; SameSite=Strict` cookie. It is unreadable by JavaScript (XSS-resistant) and not attached to cross-site requests (CSRF-resistant).
+- **Credential confidentiality**: Exchange `Basic` credentials are encrypted with **AES-256-GCM** (`server/index.cjs`) using a server-side master key before being written to PostgreSQL. PostgreSQL never stores plaintext credentials. Outside containers the master key file (`./logs/.session.key`) is created with `0600` permissions.
+- **Browser attack surface**: The session identifier is an opaque random token in an `HttpOnly; Secure; SameSite=Lax` cookie. It is unreadable by JavaScript (XSS-resistant) and validated together with a CSRF double-submit token on every mutation.
 - **Transport security**: All browser traffic is served over HTTPS (TLS 1.2/1.3). HTTP is redirected to HTTPS. HSTS is enabled.
-- **Session lifetime**: 30-minute idle timeout enforced by Redis TTL plus an in-memory sweeper. Logout immediately invalidates the session and clears the cookie.
+- **Session lifetime**: idle TTL (`SESSION_TTL`) plus an absolute TTL (`SESSION_ABS_TTL`), enforced by an in-memory sweeper and expired-row cleanup in PostgreSQL. Logout immediately invalidates the session and clears the cookie.
+- **SSO safety**: SSO logins (NereidSphere ticket or direct OIDC) are fail-closed — unmapped, malformed or ambiguous group claims, missing/unknown Exchange orgs, unverified email, and disabled accounts are all rejected. NS gateway integration calls additionally require the secret `X-NS-Integration-Secret` header and an admin/operator suite role. Federated users are identified by `(issuer, subject)`, never merged by username/email.
 - **Input safety**: Request bodies are filtered through strict field whitelists (`serviceBody`, `patternBody`, `sanitizeBody`) to prevent payload pollution.
 - **Auditability**: Every API call, Exchange call, and auth event (login/logout/node_register) is recorded with timestamp, user, method, path, status, and duration in `system.log` / `audit.log`.
-- **Graceful degradation**: If Redis is unreachable, the BFF falls back to an in-memory encrypted store (single-instance only).
+- **Durability**: Sessions are stored in PostgreSQL, so a backend restart or a second replica preserves logins (no in-memory-only degradation).
 
 ---
 
@@ -213,7 +230,7 @@ This project is designed to run **without internet access** in production.
    ```
    (Equivalent to `docker compose build` + `docker save` of
    `open-horizon-exchangeui-backend`, `open-horizon-exchangeui-frontend`,
-   and `redis:6.2.2-alpine` into `nereid-images.tar`.)
+   and `postgres:16-alpine` into `nereid-images.tar`.)
 2. **Transfer** `nereid-images.tar` to the production host and load:
    ```bash
    make images-load
@@ -228,7 +245,7 @@ This project is designed to run **without internet access** in production.
 
 - **TLS certificate**: Mount a CA-signed certificate/key to `/etc/nginx/ssl/fullchain.pem` and `/etc/nginx/ssl/privkey.pem` (bind mount or volume) so the self-signed cert is not used.
 - **Session master key**: Set `SESSION_ENC_KEY` (64 hex chars) via an environment file/secret so the key persists across container recreation and is not auto-generated per host.
-- **Persist Redis data**: The `redis-data` named volume is already declared; keep it to retain session store across restarts.
+- **Persist PostgreSQL data**: The `postgres-data` named volume is already declared; keep it to retain sessions, users, and audit data across restarts.
 - **Reverse proxy**: Place the container stack behind your corporate TLS-terminating ingress if preferred; the built-in Nginx TLS is sufficient for direct exposure.
 
 ---

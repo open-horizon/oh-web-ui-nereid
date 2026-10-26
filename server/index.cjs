@@ -10,6 +10,15 @@ const path = require('path');
 const https = require('https');
 const http = require('http');
 const { generateKeyPair, signDeployment, genAndSign } = require('./sign-utils.cjs');
+const oidc = require('./oidc.cjs');
+const ns = require('./ns.cjs');
+
+// Test-only escape hatch for internal CAs not trusted by the node. Must be set
+// before the first fetch, hence applied at module load. Applies process-wide.
+if (process.env.OIDC_INSECURE_SKIP_VERIFY === 'true') {
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+}
+const LOCAL_LOGIN_ENABLED = process.env.OIDC_LOCAL_LOGIN_ENABLED !== 'false';
 
 // ==============================================
 // System Logging — append-only JSON-lines log file
@@ -159,7 +168,9 @@ async function saveExchangeConfig(cfg, updatedBy) {
   exchangeConfig = cfg;
   propagateExchangeConfig();
 }
-// Push a config change to every live session so it takes effect immediately.
+// Push a config change to every live session so it takes effect immediately,
+// and re-persist the updated payload (the PostgreSQL ciphertext would
+// otherwise stay stale until the next throttled touch).
 function propagateExchangeConfig() {
   for (const id of Object.keys(sessions)) {
     const s = sessions[id];
@@ -167,6 +178,7 @@ function propagateExchangeConfig() {
     s.baseURL = exchangeConfig.baseURL;
     s.auth = exchangeConfig.auth;
     s.orgId = exchangeConfig.orgId;
+    persistSession(id, s);
   }
 }
 
@@ -230,6 +242,16 @@ function sessionUser(s) {
 // Express middleware: time and log every incoming /api request, and write an
 // append-only audit record (console users + partner API keys), including the
 // actual Exchange endpoint that was proxied.
+app.use(async (req, res, next) => {
+  // Hydrate a PostgreSQL-backed session into the synchronous working set
+  // before any downstream middleware/handler reads it.
+  if (req.path.startsWith('/api/')) {
+    const id = sessionIdFromReq(req);
+    if (id && !sessions[id]) await hydrateSession(id);
+  }
+  next();
+});
+
 app.use((req, res, next) => {
   if (!req.path.startsWith('/api/')) return next();
   const start = Date.now();
@@ -270,7 +292,7 @@ app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 // public bootstrap endpoints (health, setup status, first-time setup, login).
 // Partner users are org-scoped: they can read/write within their bound org
 // but cannot access BFF management routes (users, exchange-config, apikeys).
-const PUBLIC_PATHS = new Set(['/api/health', '/api/setup-status', '/api/setup', '/api/login']);
+const PUBLIC_PATHS = new Set(['/api/health', '/api/setup-status', '/api/setup', '/api/login', '/api/oidc/login', '/api/oidc/callback', '/api/auth/sso/login', '/api/auth/sso/status']);
 const PARTNER_BLOCKED = ['/api/bff-users', '/api/exchange-config', '/api/apikeys', '/api/settings', '/api/catalog-services', '/api/catalog-patterns'];
 app.use((req, res, next) => {
   if (!req.path.startsWith('/api/')) return next();
@@ -305,24 +327,26 @@ app.use((req, res, next) => {
 const SERVER_START = Date.now();
 
 // ==============================================
-// Secure Session Store (in-memory working set + Redis encrypted persistence)
+// Secure Session Store (in-memory working set + PostgreSQL persistence)
 // ==============================================
 // Security model (for audit):
-//  - Exchange credentials are NEVER returned to the browser and NEVER stored in
-//    plaintext. They are encrypted with AES-256-GCM using a server-side master
-//    key (SESSION_ENC_KEY) and persisted in Redis with a short idle TTL.
-//  - The browser only holds an opaque session id in an HttpOnly + Secure +
-//    SameSite=Strict cookie, so it is inaccessible to JavaScript (XSS-safe) and
-//    not sent cross-site (CSRF-safe).
-//  - `sessions` is the decrypted in-memory working set (synchronous lookup for
-//    the request handlers); Redis is the durable, encrypted backing store that
-//    enforces the idle TTL. A background sweeper evicts expired in-memory
-//    entries so idle sessions are terminated even within a single instance.
+//  - Exchange credentials are never returned to the browser. The session
+//    payload (including the shared Exchange Basic auth) is encrypted with
+//    AES-256-GCM under SESSION_ENC_KEY and stored in PostgreSQL; the browser
+//    only holds an opaque, random session id in an HttpOnly SameSite=Lax
+//    cookie.
+//  - `sessions` is the decrypted synchronous working set. On a cache miss
+//    (e.g. after a restart, or on another replica) the session is hydrated
+//    from PostgreSQL, so restarts and multi-replica deployments preserve
+//    logins. Writes are fire-and-forget; the idle window is re-asserted at
+//    most once per 60 s per session to keep write traffic low.
+//  - A background sweeper evicts expired in-memory entries (idle TTL +
+//    absolute TTL) and deletes expired PostgreSQL rows.
 let SESSION_TTL = parseInt(process.env.SESSION_TTL || '86400', 10); // 24h idle
-const SESSION_PREFIX = 'nereid:session:';
 
-// --- Master key for AES-256-GCM (32 bytes). Persist a generated key to a file
-//     so restarts don't invalidate existing sessions; override via SESSION_ENC_KEY. ---
+// --- Master key for AES-256-GCM (32 bytes). SESSION_ENC_KEY is mandatory in
+//     container deployments so restarts keep their sessions; for bare-metal
+//     dev a generated key is persisted to a local 0600 file. ---
 const KEY_FILE = path.join(LOG_DIR, '.session.key');
 let MASTER_KEY;
 try {
@@ -356,69 +380,138 @@ function decryptJSON(blob) {
   return JSON.parse(dec.toString('utf8'));
 }
 
-// --- Redis client (optional; in-memory fallback when REDIS_URL is unset) ---
-let redis = null;
-let redisReady = false;
-let redisWarned = false;
-if (process.env.REDIS_URL) {
-  try {
-    const Redis = require('ioredis');
-    redis = new Redis(process.env.REDIS_URL, { maxRetriesPerRequest: 2, enableOfflineQueue: false });
-    redis.on('ready', () => { redisReady = true; console.log('[redis] session store connected'); });
-    redis.on('error', () => {
-      if (!redisWarned) { console.warn('[redis] unavailable, using in-memory session store'); redisWarned = true; }
-      redisReady = false;
-    });
-  } catch (e) {
-    console.warn('[redis] client init failed, using in-memory session store');
-  }
-} else {
-  console.log('[redis] REDIS_URL not set — using in-memory session store (sessions lost on restart)');
+// Persist a session (create or full update). Fire-and-forget: never block a
+// request on the session database.
+function persistSession(id, data, now = Date.now()) {
+  db.saveSession(id, {
+    userId: data.userId || data.username,
+    ciphertext: encryptJSON(data),
+    bornAt: data.createdAt || now,
+    seenAt: now,
+    ttlSec: SESSION_TTL,
+  }).catch((e) => console.warn('[session] persist failed:', e.message));
 }
 
-// Encrypted durable persistence (fire-and-forget; never blocks request path)
-function persistSession(id, data) {
-  if (!redisReady || !redis) return;
-  redis.set(SESSION_PREFIX + id, encryptJSON(data), 'EX', SESSION_TTL).catch(() => {});
-}
+// Slide the idle window; throttled to one database write per 60 s per session.
+const touchLast = new Map();
 function touchSession(id) {
-  if (!redisReady || !redis) return;
-  redis.expire(SESSION_PREFIX + id, SESSION_TTL).catch(() => {});
+  const now = Date.now();
+  sessionBorn.set(id, now);
+  const last = touchLast.get(id) || 0;
+  if (now - last < 60000) return;
+  touchLast.set(id, now);
+  db.touchSessionRow(id, now, SESSION_TTL).catch(() => {});
 }
+
+// Remove a session from memory and PostgreSQL (logout / expiry).
 function dropSession(id) {
-  if (redisReady && redis) redis.del(SESSION_PREFIX + id).catch(() => {});
+  delete sessions[id];
+  sessionBorn.delete(id);
+  sessionCreated.delete(id);
+  touchLast.delete(id);
+  db.deleteSession(id).catch(() => {});
 }
 
-// Decrypted in-memory working set (synchronous access for handlers)
+// Decrypted in-memory working set (synchronous access for handlers).
 const sessions = {};
+const sessionBorn = new Map(); // id -> last activity epoch ms (idle TTL)
 
-// Background sweeper: enforce idle TTL by removing in-memory entries whose
-// Redis key has expired (or, without Redis, entries older than SESSION_TTL).
-const sessionBorn = new Map();
+// Cache-miss hydration: decrypt a PostgreSQL session into the working set.
+// Enforces the absolute TTL across restarts and destroys undecryptable rows.
+async function hydrateSession(id) {
+  try {
+    const row = await db.loadSession(id);
+    if (!row) return null;
+    const data = decryptJSON(row.ciphertext);
+    const born = data.createdAt || Number(row.born_at);
+    if (Date.now() - born > SESSION_ABS_TTL * 1000) {
+      await db.deleteSession(id).catch(() => {});
+      return null;
+    }
+    sessions[id] = data;
+    sessionCreated.set(id, born);
+    sessionBorn.set(id, Number(row.seen_at));
+    touchLast.set(id, Date.now());
+    return data;
+  } catch (e) {
+    console.warn('[session] hydrate failed:', e.message);
+    await db.deleteSession(id).catch(() => {});
+    return null;
+  }
+}
+
+// Sweep expired entries every minute: idle TTL, absolute TTL, and database
+// rows expired on other replicas.
 setInterval(() => {
   const now = Date.now();
   for (const id of Object.keys(sessions)) {
-    let expired = false;
-    if (redisReady && redis) {
-      // presence in Redis implies not expired (TTL); absence means expired
-      // (best-effort check; ignore errors)
-      // We use the in-memory born time as a fallback guard.
-      const born = sessionBorn.get(id) || 0;
-      if (now - born > SESSION_TTL * 1000) expired = true;
-    } else {
-      const born = sessionBorn.get(id) || 0;
-      if (now - born > SESSION_TTL * 1000) expired = true;
-    }
-    if (expired) {
-      delete sessions[id];
-      sessionBorn.delete(id);
-    }
+    const idle = now - (sessionBorn.get(id) || 0);
+    const absolute = now - (sessionCreated.get(id) || 0);
+    if (idle > SESSION_TTL * 1000 || absolute > SESSION_ABS_TTL * 1000) dropSession(id);
+  }
+  db.deleteExpiredSessions().catch(() => {});
+  for (const [k, v] of loginFailures) {
+    if (now - v.first > 300000) loginFailures.delete(k);
   }
 }, 60000);
+
+// ---- Local login rate limiting (in-memory, no new dependency) ----
+// Five failed attempts per (IP, username) within five minutes lock further
+// attempts. Successful logins clear the counter. OIDC failures do not count.
+const loginFailures = new Map();
+function loginLocked(ip, username) {
+  const e = loginFailures.get(`${ip}|${username}`);
+  return !!(e && e.count >= 5 && Date.now() - e.first < 300000);
+}
+function recordLoginFailure(ip, username) {
+  const k = `${ip}|${username}`;
+  const e = loginFailures.get(k);
+  if (!e || Date.now() - e.first > 300000) loginFailures.set(k, { count: 1, first: Date.now() });
+  else e.count += 1;
+}
+function clearLoginFailures(ip, username) {
+  loginFailures.delete(`${ip}|${username}`);
+}
 
 // Generate unique session ID for authentication tracking
 function sid() {
   return crypto.randomBytes(24).toString('hex');
+}
+
+// Create a session from an authenticated identity (local or OIDC). Returns
+// the cookie id, the CSRF token, and the stored data payload. Every session
+// copies the shared Exchange connection so proxying stays identity-agnostic.
+function issueSession({
+  username, role, orgId, org, availableOrgs,
+  authType = 'local', email = null, issuer = null, subject = null, idToken = null,
+}) {
+  const id = sid();
+  const csrf = csrfToken();
+  const now = Date.now();
+  const data = {
+    userId: username,
+    username,
+    role,
+    baseURL: exchangeConfig.baseURL,
+    auth: exchangeConfig.auth,
+    orgId,
+    org: org || null,
+    availableOrgs: availableOrgs || [orgId],
+    version: exchangeConfig.version || '',
+    csrfToken: csrf,
+    createdAt: now,
+    authType,
+    email,
+    issuer,
+    subject,
+    idToken,
+  };
+  sessions[id] = data;
+  sessionBorn.set(id, now);
+  sessionCreated.set(id, now);
+  touchLast.set(id, now);
+  persistSession(id, data, now);
+  return { id, csrf, data };
 }
 
 // Core Exchange API client - abstracts HTTP calls with session auth
@@ -547,7 +640,8 @@ function sessionIdFromReq(req) {
 
 // Session resolver (synchronous). Reads the opaque session id from the HttpOnly
 // cookie (or X-Session-Id header for non-browser tooling), looks it up in the
-// decrypted in-memory working set, and refreshes the Redis idle TTL.
+// decrypted in-memory working set, and slides the PostgreSQL idle window.
+// Misses are hydrated by the async middleware mounted earlier.
 function session(req) {
   const id = sessionIdFromReq(req);
   if (!id) return null;
@@ -571,9 +665,19 @@ function apiKeyRow(r) {
 }
 
 // Reports whether the instance still needs first-time setup (no local users yet).
-app.get('/api/setup-status', async (req, res) => {
-  const users = await db.loadUsers();
-  res.json({ needsSetup: users.length === 0, exchangeConfigured: !!exchangeConfig.configured });
+app.get('/api/setup-status', (req, res, next) => {
+  (async () => {
+    const users = await db.loadUsers();
+    res.json({
+      needsSetup: users.length === 0,
+      exchangeConfigured: !!exchangeConfig.configured,
+      oidcEnabled: oidc.cfg.enabled,
+      oidcConfigured: oidc.status().configured,
+      nsEnabled: ns.cfg.enabled,
+      nsConfigured: ns.status().configured,
+      localLoginEnabled: LOCAL_LOGIN_ENABLED,
+    });
+  })().catch(next);
 });
 
 // First-time setup: create the initial platform account and persist the shared
@@ -608,7 +712,7 @@ app.post('/api/setup', async (req, res) => {
     await db.saveExchangeConfig(cfg, adminUser);
     exchangeConfig = cfg;
     const { hash, salt } = hashPassword(adminPassword);
-    await db.createUser({ username: adminUser, hash, salt, role: 'platform', createdAt: new Date().toISOString() });
+    await db.createUser({ username: adminUser, hash, salt, role: 'platform', createdAt: new Date().toISOString(), bootstrap: true });
     logEvent('setup', { adminUser, orgId }, orgId);
     res.json({ ok: true });
   } catch (e) {
@@ -622,35 +726,37 @@ app.post('/api/login', async (req, res) => {
     const { username, password, org } = req.body;
     if (!username || !password) return res.status(400).json({ msg: 'Missing username or password' });
     if (!exchangeConfig.configured) return res.status(400).json({ msg: 'Exchange not configured' });
-    // When `org` is provided, look up a partner user scoped to that org.
-    // When omitted, only match platform users (org IS NULL).
+    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || '';
+    if (loginLocked(ip, username)) {
+      return res.status(429).json({ msg: 'Too many failed attempts, try again later' });
+    }
+    // When local login is disabled, only the bootstrap break-glass account
+    // may authenticate with a password; everyone else must use OIDC.
     const u = org ? await db.getUser(username, org) : await db.getUser(username);
-    if (!u || !verifyPassword(password, u.hash, u.salt)) {
+    if (!u || !u.hash || !verifyPassword(password, u.hash, u.salt)) {
+      recordLoginFailure(ip, username);
       return res.status(401).json({ msg: 'Invalid username or password' });
     }
-    const id = sid();
+    if (u.disabled) return res.status(403).json({ msg: 'Account disabled' });
+    if (!LOCAL_LOGIN_ENABLED && !u.bootstrap) {
+      return res.status(403).json({ msg: 'Local login disabled, use SSO' });
+    }
+    clearLoginFailures(ip, username);
     const orgId = u.role === 'partner' ? u.org : exchangeConfig.orgId;
-    const csrf = csrfToken();
-    const data = {
-      userId: u.username,
-      username: u.username,
-      role: u.role,
-      baseURL: exchangeConfig.baseURL,
-      auth: exchangeConfig.auth,
-      orgId,
-      version: exchangeConfig.version || '',
-      csrfToken: csrf,
-    };
-    sessions[id] = data;
-    sessionBorn.set(id, Date.now());
-    sessionCreated.set(id, Date.now());
-    persistSession(id, data);
-    logEvent('login', { username: u.username, role: u.role, orgId, org: u.org || null }, orgId);
+    const { id, csrf, data } = issueSession({
+      username: u.username, role: u.role, orgId, org: u.org || null,
+      authType: 'local', email: u.email || null,
+    });
+    logEvent('login', { username: u.username, role: u.role, orgId, org: u.org || null, via: 'local' }, orgId);
+    const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
     res.setHeader('Set-Cookie', [
       sessionCookie(id, req),
-      `nereid_csrf=${csrf}; SameSite=Lax; Path=/; Max-Age=${SESSION_TTL}`,
+      `nereid_csrf=${csrf}; ${secure ? 'Secure; ' : ''}SameSite=Lax; Path=/; Max-Age=${SESSION_TTL}`,
     ]);
-    res.json({ orgId, version: data.version, role: u.role, username: u.username, org: u.org || null, csrfToken: csrf });
+    res.json({
+      orgId, version: data.version, role: u.role, username: u.username,
+      org: u.org || null, availableOrgs: data.availableOrgs, authType: 'local', csrfToken: csrf,
+    });
   } catch (e) {
     res.status(502).json({ msg: `Login failed: ${e.message}` });
   }
@@ -661,23 +767,325 @@ app.get('/api/me', (req, res) => {
   const s = session(req);
   if (!s) return res.status(401).json({ msg: 'Not logged in' });
   const csrf = s.csrfToken || csrfToken();
-  if (!s.csrfToken) s.csrfToken = csrf;
-  res.setHeader('Set-Cookie', `nereid_csrf=${csrf}; SameSite=Lax; Path=/; Max-Age=${SESSION_TTL}`);
-  res.json({ orgId: s.orgId, version: s.version || '', role: s.role, username: s.username, org: s.org, csrfToken: csrf });
+  if (!s.csrfToken) {
+    s.csrfToken = csrf;
+    persistSession(sessionIdFromReq(req), s);
+  }
+  const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+  res.setHeader('Set-Cookie', `nereid_csrf=${csrf}; ${secure ? 'Secure; ' : ''}SameSite=Lax; Path=/; Max-Age=${SESSION_TTL}`);
+  res.json({
+    orgId: s.orgId, version: s.version || '', role: s.role, username: s.username,
+    org: s.org, availableOrgs: s.availableOrgs || [s.orgId],
+    authType: s.authType || 'local', email: s.email || null, csrfToken: csrf,
+  });
 });
 
-app.post('/api/logout', (req, res) => {
+// Logout: destroy the server session and clear cookies. OIDC sessions also
+// return the provider end-session URL so the browser can complete RP logout;
+// NS-ticket sessions return the NS portal logout URL.
+app.post('/api/logout', async (req, res) => {
   const id = sessionIdFromReq(req);
-  if (id) {
-    const u = sessions[id]?.username;
-    delete sessions[id];
-    sessionBorn.delete(id);
-    sessionCreated.delete(id);
+  let redirect = null;
+  if (id && sessions[id]) {
+    const s = sessions[id];
+    logEvent('logout', { username: s.username || '?', via: s.authType || 'local' }, '');
+    if (s.authType === 'oidc' && oidc.cfg.enabled) {
+      try {
+        const base = new URL(oidc.cfg.redirectUri).origin;
+        redirect = await oidc.endSessionUrl(s.idToken, `${base}/login`) || null;
+      } catch { redirect = null; }
+    } else if (s.authType === 'ns' && ns.cfg.enabled) {
+      redirect = `${ns.cfg.baseUrl}/auth/logout`;
+    }
     dropSession(id);
-    logEvent('logout', { username: u || '?' }, '');
   }
   res.setHeader('Set-Cookie', sessionCookie('', req));
-  res.json({ ok: true });
+  res.json({ ok: true, redirect });
+});
+
+// Switch the effective org for a partner session that belongs to multiple
+// partner groups. The target must be in the orgs captured at last login.
+app.post('/api/switch-org', async (req, res) => {
+  const s = session(req);
+  if (!s) return res.status(401).json({ msg: 'Not logged in' });
+  const target = String(req.body?.org || '');
+  if (s.role !== 'partner') return res.status(403).json({ msg: 'Only partner accounts switch orgs' });
+  const allowed = s.availableOrgs || [];
+  if (!allowed.includes(target)) return res.status(403).json({ msg: 'Org not granted by SSO' });
+  s.orgId = target;
+  s.org = target;
+  persistSession(sessionIdFromReq(req), s);
+  logEvent('org.switch', { username: s.username, orgId: target }, target);
+  res.json({ ok: true, orgId: target });
+});
+
+// ==============================================
+// OIDC (authorization code + PKCE) login routes
+// ==============================================
+const OIDC_STATE_COOKIE = 'nereid_oidc';
+
+function oidcCookieFlags(req, maxAge) {
+  const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+  return `HttpOnly; ${secure ? 'Secure; ' : ''}SameSite=Lax; Path=/; Max-Age=${maxAge}`;
+}
+function oidcErrorRedirect(res, code) {
+  logEvent('oidc.login_failed', { code }, '');
+  return res.redirect(`/login?oidc_error=${encodeURIComponent(code)}`);
+}
+
+// Kick off the authorization-code flow with state/nonce/PKCE sealed in a
+// short-lived HttpOnly cookie.
+app.get('/api/oidc/login', async (req, res) => {
+  if (!oidc.cfg.enabled) return oidcErrorRedirect(res, 'oidc_disabled');
+  if (!exchangeConfig.configured) return oidcErrorRedirect(res, 'not_configured');
+  try {
+    const start = await oidc.beginLogin();
+    if (!start) return oidcErrorRedirect(res, 'oidc_unavailable');
+    const bundle = Buffer.from(JSON.stringify({ state: start.state, nonce: start.nonce, verifier: start.verifier }))
+      .toString('base64url');
+    res.setHeader('Set-Cookie', `${OIDC_STATE_COOKIE}=${bundle}; ${oidcCookieFlags(req, 600)}`);
+    return res.redirect(start.url);
+  } catch (e) {
+    console.warn('[oidc] login start failed:', e.message);
+    return oidcErrorRedirect(res, 'oidc_unavailable');
+  }
+});
+
+// Authorization callback: validate the ID token, map groups to a BFF role,
+// JIT-provision/update the federated user, and issue the normal session.
+app.get('/api/oidc/callback', async (req, res) => {
+  const fail = (code) => {
+    res.setHeader('Set-Cookie', `${OIDC_STATE_COOKIE}=; ${oidcCookieFlags(req, 0)}`);
+    return oidcErrorRedirect(res, code);
+  };
+  if (!oidc.cfg.enabled || !exchangeConfig.configured) return fail('oidc_disabled');
+  const m = (req.headers.cookie || '').match(`(?:^|;\\s*)${OIDC_STATE_COOKIE}=([^;]+)`);
+  if (!m) return fail('state_missing');
+  let saved;
+  try { saved = JSON.parse(Buffer.from(m[1], 'base64url').toString('utf8')); } catch { return fail('state_invalid'); }
+  if (req.query.error) return fail('idp_denied');
+  if (!req.query.code || !req.query.state) return fail('callback_invalid');
+  try {
+    const { claims, idToken } = await oidc.completeLogin(req.query, saved);
+    if (claims.email_verified === false) return fail('email_unverified');
+    const mapped = oidc.resolveRole(claims);
+    if (mapped.error) return fail(mapped.error);
+
+    // Partner groups encode Exchange org ids; every one must exist.
+    let orgs = [];
+    if (mapped.role === 'partner') {
+      orgs = mapped.orgs;
+      const adminSess = { baseURL: exchangeConfig.baseURL, auth: exchangeConfig.auth, orgId: 'root' };
+      for (const org of orgs) {
+        const check = await exch(adminSess, 'GET', `/orgs/${org}`);
+        const exists = check.status === 200 && check.data && check.data.orgs && Object.keys(check.data.orgs).length > 0;
+        if (!exists) return fail('unknown_org');
+      }
+    }
+
+    const issuerId = claims.iss || oidc.cfg.issuerUrl;
+    const subject = String(claims.sub);
+    const username = claims.preferred_username
+      || (claims.email ? claims.email.split('@')[0] : subject);
+    const email = claims.email || null;
+    const primaryOrg = mapped.role === 'partner' ? orgs[0] : null;
+
+    let row = await db.getOidcUser(issuerId, subject);
+    if (row) {
+      if (row.disabled) return fail('account_disabled');
+      await db.updateOidcUser(issuerId, subject, { username, role: mapped.role, org: primaryOrg, email });
+    } else {
+      await db.createUser({
+        username, role: mapped.role, org: primaryOrg, email,
+        issuer: issuerId, subject, createdAt: new Date().toISOString(),
+      });
+      logEvent('oidc.user_jit', { username, role: mapped.role, org: primaryOrg, issuer: issuerId }, primaryOrg || exchangeConfig.orgId);
+    }
+
+    const orgId = mapped.role === 'partner' ? primaryOrg : exchangeConfig.orgId;
+    const { id, csrf } = issueSession({
+      username, role: mapped.role, orgId, org: primaryOrg,
+      availableOrgs: mapped.role === 'partner' ? orgs : [orgId],
+      authType: 'oidc', email, issuer: issuerId, subject, idToken,
+    });
+    logEvent('login', { username, role: mapped.role, orgId, via: 'oidc', issuer: issuerId }, orgId);
+    const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+    res.setHeader('Set-Cookie', [
+      `${OIDC_STATE_COOKIE}=; ${oidcCookieFlags(req, 0)}`,
+      `nereid_sid=${id}; HttpOnly; ${secure ? 'Secure; ' : ''}SameSite=Lax; Path=/; Max-Age=${SESSION_TTL}`,
+      `nereid_csrf=${csrf}; ${secure ? 'Secure; ' : ''}SameSite=Lax; Path=/; Max-Age=${SESSION_TTL}`,
+    ]);
+    return res.redirect('/');
+  } catch (e) {
+    console.warn('[oidc] callback failed:', e.message);
+    return fail('callback_failed');
+  }
+});
+
+// ==============================================
+// NS (NereidSphere) ticket SSO routes
+// ==============================================
+const NS_STATE_COOKIE = 'nereid_ns';
+
+function nsCookieFlags(req, maxAge) {
+  const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+  return `HttpOnly; ${secure ? 'Secure; ' : ''}SameSite=Lax; Path=/; Max-Age=${maxAge}`;
+}
+function nsErrorRedirect(res, code) {
+  logEvent('ns.login_failed', { code }, '');
+  return res.redirect(`/login?ns_error=${encodeURIComponent(code)}`);
+}
+
+// NS login entry: redirects to NS /auth/enter/{product}. NS runs the actual
+// IdP login, then mints a single-use ticket and sends the browser back to the
+// product callback fixed in NS config (not to `to`). `to` is only a relative
+// in-app landing path carried through the ticket for the final redirect.
+app.get('/api/auth/sso/login', async (req, res) => {
+  if (!ns.cfg.enabled) return nsErrorRedirect(res, 'ns_disabled');
+  if (!exchangeConfig.configured) return nsErrorRedirect(res, 'not_configured');
+  try {
+    const enterUrl = new URL(`/auth/enter/${ns.cfg.productId}`, ns.cfg.baseUrl);
+    const to = ns.safeRedirectPath(req.query.to ? String(req.query.to) : '/');
+    enterUrl.searchParams.set('to', to);
+    return res.redirect(enterUrl.toString());
+  } catch (e) {
+    console.warn('[ns] login start failed:', e.message);
+    return nsErrorRedirect(res, 'ns_unavailable');
+  }
+});
+
+// SSO status endpoint (used by frontend to detect mode)
+app.get('/api/auth/sso/status', (req, res) => {
+  const oidcSt = oidc.status();
+  const nsSt = ns.status();
+  // Prefer NS when both are configured; frontend can check mode
+  let mode = 'local';
+  let enabled = false;
+  let loginPath = '/api/login';
+  let logoutUrl = null;
+  if (nsSt.enabled && nsSt.configured) {
+    mode = 'ns';
+    enabled = true;
+    loginPath = '/api/auth/sso/login';
+    logoutUrl = `${ns.cfg.baseUrl}/auth/logout`;
+  } else if (oidcSt.enabled && oidcSt.configured) {
+    mode = 'oidc';
+    enabled = true;
+    loginPath = '/api/oidc/login';
+    // OIDC logout URL would need the issuer's end_session_endpoint
+    logoutUrl = null;
+  }
+  res.json({ mode, enabled, loginPath, logoutUrl, last_error: '' });
+});
+
+// NS ticket callback: NS redirects here with ?ticket=... after successful IdP login.
+// Public path (not under /api/) matches the product's sso_callback_path registered
+// in NS; nginx proxies this prefix straight to the backend instead of the SPA.
+app.get('/auth/ns-callback', async (req, res) => {
+  const fail = (code) => {
+    return nsErrorRedirect(res, code);
+  };
+  if (!ns.cfg.enabled) return fail('ns_disabled');
+  if (!exchangeConfig.configured) return fail('not_configured');
+  
+  const ticket = req.query.ticket;
+  if (!ticket || typeof ticket !== 'string') return fail('ticket_missing');
+  if (req.query.error) return fail('idp_denied');
+
+  try {
+    // Exchange the ticket server-to-server for the verified identity.
+    const identity = await ns.verifyTicket(ticket);
+
+    // Map realm roles to a BFF role/orgs (same rules as direct OIDC).
+    const mapped = ns.resolveRole(identity);
+    if (mapped.error) return fail(mapped.error);
+
+    // Verify partner orgs exist in Exchange
+    let orgs = [];
+    if (mapped.role === 'partner') {
+      orgs = mapped.orgs;
+      const adminSess = { baseURL: exchangeConfig.baseURL, auth: exchangeConfig.auth, orgId: 'root' };
+      for (const org of orgs) {
+        const check = await exch(adminSess, 'GET', `/orgs/${org}`);
+        const exists = check.status === 200 && check.data && check.data.orgs && Object.keys(check.data.orgs).length > 0;
+        if (!exists) return fail('unknown_org');
+      }
+    }
+
+    const issuerId = identity.issuer;
+    const subject = String(identity.subject);
+    const username = identity.username;
+    const email = identity.email;
+    const primaryOrg = mapped.role === 'partner' ? orgs[0] : null;
+
+    // JIT provision/update the federated user (same table as direct OIDC)
+    let row = await db.getOidcUser(issuerId, subject);
+    if (row) {
+      if (row.disabled) return fail('account_disabled');
+      await db.updateOidcUser(issuerId, subject, { username, role: mapped.role, org: primaryOrg, email });
+    } else {
+      await db.createUser({
+        username, role: mapped.role, org: primaryOrg, email,
+        issuer: issuerId, subject, createdAt: new Date().toISOString(),
+      });
+      logEvent('ns.user_jit', { username, role: mapped.role, org: primaryOrg, issuer: issuerId }, primaryOrg || exchangeConfig.orgId);
+    }
+
+    const orgId = mapped.role === 'partner' ? primaryOrg : exchangeConfig.orgId;
+    const { id, csrf } = issueSession({
+      username, role: mapped.role, orgId, org: primaryOrg,
+      availableOrgs: mapped.role === 'partner' ? orgs : [orgId],
+      authType: 'ns', email, issuer: issuerId, subject, idToken: null,
+    });
+    logEvent('login', { username, role: mapped.role, orgId, via: 'ns', issuer: issuerId }, orgId);
+    const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+    res.setHeader('Set-Cookie', [
+      `nereid_sid=${id}; HttpOnly; ${secure ? 'Secure; ' : ''}SameSite=Lax; Path=/; Max-Age=${SESSION_TTL}`,
+      `nereid_csrf=${csrf}; ${secure ? 'Secure; ' : ''}SameSite=Lax; Path=/; Max-Age=${SESSION_TTL}`,
+    ]);
+    // Cookie-session SPA: land on the relative in-app path the ticket carried.
+    const landing = ns.safeRedirectPath(identity.to || (req.query.to ? String(req.query.to) : '/'));
+    return res.redirect(landing);
+  } catch (e) {
+    console.warn('[ns] callback failed:', e.message);
+    return fail(e.message.startsWith('ns_') || e.message.startsWith('ticket_') ? e.message : 'callback_failed');
+  }
+});
+
+// NS console tenant (Exchange org) picker. The NS admin console fetches this
+// through the NS gateway at /p/horizon/v1/integration/ns/tenants; the gateway
+// strips inbound copies and stamps X-NS-Integration-Secret (this product's
+// SSO secret) on this exact path plus the verified X-User-Roles header. The
+// path is intentionally outside /api/ (the global session/CSRF guards only
+// cover /api/), so authentication happens entirely inside this handler.
+app.get('/v1/integration/ns/tenants', async (req, res) => {
+  const provided = req.headers['x-ns-integration-secret'];
+  const expected = ns.cfg.clientSecret || '';
+  const okSecret = typeof provided === 'string' && provided.length > 0 &&
+    expected.length > 0 && provided.length === expected.length &&
+    crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
+  if (!okSecret) return res.status(401).json({ msg: 'invalid integration secret' });
+
+  const roles = String(req.headers['x-user-roles'] || '')
+    .split(',').map((r) => r.trim()).filter(Boolean);
+  if (!roles.includes('admin') && !roles.includes('operator')) {
+    return res.status(403).json({ msg: 'admin role required' });
+  }
+
+  if (!exchangeConfig.configured) return res.status(502).json({ msg: 'org list unavailable' });
+  try {
+    const adminSess = { baseURL: exchangeConfig.baseURL, auth: exchangeConfig.auth, orgId: 'root' };
+    const r = await exch(adminSess, 'GET', '/orgs');
+    if (r.status !== 200 || !r.data || !r.data.orgs) {
+      return res.status(502).json({ msg: 'org list unavailable' });
+    }
+    const orgs = Object.keys(r.data.orgs).sort();
+    logEvent('ns.tenants_list', { count: orgs.length }, 'root');
+    return res.json(orgs.map((org) => ({ tenant_id: org, tenant_name: org })));
+  } catch (e) {
+    console.warn('[ns] tenant list failed:', e.message);
+    return res.status(502).json({ msg: 'org list unavailable' });
+  }
 });
 
 // ---- Local BFF user management (platform only) ----
@@ -751,8 +1159,18 @@ app.delete('/api/bff-users/:username', requireRole('platform'), async (req, res)
   if (target === req.sessionUser.username && (!org || org === (req.sessionUser.org || ''))) {
     return res.status(400).json({ msg: 'Cannot delete yourself' });
   }
+  // OIDC users are identified by (issuer, subject); local users by username/org.
+  if (req.query.issuer && req.query.subject) {
+    const u = await db.getOidcUser(String(req.query.issuer), String(req.query.subject));
+    if (!u) return res.status(404).json({ msg: 'User not found' });
+    if (u.bootstrap) return res.status(400).json({ msg: 'Cannot delete the bootstrap admin' });
+    await db.deleteOidcUser(String(req.query.issuer), String(req.query.subject));
+    logEvent('user.delete', { username: u.username, oidc: true, issuer: u.issuer }, u.org || exchangeConfig.orgId);
+    return res.json({ ok: true });
+  }
   const u = org ? await db.getUser(target, org) : await db.getUser(target);
   if (!u) return res.status(404).json({ msg: 'User not found' });
+  if (u.bootstrap) return res.status(400).json({ msg: 'Cannot delete the bootstrap admin' });
   const exchangeUserOrg = u.org;
   // Optionally delete the corresponding Exchange user
   let exchangeUserDeleted = false;
@@ -791,8 +1209,7 @@ app.put('/api/bff-users/:username/password', requireAuth, async (req, res) => {
 });
 
 // Update BFF user role/org (platform only). Also optionally resets password.
-app.put('/api/bff-users/:username', requireRole('platform'), async (req, res) => {
-  const { role, org: newOrg, newPassword } = req.body;
+app.put('/api/bff-users/:username', requireRole('platform'), async (req, res) => {  const { role, org: newOrg, newPassword } = req.body;
   const org = req.query.org; // org query param to identify the target
   const target = req.params.username;
   const u = org ? await db.getUser(target, org) : await db.getUser(target);
@@ -812,6 +1229,26 @@ app.put('/api/bff-users/:username', requireRole('platform'), async (req, res) =>
   }
   await db.updateUser(target, org || null, updates);
   logEvent('user.update', { username: target, org: org || null, updates: Object.keys(updates) }, exchangeConfig.orgId);
+  res.json({ ok: true });
+});
+
+// Enable/disable a user (platform only). Disabled OIDC users are rejected at
+// the next login; disabling is preferred over deletion for federated accounts
+// because deletion would be silently undone by JIT provisioning.
+app.put('/api/bff-users/:username/disabled', requireRole('platform'), async (req, res) => {
+  const disabled = !!req.body?.disabled;
+  // Identity is passed as query params (mirrors the delete route): OIDC users
+  // by (issuer, subject), local users by (org).
+  const org = req.query.org;
+  const issuer = req.query.issuer;
+  const subject = req.query.subject;
+  const u = issuer && subject
+    ? await db.getOidcUser(String(issuer), String(subject))
+    : (org ? await db.getUser(req.params.username, org) : await db.getUser(req.params.username));
+  if (!u) return res.status(404).json({ msg: 'User not found' });
+  if (disabled && u.bootstrap) return res.status(400).json({ msg: 'Cannot disable the bootstrap admin' });
+  await db.setUserDisabled(issuer || null, u.issuer ? u.subject : req.params.username, issuer ? undefined : (org || null), disabled);
+  logEvent(disabled ? 'user.disable' : 'user.enable', { username: u.username, org: u.org || null }, u.org || exchangeConfig.orgId);
   res.json({ ok: true });
 });
 
@@ -3336,6 +3773,8 @@ setInterval(purgeAuditIfNeeded, 60 * 60 * 1000);
   await db.initSchema();
   await loadExchangeConfigFromDB();
   await loadSettingsFromDB();
+  // Warm the OIDC discovery cache; failures are retried at first login.
+  if (oidc.cfg.enabled) oidc.getClient().catch(() => {});
   app.listen(PORT, () => {
     console.log(`Backend server running on http://0.0.0.0:${PORT}`);
   });

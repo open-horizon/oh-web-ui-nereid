@@ -27,16 +27,22 @@ NereidAI is a BFF (Backend-For-Frontend) proxy for the Open Horizon Exchange API
 Key security properties:
 
 - **Credential confidentiality** — Exchange `Basic` credentials are encrypted with
-  AES-256-GCM using a server-side master key before being written to Redis. Redis
-  never stores plaintext credentials. The master key file (`.session.key`) is
-  created with `0600` permissions and must not be committed.
+  AES-256-GCM using a server-side master key before being written to PostgreSQL.
+  PostgreSQL never stores plaintext credentials. The master key file (`.session.key`)
+  is created with `0600` permissions and must not be committed.
 - **Browser attack surface** — The session identifier is an opaque random token in
-  an `HttpOnly; Secure; SameSite=Strict` cookie. It is unreadable by JavaScript
-  (XSS-resistant) and not attached to cross-site requests (CSRF-resistant).
+  an `HttpOnly; Secure; SameSite=Lax` cookie. It is unreadable by JavaScript
+  (XSS-resistant) and every mutation is gated by a CSRF double-submit token.
 - **Transport security** — All browser traffic is served over HTTPS (TLS 1.2/1.3).
   HTTP is redirected to HTTPS. HSTS is enabled.
-- **Session lifetime** — 30-minute idle timeout enforced by Redis TTL plus an
-  in-memory sweeper. Logout immediately invalidates the session and clears the cookie.
+- **Session lifetime** — Idle (`SESSION_TTL`) and absolute (`SESSION_ABS_TTL`)
+  timeouts, enforced by an in-memory sweeper and expired-row cleanup in PostgreSQL.
+  Logout immediately invalidates the session and clears the cookie.
+- **SSO** — Optional OpenID Connect (authorization code + PKCE). Logins are
+  fail-closed on missing/ambiguous group claims, unknown orgs, unverified email, or
+  disabled accounts. Federated identities are keyed by `(issuer, subject)` and are
+  never merged by username/email. The BFF stores no IdP refresh/access tokens; an ID
+  token is retained only inside the encrypted session to support RP-initiated logout.
 - **Input safety** — Request bodies are filtered through strict field whitelists
   (`serviceBody`, `patternBody`, `sanitizeBody`) to prevent payload pollution.
 - **Auditability** — Every API call, Exchange call, and auth event
@@ -48,5 +54,7 @@ Key security properties:
   persists across restarts and is not auto-generated per host.
 - Mount a CA-signed TLS certificate at `/etc/nginx/ssl/fullchain.pem` and
   `/etc/nginx/ssl/privkey.pem` instead of the bundled self-signed certificate.
-- Keep the `redis-data` volume persistent.
+- Keep the `postgres-data` volume persistent.
+- Set `OIDC_LOCAL_LOGIN_ENABLED=false` when using SSO, keeping `/login?local=1`
+  only as the bootstrap break-glass entry.
 - Never commit `.session.key`, `.env`, or any credentials.

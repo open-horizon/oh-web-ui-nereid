@@ -9,6 +9,12 @@ export interface BffUser {
   role: string;
   org: string | null;
   createdAt: string;
+  email?: string | null;
+  issuer?: string | null;
+  subject?: string | null;
+  disabled?: boolean;
+  bootstrap?: boolean;
+  authType?: 'local' | 'oidc';
 }
 
 export const BffUserAPI = {
@@ -22,9 +28,25 @@ export const BffUserAPI = {
     const qs = org ? `?org=${encodeURIComponent(org)}` : '';
     return put<{ ok: boolean }>(`/bff-users/${username}${qs}`, data);
   },
-  delete(username: string, org?: string, deleteExchangeUser?: boolean) {
-    let qs = org ? `?org=${encodeURIComponent(org)}` : '?';
-    if (deleteExchangeUser) qs += (qs.includes('=') ? '&' : '') + 'deleteExchangeUser=true';
-    return del(`/bff-users/${username}${qs}`);
+  setDisabled(user: BffUser, disabled: boolean) {
+    const qs = new URLSearchParams();
+    if (user.issuer) {
+      qs.set('issuer', user.issuer);
+      qs.set('subject', user.subject || '');
+    } else if (user.org) {
+      qs.set('org', user.org);
+    }
+    return put<{ ok: boolean }>(`/bff-users/${encodeURIComponent(user.username)}/disabled?${qs.toString()}`, { disabled });
+  },
+  delete(user: BffUser, deleteExchangeUser?: boolean) {
+    const qs = new URLSearchParams();
+    if (user.issuer) {
+      qs.set('issuer', user.issuer);
+      qs.set('subject', user.subject || '');
+    } else if (user.org) {
+      qs.set('org', user.org);
+    }
+    if (deleteExchangeUser) qs.set('deleteExchangeUser', 'true');
+    return del(`/bff-users/${encodeURIComponent(user.username)}?${qs.toString()}`);
   },
 };

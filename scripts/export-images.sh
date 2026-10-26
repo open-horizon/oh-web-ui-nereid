@@ -16,7 +16,7 @@ OUT_FILE="${2:-nereid-images.tar}"
 IMAGES=(
   "open-horizon-exchangeui-backend:${IMAGE_TAG}"
   "open-horizon-exchangeui-frontend:${IMAGE_TAG}"
-  "redis:6.2.2-alpine"
+  "postgres:16-alpine"
 )
 
 echo ">> Building images..."

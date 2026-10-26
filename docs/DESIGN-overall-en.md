@@ -29,7 +29,7 @@ NereidAI is a BFF (Backend-For-Frontend) proxy console that provides a graphical
 | Backend Framework | Express.js | 5 |
 | Runtime | Node.js | 20+ |
 | Database | PostgreSQL | 16 |
-| Cache (optional) | Redis | 6.2 |
+| SSO | OpenID Connect (`openid-client`) | |
 | Reverse Proxy | nginx | |
 | Containerization | Docker / docker-compose | |
 
@@ -39,19 +39,19 @@ NereidAI is a BFF (Backend-For-Frontend) proxy console that provides a graphical
 
 ```
 [Browser SPA] -- HTTPS --> [nginx] -- /api --> [Express BFF] --> [Open Horizon Exchange]
-                                                          |
-                                                     [PostgreSQL]
-                                                          |
-                                                     [Redis (optional)]
+                                                          |                ^
+                                                     [PostgreSQL]          |
+                                                          |          [OIDC IdP]
+                                                     [sessions]
 ```
 
 **Layer Description:**
 
 - **Frontend (SPA)**: React + Ant Design + TypeScript, built with Vite, runs in the browser
 - **Reverse Proxy (nginx)**: TLS termination, static asset serving, API proxy, security headers
-- **BFF Backend (Express.js 5)**: All business logic — authentication, session management, Exchange proxy, service deployment signing, audit
-- **Database (PostgreSQL)**: Required component, stores BFF users, API keys, Exchange config, audit log
-- **Redis (optional)**: Encrypted session persistence, degrades gracefully to in-memory when unavailable
+- **BFF Backend (Express.js 5)**: All business logic — authentication (local + OIDC), session management, Exchange proxy, service deployment signing, audit
+- **Database (PostgreSQL)**: Required component, stores BFF users, API keys, Exchange config, audit log, and encrypted sessions
+- **OIDC IdP (optional)**: External OpenID Connect provider for SSO; the BFF performs discovery and role mapping from group claims
 
 ---
 

@@ -114,29 +114,60 @@ Created idempotently on every startup by `initSchema()` in `server/db.cjs`.
 
 ### `users`
 
-Local BFF accounts (distinct from Exchange users). Passwords are stored as a
-hash + per-user salt.
+BFF accounts (distinct from Exchange users). Local accounts store a password
+hash + per-user salt; OIDC accounts store no password and are identified by
+`(issuer, subject)`.
 
 ```sql
 username   TEXT NOT NULL
-hash       TEXT NOT NULL
-salt       TEXT NOT NULL
+hash       TEXT
+salt       TEXT
 role       TEXT NOT NULL CHECK (role IN ('platform','partner'))
 org        TEXT
 created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+email      TEXT
+issuer     TEXT
+subject    TEXT
+disabled   BOOLEAN NOT NULL DEFAULT false
+bootstrap  BOOLEAN NOT NULL DEFAULT false
 ```
 
-There is deliberately **no primary key**. Uniqueness is enforced by two partial indexes so
-that a username may repeat across orgs:
+`hash`/`salt` are nullable (OIDC users have no password); `bootstrap` marks the
+initial break-glass platform admin, which can never be deleted or disabled.
 
-- `idx_users_platform_unique` — unique on `(username)` where `org IS NULL` (platform users
-  are globally unique)
-- `idx_users_partner_unique` — unique on `(username, org)` where `org IS NOT NULL` (partner
-  users are unique per org)
+There is deliberately **no primary key**. Uniqueness is enforced by three partial
+indexes:
 
-Lookups must therefore always disambiguate on `org`; `getUser()`, `deleteUser()`,
-`updatePassword()`, and `updateUser()` each branch on whether `org` was supplied, matching
-`org IS NULL` when it was not.
+- `idx_users_local_platform_unique` — unique on `(username)` where `issuer IS NULL AND org IS NULL`
+  (local platform users are globally unique)
+- `idx_users_local_partner_unique` — unique on `(username, org)` where `issuer IS NULL AND org IS NOT NULL`
+  (local partner users are unique per org)
+- `idx_users_oidc_identity` — unique on `(issuer, subject)` where `issuer IS NOT NULL`
+  (federated users are keyed by their IdP identity and may reuse any username)
+
+Local lookups must disambiguate on `org`; `getUser()`, `deleteUser()`, `updatePassword()`,
+and `updateUser()` each branch on whether `org` was supplied, matching `org IS NULL`
+when it was not. OIDC users are read/written with `getOidcUser()` / `updateOidcUser()` /
+`deleteOidcUser()`.
+
+### `sessions`
+
+Server-side sessions. The payload (including the shared Exchange `Basic` auth and, for
+OIDC logins, the ID token used for RP-initiated logout) is encrypted with AES-256-GCM
+under `SESSION_ENC_KEY`; only the opaque session id is exposed to the browser.
+
+```sql
+id         TEXT PRIMARY KEY
+user_id    TEXT
+ciphertext TEXT NOT NULL
+born_at    BIGINT NOT NULL
+seen_at    BIGINT NOT NULL
+expire_at  TIMESTAMPTZ NOT NULL
+```
+
+Indexed on `expire_at`. Expired rows are deleted by a background sweeper
+(`deleteExpiredSessions()`). Because sessions live here, a backend restart or a
+second replica preserves logins.
 
 ### `api_keys`
 
@@ -207,16 +238,13 @@ updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 
 ---
 
-## Redis is not a database dependency
+## Sessions are stored in PostgreSQL
 
-`REDIS_URL` is optional. When unset — or unreachable — the BFF logs
-
-```
-[redis] REDIS_URL not set — using in-memory session store (sessions lost on restart)
-```
-
-and continues. Only PostgreSQL is mandatory. Do not read a Redis warning at startup as the
-cause of a database failure.
+There is no Redis dependency. Sessions (and the encrypted Exchange credentials they
+carry) are persisted in the `sessions` table, so restarts and multi-replica deployments
+keep users logged in. Only `SESSION_ENC_KEY` must be stable for the stored sessions to
+remain decryptable. Losing or rotating `SESSION_ENC_KEY` simply forces re-login (the rows
+become undecryptable and are discarded).
 
 ---
 
