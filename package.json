@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@ant-design/icons": "^6.3.4",
-    "antd": "^6.6.7",
+    "antd": "^6.7.0",
     "express": "^5.3.0",
     "openid-client": "^5.7.1",
     "pg": "^8.23.1",
