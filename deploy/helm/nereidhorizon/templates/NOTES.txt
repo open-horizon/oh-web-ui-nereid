@@ -22,11 +22,11 @@ NereidHorizon {{ .Chart.Version }} (app {{ .Chart.AppVersion }}) has been instal
      -H 'Content-Type: application/json' \
      -d '{"adminUser":"admin","adminPassword":"<bff-admin-password>","baseURL":"http://<exchange-host>:3090","user":"root/root","password":"<hub-admin-password>"}'
 
-   The base URL must NOT include the /v1 suffix; the BFF appends it.
+   The base URL may include or omit the /v1 suffix; it is normalized before use.
 
-Images come from the private Harbor project hub.yiqisoft.cn/nereidai; the
-harbor-registry-secret is only created when registryCredentials.username is
-set at install time.
+Images come from GHCR (ghcr.io/open-horizon/oh-web-ui-nereid-*), which is
+public by default; set registryCredentials and global.imagePullSecrets only if
+the packages are private.
 {{- if .Values.ns.enabled }}
 
 NereidSphere ticket SSO is enabled (default front door). Assign product access

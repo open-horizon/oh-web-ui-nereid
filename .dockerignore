@@ -1,9 +1,11 @@
-# Dependencies
+# Dependencies (installed inside the image by `npm ci`)
+node_modules
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Build outputs (dist is prebuilt locally and copied in)
+# Build outputs (built inside the image; never copy local artifacts)
+dist
 build
 *.local
 
@@ -27,6 +29,7 @@ docs
 # Docker
 Dockerfile
 docker-compose*.yml
+docker-compose*.yaml
 .dockerignore
 
 # Configuration files (secrets should use env vars)

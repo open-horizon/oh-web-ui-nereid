@@ -306,7 +306,7 @@ Open Horizon requires the service `deployment` field to carry an RSA-PSS SHA-256
 
 ```yaml
 services:
-  postgres:      # PostgreSQL 16-alpine, required
+  postgres:      # PostgreSQL 17, required
   redis:         # Redis 6.2-alpine, optional (degrades to in-memory)
   backend:       # Express BFF (node:20-alpine)
   frontend:      # nginx + static assets + TLS

@@ -1,0 +1,26 @@
+# Copyright (C) 2026 YIQISOFT
+#
+# SPDX-License-Identifier: Apache-2.0
+# Optional override: reuse the mgmt-hub's own TLS material.
+#
+# deploy-mgmt-hub.sh writes /etc/horizon/keys/horizonMgmtHub.crt and
+# horizonMgmtHub.key ONLY when the mgmt-hub is deployed with HZN_TRANSPORT=https.
+# Mounting that directory gives the UI:
+#   - backend: trust of the Exchange TLS certificate (auto-detected), and
+#   - frontend: the same server certificate for its own HTTPS listener.
+#
+# Do NOT use horizonMgmtHubFDO.crt: it is a separate FDO-only certificate with no
+# private key, so it can neither terminate TLS nor verify the Exchange.
+#
+# Usage:
+#   docker compose -f docker-compose.yaml -f docker-compose.mgmt-hub-certs.yaml up -d
+#   SESSION_ENC_KEY=... docker compose -p nereid-dev \
+#     -f docker-compose.dev.yaml -f docker-compose.mgmt-hub-certs.yaml up -d
+services:
+  oh-web-ui-nereid-backend:
+    volumes:
+      - ${MGMT_HUB_KEYS_DIR:-/etc/horizon/keys}:/etc/horizon/keys:ro
+
+  oh-web-ui-nereid-frontend:
+    volumes:
+      - ${MGMT_HUB_KEYS_DIR:-/etc/horizon/keys}:/etc/horizon/keys:ro

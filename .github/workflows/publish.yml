@@ -1,17 +1,31 @@
 name: Publish Images
 
 # Publish multi-arch (amd64, arm64) images to GHCR when a release is published
-# or a version tag (v*.*.*) is pushed.
+# or a version tag (v*.*.*) is pushed. Manual runs must supply an explicit tag.
 on:
   release:
     types: [published]
   push:
     tags: ['v*.*.*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag to publish (for example v0.0.1)'
+        required: true
+        type: string
+      publish_latest:
+        description: 'Also move the :latest tag'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
   packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAMESPACE: open-horizon
 
 jobs:
   publish:
@@ -20,9 +34,9 @@ jobs:
       matrix:
         include:
           - target: backend
-            image: open-horizon-exchangeui-backend
+            image: oh-web-ui-nereid-backend
           - target: frontend
-            image: open-horizon-exchangeui-frontend
+            image: oh-web-ui-nereid-frontend
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -31,21 +45,35 @@ jobs:
         uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}
+          tags: |
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v') || inputs.publish_latest == true }}
+
       - name: Build and push
-        run: |
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            --target ${{ matrix.target }} \
-            --tag ghcr.io/nereidai/${{ matrix.image }}:${{ github.ref_name }} \
-            --tag ghcr.io/nereidai/${{ matrix.image }}:latest \
-            --push \
-            .
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: ${{ matrix.target }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

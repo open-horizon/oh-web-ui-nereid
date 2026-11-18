@@ -144,7 +144,7 @@ NereidAI 是一个 BFF（Backend-For-Frontend）代理，前端控制台通过�
 - 依赖：`pg`。`DATABASE_URL` 必填，缺失即 `process.exit(1)`（开发/生产一致）。
 - 启动 `initSchema()` 自动建表（带重试，连不上重试 10 次后退出）。
 - 表：`users`、`api_keys`、`exchange_config`、`audit_log`、`settings`（见 `server/db.cjs`）。
-- `docker-compose.yaml` 已加 `postgres:16-alpine` 服务，挂载 `postgres-data` 卷，后端 `depends_on` 其 healthy。
+- `docker-compose.yaml` 已加 `postgres:17` 服务，挂载 `postgres-data` 卷，后端 `depends_on` 其 healthy。
 
 ---
 

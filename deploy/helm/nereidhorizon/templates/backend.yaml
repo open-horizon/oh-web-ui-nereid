@@ -88,6 +88,28 @@ spec:
               {{- else }}
               value: {{ .Values.externalDatabase.url | quote }}
               {{- end }}
+            {{- if .Values.backend.bootstrap.exchangeUrl }}
+            - name: EXCHANGE_URL
+              value: {{ .Values.backend.bootstrap.exchangeUrl | quote }}
+            - name: EXCHANGE_USER
+              value: {{ .Values.backend.bootstrap.exchangeUser | quote }}
+            - name: EXCHANGE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "nereidhorizon.fullname" . }}
+                  key: bootstrap-exchange-password
+            - name: BOOTSTRAP_ADMIN_USER
+              value: {{ .Values.backend.bootstrap.adminUser | quote }}
+            - name: BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "nereidhorizon.fullname" . }}
+                  key: bootstrap-admin-password
+            {{- end }}
+            {{- if .Values.backend.exchangeCa.existingSecret }}
+            - name: EXCHANGE_CA_CERT
+              value: /etc/ssl/certs/exchange-ca.crt
+            {{- end }}
             {{- if .Values.oidc.enabled }}
             - name: OIDC_ISSUER
               value: {{ .Values.oidc.issuer | quote }}
@@ -147,16 +169,31 @@ spec:
             periodSeconds: 30
           resources:
             {{- toYaml .Values.backend.resources | nindent 12 }}
-          {{- if and .Values.oidc.enabled .Values.oidc.caBundleSecret }}
+          {{- if or (and .Values.oidc.enabled .Values.oidc.caBundleSecret) .Values.backend.exchangeCa.existingSecret }}
           volumeMounts:
+            {{- if and .Values.oidc.enabled .Values.oidc.caBundleSecret }}
             - name: oidc-ca
               mountPath: /etc/ssl/certs/nereid-oidc-ca.pem
               subPath: ca.crt
               readOnly: true
+            {{- end }}
+            {{- if .Values.backend.exchangeCa.existingSecret }}
+            - name: exchange-ca
+              mountPath: /etc/ssl/certs/exchange-ca.crt
+              subPath: {{ .Values.backend.exchangeCa.key | default "ca.crt" | quote }}
+              readOnly: true
+            {{- end }}
           {{- end }}
-      {{- if and .Values.oidc.enabled .Values.oidc.caBundleSecret }}
+      {{- if or (and .Values.oidc.enabled .Values.oidc.caBundleSecret) .Values.backend.exchangeCa.existingSecret }}
       volumes:
+        {{- if and .Values.oidc.enabled .Values.oidc.caBundleSecret }}
         - name: oidc-ca
           secret:
             secretName: {{ .Values.oidc.caBundleSecret }}
+        {{- end }}
+        {{- if .Values.backend.exchangeCa.existingSecret }}
+        - name: exchange-ca
+          secret:
+            secretName: {{ .Values.backend.exchangeCa.existingSecret }}
+        {{- end }}
       {{- end }}
