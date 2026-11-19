@@ -391,7 +391,7 @@ Open Horizon 要求服务 `deployment` 字段附带 RSA-PSS SHA-256 签名。
 
 ```yaml
 services:
-  postgres:      # PostgreSQL 16-alpine，必需
+  postgres:      # PostgreSQL 17，必需
   redis:         # Redis 6.2-alpine，可选（降级内存）
   backend:       # Express BFF（node:20-alpine）
   frontend:      # nginx + 静态资源 + TLS

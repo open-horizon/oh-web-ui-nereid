@@ -12,19 +12,26 @@ set -euo pipefail
 
 IMAGE_TAG="${1:-latest}"
 OUT_FILE="${2:-nereid-images.tar}"
+REGISTRY="${REGISTRY:-ghcr.io/open-horizon}"
+
+BACKEND_IMAGE="${REGISTRY}/oh-web-ui-nereid-backend:${IMAGE_TAG}"
+FRONTEND_IMAGE="${REGISTRY}/oh-web-ui-nereid-frontend:${IMAGE_TAG}"
 
 IMAGES=(
-  "open-horizon-exchangeui-backend:${IMAGE_TAG}"
-  "open-horizon-exchangeui-frontend:${IMAGE_TAG}"
-  "postgres:16-alpine"
+  "${BACKEND_IMAGE}"
+  "${FRONTEND_IMAGE}"
+  "postgres:17"
 )
 
 echo ">> Building images..."
-docker compose build
+IMAGE_TAG="${IMAGE_TAG}" docker compose -p nereid-dev -f docker-compose.dev.yaml build
+
+echo ">> Pulling postgres image..."
+docker pull postgres:17 2>/dev/null || echo "  (postgres:17 already available locally)"
 
 echo ">> Saving images to ${OUT_FILE} ..."
 docker save -o "${OUT_FILE}" "${IMAGES[@]}"
 
 echo ">> Done. Transfer ${OUT_FILE} to the production host and run:"
 echo "   docker load -i ${OUT_FILE}"
-echo "   docker compose up -d"
+echo "   IMAGE_TAG=${IMAGE_TAG} docker compose up -d"

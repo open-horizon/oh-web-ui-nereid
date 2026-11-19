@@ -1,8 +1,8 @@
 # Nereid Exchange UI (NereidAI)
 
-[![CI](https://github.com/NereidAI/Open-Horizon-ExchangeUI/actions/workflows/ci.yml/badge.svg)](https://github.com/NereidAI/Open-Horizon-ExchangeUI/actions/workflows/ci.yml)
+[![CI](https://github.com/open-horizon/oh-web-ui-nereid/actions/workflows/ci.yml/badge.svg)](https://github.com/open-horizon/oh-web-ui-nereid/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![GHCR](https://img.shields.io/badge/Images-GHCR-blue)](https://github.com/NereidAI/Open-Horizon-ExchangeUI/pkgs/container/open-horizon-exchangeui-backend)
+[![GHCR](https://img.shields.io/badge/Images-GHCR-blue)](https://github.com/open-horizon/oh-web-ui-nereid/pkgs/container/oh-web-ui-nereid-backend)
 
 Nereid Exchange UI is a modern, lightweight Web Management Portal and BFF (Backend-For-Frontend) proxy gateway designed specifically for the **Open Horizon Management Hub**.
 
@@ -145,7 +145,7 @@ The project ships a multi-stage `Dockerfile` and two Compose files. Choose your 
 
 | Mode | Command | Images |
 |---|---|---|
-| **Production** (pull) | `make docker-up` | Pulls from `ghcr.io/nereidai/*` |
+| **Production** (pull) | `make docker-up` | Pulls from `ghcr.io/open-horizon/*` |
 | **Development** (build) | `make docker-dev-up` | Builds locally from source |
 
 > The `docker-dev-*` stack is **fully isolated** from production: it runs under a
@@ -157,9 +157,13 @@ Services (production compose):
 
 | Service | Image | Purpose | Port |
 |---|---|---|---|
-| `postgres` | `postgres:16-alpine` | Database for BFF (sessions, audit, settings, users) | internal |
-| `open-horizon-exchangeui-backend` | ghcr or local | BFF API proxy | `3001` (internal) |
-| `open-horizon-exchangeui-frontend` | ghcr or local | Nginx + static assets + TLS | `8090` (HTTP→HTTPS), `8443` (HTTPS) |
+| `nereid-postgres` | `postgres:17` | Database for BFF (sessions, audit, settings, users) | internal |
+| `oh-web-ui-nereid-backend` | ghcr or local | BFF API proxy | `3001` (internal) |
+| `oh-web-ui-nereid-frontend` | ghcr or local | Nginx + static assets + TLS | `8090` (HTTP→HTTPS), `8443` (HTTPS) |
+
+> Both Compose files join the **external** `hzn_horizonnet` Docker network created by
+> the Open Horizon mgmt-hub. Deploy the mgmt-hub first (or run
+> `docker network create hzn_horizonnet`) before `make docker-up` / `make docker-dev-up`.
 
 Dev stack (`docker-dev-*`): the frontend is served over plain HTTP on `8091`, and
 postgres is exposed on `127.0.0.1:5434`; the backend keeps its default internal
@@ -191,6 +195,10 @@ make docker-up
 | `SESSION_TTL` | `86400` | Session idle lifetime in seconds (24 h) |
 | `SESSION_ABS_TTL` | `28800` | Absolute session lifetime in seconds (8 h) |
 | `SESSION_ENC_KEY` | _(generated per boot)_ | 32-byte master key as 64 hex chars for AES-256-GCM. **Set it in production** so sessions survive restarts. |
+| `EXCHANGE_URL` | _(unset)_ | Optional bootstrap: Exchange base URL (e.g. `http://exchange-api:8080/v1`); with the other bootstrap vars, skips the Setup UI on a fresh install |
+| `EXCHANGE_USER` / `EXCHANGE_PASSWORD` | _(unset)_ | Optional bootstrap: hub-level Exchange credentials (e.g. `root/root`) |
+| `BOOTSTRAP_ADMIN_USER` / `BOOTSTRAP_ADMIN_PASSWORD` | _(unset)_ | Optional bootstrap: initial BFF platform admin account |
+| `EXCHANGE_CA_CERT` | _(unset)_ | Path to a PEM CA/self-signed cert to trust for HTTPS Exchange connections |
 | `OIDC_ISSUER` | _(unset)_ | OIDC issuer URL; unset disables SSO |
 | `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | — | OIDC client credentials |
 | `OIDC_REDIRECT_URI` | — | Public callback URL, e.g. `https://host/api/oidc/callback` |
@@ -204,6 +212,12 @@ make docker-up
 | `NS_PRODUCT_ID` | _(unset)_ | NS product token (`horizon`) |
 | `NS_CLIENT_SECRET` | _(unset)_ | Per-product SSO secret shared with NS |
 | `NS_CALLBACK_PATH` | `/auth/ns-callback` | Public ticket landing route |
+
+### Co-deployment with Open Horizon Mgmt Hub
+
+- **Network & bootstrap**: on the Mgmt Hub Docker network (`hzn_horizonnet`) the UI reaches Exchange at a local URL (`http://exchange-api:8080/v1` for HTTP transport, `https://exchange-api:8080/v1` when the Hub runs `HZN_TRANSPORT=https`). The trailing `/v1` is optional (normalized). Set `EXCHANGE_URL`, `EXCHANGE_USER`, `EXCHANGE_PASSWORD`, `BOOTSTRAP_ADMIN_USER`, and `BOOTSTRAP_ADMIN_PASSWORD` together to preconfigure Exchange and create the initial BFF admin on a fresh install (skipping the Setup UI). If any are unset, the interactive Setup remains.
+- **PostgreSQL**: the UI needs its **own database**. You may keep the bundled `nereid-postgres` service, or set `DATABASE_URL` to an existing PostgreSQL server — as long as it points at a **separate** database (never the Exchange database; see `docs/DATABASE.md`). The bundled service already uses the same Postgres major version as the Hub (`postgres:17`).
+- **HTTPS / self-signed certs**: when the Hub runs HTTPS, `deploy-mgmt-hub.sh` creates `/etc/horizon/keys/horizonMgmtHub.crt` + `.key`. The extra file `docker-compose.mgmt-hub-certs.yaml` mounts that directory so the BFF trusts the Exchange (auto-detected) and nginx presents the same certificate. The FDO-only `horizonMgmtHubFDO.crt` has no private key and cannot be used.
 
 ---
 
@@ -228,9 +242,9 @@ This project is designed to run **without internet access** in production.
    ```bash
    make images-export
    ```
-   (Equivalent to `docker compose build` + `docker save` of
-   `open-horizon-exchangeui-backend`, `open-horizon-exchangeui-frontend`,
-   and `postgres:16-alpine` into `nereid-images.tar`.)
+   (Builds and tags `ghcr.io/open-horizon/oh-web-ui-nereid-backend`,
+   `ghcr.io/open-horizon/oh-web-ui-nereid-frontend`, and pulls `postgres:17`,
+   then saves them into `nereid-images.tar`.)
 2. **Transfer** `nereid-images.tar` to the production host and load:
    ```bash
    make images-load
@@ -239,11 +253,11 @@ This project is designed to run **without internet access** in production.
    ```bash
    docker compose up -d
    ```
-   No `npm install` or image pull occurs at runtime — all dependencies are baked into the images via the offline `Dockerfile` (`COPY node_modules`).
+   No `npm install` or image pull occurs at runtime — all dependencies are baked into the images by the multi-stage `Dockerfile` at build time.
 
 ### Production hardening checklist
 
-- **TLS certificate**: Mount a CA-signed certificate/key to `/etc/nginx/ssl/fullchain.pem` and `/etc/nginx/ssl/privkey.pem` (bind mount or volume) so the self-signed cert is not used.
+- **TLS certificate**: Mount a CA-signed certificate/key to `/etc/nginx/ssl/fullchain.pem` and `/etc/nginx/ssl/privkey.pem` (bind mount or volume) so the self-signed cert is not used. When co-deployed with an HTTPS mgmt-hub, `-f docker-compose.mgmt-hub-certs.yaml` reuses `/etc/horizon/keys/horizonMgmtHub.crt|key` instead. The FDO-only `horizonMgmtHubFDO.crt` has no private key and cannot be used.
 - **Session master key**: Set `SESSION_ENC_KEY` (64 hex chars) via an environment file/secret so the key persists across container recreation and is not auto-generated per host.
 - **Persist PostgreSQL data**: The `postgres-data` named volume is already declared; keep it to retain sessions, users, and audit data across restarts.
 - **Reverse proxy**: Place the container stack behind your corporate TLS-terminating ingress if preferred; the built-in Nginx TLS is sufficient for direct exposure.
@@ -255,8 +269,8 @@ This project is designed to run **without internet access** in production.
 Prebuilt multi-arch (`amd64`, `arm64`) images are published to GitHub Container Registry on each release:
 
 ```bash
-docker pull ghcr.io/nereidai/open-horizon-exchangeui-backend:latest
-docker pull ghcr.io/nereidai/open-horizon-exchangeui-frontend:latest
+docker pull ghcr.io/open-horizon/oh-web-ui-nereid-backend:latest
+docker pull ghcr.io/open-horizon/oh-web-ui-nereid-frontend:latest
 ```
 
 To run directly from GHCR (production), use `make docker-up` — this pulls the published images. For local development with your source changes, use `make docker-dev-up`, which builds locally via `docker-compose.dev.yaml`. For fully offline/air-gapped deployment, export the images locally with `make images-export` and transfer them (see `docs/PRODUCTION.md`).
@@ -299,7 +313,7 @@ A `Makefile` is provided to speed up common workflows.
 
 ## 🤝 Repository & Community
 
-- **Source**: https://github.com/NereidAI/Open-Horizon-ExchangeUI
+- **Source**: https://github.com/open-horizon/oh-web-ui-nereid
 - **Contributing**: see [CONTRIBUTING.md](CONTRIBUTING.md)
 - **Code of Conduct**: see [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 - **Security Policy**: see [SECURITY.md](SECURITY.md) (please report vulnerabilities privately)

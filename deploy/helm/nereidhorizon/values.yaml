@@ -1,21 +1,19 @@
 # Copyright (C) 2026 YIQISOFT
 # SPDX-License-Identifier: Apache-2.0
 #
-# Default deployment values for nereidhorizon. Images live in the private
-# Harbor project hub.yiqisoft.cn/nereidai; image tags default to
-# Chart.appVersion when left empty.
+# Default deployment values for nereidhorizon. Images are published to GHCR
+# (ghcr.io/open-horizon); image tags default to Chart.appVersion when left empty.
 
-# Pull secret created by templates/pull-secret.yaml from registryCredentials
-# below. Harbor project nereidai is private, so the secret is required.
+# Pull secret rendered by templates/pull-secret.yaml from registryCredentials
+# below. GHCR packages are public by default, so this is only needed when the
+# packages are private.
 global:
-  imagePullSecrets:
-    - name: harbor-registry-secret
+  imagePullSecrets: []
 
-# Credentials rendered into harbor-registry-secret. MUST be supplied at
-# install time (-f creds.yaml or --set), otherwise pulls from the private
-# Harbor project fail with ImagePullBackOff.
+# Credentials rendered into ghcr-registry-secret. Only supply these when the
+# GHCR packages are private and the release namespace needs its own pull secret.
 registryCredentials:
-  registry: hub.yiqisoft.cn
+  registry: ghcr.io
   username: ""
   password: ""
   email: ""
@@ -33,6 +31,20 @@ backend:
   nodeSelector: {}
   sessionTtl: 86400
   sessionAbsTtl: 28800
+  # Optional: auto-bootstrap Exchange + initial admin (skips Setup UI) when the
+  # database is uninitialized. All five must be set together to take effect.
+  bootstrap:
+    exchangeUrl: ""
+    exchangeUser: ""
+    exchangePassword: ""
+    adminUser: ""
+    adminPassword: ""
+  # Optional: trust a self-signed/CA cert for HTTPS Exchange connections.
+  exchangeCa:
+    # Name of an existing Secret containing the CA certificate.
+    existingSecret: ""
+    # Key inside the Secret holding the PEM certificate.
+    key: ca.crt
   resources:
     requests:
       cpu: 100m
@@ -43,8 +55,8 @@ backend:
 
 frontend:
   image:
-    registry: hub.yiqisoft.cn
-    repository: nereidai/nereidhorizon-frontend
+    registry: ghcr.io
+    repository: open-horizon/oh-web-ui-nereid-frontend
     tag: ""
     pullPolicy: IfNotPresent
   replicaCount: 1
@@ -61,7 +73,7 @@ frontend:
 # set to a database that is NOT the Exchange's own PostgreSQL.
 postgres:
   enabled: true
-  image: postgres:16-alpine
+  image: postgres:17
   auth:
     database: nereid
     username: nereid

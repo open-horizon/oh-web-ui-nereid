@@ -7,9 +7,9 @@ and air-gapped environments.
 
 | Service | Image | Purpose | Port |
 |---|---|---|---|
-| `postgres` | `postgres:16-alpine` | BFF users/API keys/Exchange config/audit/sessions storage | internal (5432) |
-| `open-horizon-exchangeui-backend` | local build | BFF API proxy | `3001` (internal) |
-| `open-horizon-exchangeui-frontend` | local build | Nginx + static assets + TLS | `8090` (HTTP→HTTPS), `8443` (HTTPS) |
+| `nereid-postgres` | `postgres:17` | BFF users/API keys/Exchange config/audit/sessions storage | internal (5432) |
+| `oh-web-ui-nereid-backend` | local build / GHCR | BFF API proxy | `3001` (internal) |
+| `oh-web-ui-nereid-frontend` | local build / GHCR | Nginx + static assets + TLS | `8090` (HTTP→HTTPS), `8443` (HTTPS) |
 
 The Nginx front end terminates TLS and reverse-proxies `/api` to the backend. PostgreSQL
 is required and also stores sessions, so logins survive backend restarts.
@@ -26,7 +26,7 @@ is required and also stores sessions, so logins survive backend restarts.
     nvm alias default 20
     ```
 - **Docker >= 20.10** and **Docker Compose v2** (for container deployment).
-- **PostgreSQL** (included as the `postgres` service in Compose; a running PG instance
+- **PostgreSQL** (included as the `nereid-postgres` service in Compose; a running PG instance
   is required even for local `npm run dev:backend`). It stores both the BFF data and
   the sessions.
 - **Network access** to the Open Horizon Exchange API endpoint.
@@ -40,7 +40,7 @@ is required and also stores sessions, so logins survive backend restarts.
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | `3001` | BFF listen port |
-| `DATABASE_URL` | — | **Required.** PostgreSQL connection string for the BFF's **own** database (e.g. `postgres://nereid:nereidpass@postgres:5432/nereid`). Never point this at the Exchange's database — see [DATABASE.md](DATABASE.md) |
+| `DATABASE_URL` | — | **Required.** PostgreSQL connection string for the BFF's **own** database (e.g. `postgres://nereid:nereidpass@nereid-postgres:5432/nereid`). An existing PostgreSQL server can be reused only with a separate database — never point this at the Exchange's database — see [DATABASE.md](DATABASE.md) |
 | `SESSION_TTL` | `86400` | Session idle lifetime (seconds, default 24h) |
 | `SESSION_ABS_TTL` | `28800` | Session absolute timeout (seconds, default 8h) |
 | `SESSION_ENC_KEY` | _(auto-generated)_ | 32-byte master key as **64 hex chars** for AES-256-GCM. Set it in production. |
@@ -81,10 +81,10 @@ cp fullchain.pem /opt/nereid/ssl/fullchain.pem
 cp privkey.pem   /opt/nereid/ssl/privkey.pem
 ```
 
-Then add a bind mount to `open-horizon-exchangeui-frontend` in `docker-compose.yaml`:
+Then add a bind mount to `oh-web-ui-nereid-frontend` in `docker-compose.yaml`:
 
 ```yaml
-  frontend:
+  oh-web-ui-nereid-frontend:
     volumes:
       - /opt/nereid/ssl:/etc/nginx/ssl:ro
 ```
@@ -93,14 +93,18 @@ The entrypoint skips generation when the cert already exists.
 
 ## 5. Offline / Air-Gapped Deployment
 
-The images contain all dependencies (offline `Dockerfile` copies local
-`node_modules`); no `npm install` or image pull occurs at runtime.
+The images contain all dependencies (built inside the multi-stage `Dockerfile`);
+no `npm install` or image pull occurs at runtime.
 
 On a connected machine:
 
 ```bash
 ./scripts/export-images.sh latest nereid-images.tar
 ```
+
+This builds and tags `ghcr.io/open-horizon/oh-web-ui-nereid-backend` and
+`ghcr.io/open-horizon/oh-web-ui-nereid-frontend` (same tags as the dev compose
+build / production stack) and bundles them with `postgres:17`.
 
 Transfer `nereid-images.tar` to the production host, then:
 
@@ -109,18 +113,21 @@ Transfer `nereid-images.tar` to the production host, then:
 docker compose up -d
 ```
 
+Both Compose files join the **external** `hzn_horizonnet` network created by the
+Open Horizon mgmt-hub. If the mgmt-hub is not already deployed on the host, create it
+first: `docker network create hzn_horizonnet`.
+
 ### Alternative: pull from GHCR
 
 Images are also published to GitHub Container Registry on each release:
 
 ```bash
-docker pull ghcr.io/nereidai/open-horizon-exchangeui-backend:latest
-docker pull ghcr.io/nereidai/open-horizon-exchangeui-frontend:latest
+docker pull ghcr.io/open-horizon/oh-web-ui-nereid-backend:latest
+docker pull ghcr.io/open-horizon/oh-web-ui-nereid-frontend:latest
 ```
 
-To use them, either retag to the Compose service image names
-(`open-horizon-exchangeui-backend`, `open-horizon-exchangeui-frontend`) or
-override the image in `docker-compose.yaml`.
+The Compose stack already references these GHCR image names. Pin a release tag
+with `IMAGE_TAG=v0.0.1 docker compose up -d` (the default is `latest`).
 
 ## 6. Persistence
 
@@ -215,7 +222,7 @@ development only.
 ## 7. Reverse Proxy (optional)
 
 You may place the stack behind an existing TLS-terminating ingress. In that case
-you can expose only `open-horizon-exchangeui-frontend:80` and let the ingress handle HTTPS; the
+you can expose only `oh-web-ui-nereid-frontend:80` and let the ingress handle HTTPS; the
 built-in Nginx TLS is sufficient for direct exposure.
 
 ## 8. Security Checklist

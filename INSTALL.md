@@ -38,10 +38,16 @@ targets).
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | `3001` | BFF listen port |
-| `DATABASE_URL` | — (required) | BFF's own PostgreSQL connection string |
+| `DATABASE_URL` | — (required) | BFF's **own** PostgreSQL connection string. May point at an existing PG server only with a separate database — never the Exchange DB. |
 | `SESSION_TTL` | `86400` | Session idle lifetime in seconds (24 h) |
 | `SESSION_ABS_TTL` | `28800` | Absolute session lifetime in seconds (8 h) |
 | `SESSION_ENC_KEY` | _(generated per boot)_ | 32-byte master key as 64 hex chars for AES-256-GCM. **Set it** so sessions survive restarts. |
+| `EXCHANGE_URL` | _(unset)_ | Optional bootstrap: Exchange base URL (`http://exchange-api:8080/v1` for Hub HTTP transport, `https://exchange-api:8080/v1` for HTTPS; the `/v1` suffix is optional). All five bootstrap vars must be set together. |
+| `EXCHANGE_USER` | _(unset)_ | Optional bootstrap: hub-level Exchange user (e.g. `root/root`) |
+| `EXCHANGE_PASSWORD` | _(unset)_ | Optional bootstrap: Exchange password for the above user |
+| `BOOTSTRAP_ADMIN_USER` | _(unset)_ | Optional bootstrap: initial BFF platform admin username |
+| `BOOTSTRAP_ADMIN_PASSWORD` | _(unset)_ | Optional bootstrap: initial BFF platform admin password |
+| `EXCHANGE_CA_CERT` | _(unset)_ | Path to a PEM CA/self-signed cert to trust for HTTPS Exchange connections (e.g. `/run/secrets/exchange-ca.crt`) |
 | `OIDC_ISSUER` | _(unset)_ | OIDC issuer URL; unset disables SSO |
 | `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | — | OIDC client credentials |
 | `OIDC_REDIRECT_URI` | — | Public callback URL, e.g. `https://host/api/oidc/callback` |
@@ -125,7 +131,7 @@ make dev-pg
 ```
 
 This starts (idempotently) a dedicated PostgreSQL container `nereid-dev-pg`
-(`postgres:16-alpine`) listening on `127.0.0.1:5433`, and writes
+(`postgres:17`) listening on `127.0.0.1:5433`, and writes
 `DATABASE_URL=postgres://nereid:nereidpass@127.0.0.1:5433/nereid` into `.env`.
 
 ### 3.2 Start the backend and frontend
@@ -163,7 +169,7 @@ The form requires (verified against the backend `POST /api/setup` logic in
 |---|---|
 | **Admin Username** | The BFF's first local `platform` account (e.g. `admin`) |
 | **Admin Password** | The admin account's password (min 8 chars); confirm it in the second field |
-| **Exchange URL** | Base URL of the Exchange API, e.g. `http://192.168.123.133:3090` — **without** a `/v1` suffix (the backend appends `/v1`) |
+| **Exchange URL** | Base URL of the Exchange API, e.g. `http://192.168.123.133:3090`; the `/v1` suffix may be included or omitted (normalized before use) |
 | **Exchange Account** | A hub-level superuser that can list all organizations, e.g. `root` |
 | **Exchange Password** | The Exchange account's password, e.g. `root` |
 
@@ -192,6 +198,30 @@ The project ships a multi-stage `Dockerfile` and two Compose files.
 The `docker-dev-*` stack is fully isolated from production: it runs under a separate
 Compose project (`nereid-dev`), uses its own `*-dev` containers and volumes, and its
 own postgres on `127.0.0.1:5434` — so dev and prod can run side by side.
+
+Both Compose files attach to the **external** `hzn_horizonnet` network created by the
+Open Horizon mgmt-hub (co-deployment). Deploy the mgmt-hub first, or create it manually:
+`docker network create hzn_horizonnet`. The BFF's own database service is named
+`nereid-postgres` (not `postgres`) to avoid a DNS alias collision with the mgmt-hub's
+Exchange `postgres` container on the shared network.
+
+### Reusing the mgmt-hub TLS certificate
+
+When the mgmt-hub is deployed with `HZN_TRANSPORT=https`, `deploy-mgmt-hub.sh` creates
+`/etc/horizon/keys/horizonMgmtHub.crt` plus its private key. The UI can reuse that pair
+for both the BFF→Exchange TLS trust (auto-detected) and its own HTTPS listener:
+
+```bash
+docker compose -f docker-compose.yaml -f docker-compose.mgmt-hub-certs.yaml up -d
+# dev stack:
+SESSION_ENC_KEY=<64hex> docker compose -p nereid-dev \
+  -f docker-compose.dev.yaml -f docker-compose.mgmt-hub-certs.yaml up -d
+```
+
+> `horizonMgmtHubFDO.crt` cannot be reused: it is a **separate** FDO-only certificate
+> with **no private key**, so it can neither terminate TLS nor verify the Exchange.
+> It exists even when the mgmt-hub runs plain HTTP, in which case no Exchange CA is
+> needed at all.
 
 | Command | Description |
 |---|---|

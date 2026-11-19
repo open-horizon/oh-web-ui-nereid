@@ -3,15 +3,19 @@
 # docker-compose.yaml (ghcr images). Every resource is isolated from prod:
 #   - unique container names (suffix "-dev")
 #   - unique host ports (frontend :8091, pg :5434)
-#   - unique volumes / network created by the "nereid-dev" project name.
+#   - unique volumes created by the "nereid-dev" project name.
+#
+# Joins the external `hzn_horizonnet` network created by the Open Horizon
+# mgmt-hub, so the mgmt-hub must be deployed (or create the network manually
+# with `docker network create hzn_horizonnet`) before starting this stack.
 #
 # Use via:  make docker-dev-up / docker-dev-down / ...
 # These define their own postgres + locally built backend/frontend.
 #
 services:
-  postgres:
-    container_name: open-horizon-exchangeui-postgres-dev
-    image: postgres:16-alpine
+  nereid-postgres:
+    container_name: oh-web-ui-nereid-postgres-dev
+    image: postgres:17
     environment:
       - POSTGRES_DB=nereid
       - POSTGRES_USER=nereid
@@ -20,53 +24,84 @@ services:
       - postgres-data-dev:/var/lib/postgresql/data
     ports:
       - "127.0.0.1:5434:5432"
+    networks:
+      - hzn_horizonnet
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U nereid -d nereid"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
-  open-horizon-exchangeui-backend:
-    container_name: open-horizon-exchangeui-backend-dev
+  oh-web-ui-nereid-backend:
+    container_name: oh-web-ui-nereid-backend-dev
     build:
       context: .
       target: backend
-    image: nereid-exchangeui-backend:latest
+    image: ghcr.io/open-horizon/oh-web-ui-nereid-backend:${IMAGE_TAG:-latest}
     restart: unless-stopped
     environment:
       - NODE_ENV=development
       - PORT=3001
-      - DATABASE_URL=postgres://nereid:${POSTGRES_PASSWORD:-nereidpass}@postgres:5432/nereid
+      - DATABASE_URL=${DATABASE_URL:-postgres://nereid:${POSTGRES_PASSWORD:-nereidpass}@nereid-postgres:5432/nereid}
       - SESSION_TTL=86400
       - SESSION_ABS_TTL=28800
       # 32-byte (64 hex) master key for encrypting sessions at rest.
       - SESSION_ENC_KEY=${SESSION_ENC_KEY:?SESSION_ENC_KEY is required (64 hex chars)}
+      # Optional: auto-bootstrap (skip Setup UI). All five must be set together.
+      - EXCHANGE_URL=${EXCHANGE_URL:-}
+      - EXCHANGE_USER=${EXCHANGE_USER:-}
+      - EXCHANGE_PASSWORD=${EXCHANGE_PASSWORD:-}
+      - BOOTSTRAP_ADMIN_USER=${BOOTSTRAP_ADMIN_USER:-}
+      - BOOTSTRAP_ADMIN_PASSWORD=${BOOTSTRAP_ADMIN_PASSWORD:-}
+      # Optional: trust a CA/self-signed cert for HTTPS Exchange (path to PEM inside container).
+      - EXCHANGE_CA_CERT=${EXCHANGE_CA_CERT:-}
       # Optional OpenID Connect SSO; unset OIDC_ISSUER to disable.
       - OIDC_ISSUER=${OIDC_ISSUER:-}
       - OIDC_CLIENT_ID=${OIDC_CLIENT_ID:-}
       - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET:-}
       - OIDC_REDIRECT_URI=${OIDC_REDIRECT_URI:-}
+      - OIDC_SCOPES=${OIDC_SCOPES:-openid profile email}
+      - OIDC_ROLE_CLAIM=${OIDC_ROLE_CLAIM:-groups}
+      - OIDC_PLATFORM_GROUP=${OIDC_PLATFORM_GROUP:-nereidhorizon-platform}
+      - OIDC_PARTNER_GROUP_PREFIX=${OIDC_PARTNER_GROUP_PREFIX:-nereidhorizon-partner-}
       - OIDC_LOCAL_LOGIN_ENABLED=${OIDC_LOCAL_LOGIN_ENABLED:-true}
       - OIDC_INSECURE_SKIP_VERIFY=${OIDC_INSECURE_SKIP_VERIFY:-false}
+      # Optional NereidSphere ticket SSO (takes precedence over direct OIDC).
+      - NS_BASE_URL=${NS_BASE_URL:-}
+      - NS_PRODUCT_ID=${NS_PRODUCT_ID:-}
+      - NS_CLIENT_SECRET=${NS_CLIENT_SECRET:-}
+      - NS_CALLBACK_PATH=${NS_CALLBACK_PATH:-/auth/ns-callback}
     volumes:
       - nereid-logs-dev:/app/logs
     depends_on:
-      postgres:
+      nereid-postgres:
         condition: service_healthy
+    networks:
+      - hzn_horizonnet
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3001/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
-  open-horizon-exchangeui-frontend:
-    container_name: open-horizon-exchangeui-frontend-dev
+  oh-web-ui-nereid-frontend:
+    container_name: oh-web-ui-nereid-frontend-dev
     build:
       context: .
       target: frontend
-    image: nereid-exchangeui-frontend:latest
+    image: ghcr.io/open-horizon/oh-web-ui-nereid-frontend:${IMAGE_TAG:-latest}
     restart: unless-stopped
     ports:
       - "8091:80"
@@ -75,8 +110,20 @@ services:
       # forces TLS) with a dev variant that proxies to this dev backend over HTTP.
       - ./docker/nginx.dev.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
-      open-horizon-exchangeui-backend:
+      oh-web-ui-nereid-backend:
         condition: service_healthy
+    networks:
+      - hzn_horizonnet
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+networks:
+  hzn_horizonnet:
+    external: true
+    name: hzn_horizonnet
 
 volumes:
   nereid-logs-dev:

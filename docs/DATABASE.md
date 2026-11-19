@@ -70,11 +70,11 @@ If you run `node server/index.cjs` directly, you must export `DATABASE_URL` your
 
 ### Docker Compose
 
-`docker-compose.yaml` provisions a dedicated `postgres:16-alpine` service for the BFF —
+`docker-compose.yaml` provisions a dedicated `postgres:17` service for the BFF —
 database `nereid`, user `nereid` — and wires it up:
 
 ```yaml
-DATABASE_URL=postgres://nereid:${POSTGRES_PASSWORD:-nereidpass}@postgres:5432/nereid
+DATABASE_URL=postgres://nereid:${POSTGRES_PASSWORD:-nereidpass}@nereid-postgres:5432/nereid
 ```
 
 The backend `depends_on` postgres with `condition: service_healthy`, so the retry loop is

@@ -64,8 +64,8 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{/*
 Effective image pull secret name list: rendered verbatim from
-global.imagePullSecrets so Harbor projects that stay private can be pulled
-with a pre-created registry secret.
+global.imagePullSecrets so private GHCR packages can be pulled with a
+pre-created registry secret.
 */}}
 {{- define "nereidhorizon.imagePullSecrets" -}}
 {{- with .Values.global.imagePullSecrets }}

@@ -7,7 +7,7 @@ DOCKER := $(shell command -v docker 2>/dev/null || command -v podman 2>/dev/null
 # Local dev PostgreSQL (used by dev-pg / dev-all). Dedicated to the BFF so it never
 # collides with the Exchange or EdgeX databases. Listens on a non-default host port.
 PG_CONTAINER = nereid-dev-pg
-PG_IMAGE = postgres:16-alpine
+PG_IMAGE = postgres:17
 PG_HOST_PORT = 5433
 PG_CONTAINER_PORT = 5432
 PG_DB = nereid

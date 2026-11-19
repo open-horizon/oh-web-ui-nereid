@@ -9,9 +9,72 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const http = require('http');
+const tls = require('tls');
+
+// When the BFF shares the Docker network with an HTTPS mgmt-hub, its self-signed
+// Exchange certificate is available at this path (created by deploy-mgmt-hub.sh as
+// /etc/horizon/keys/horizonMgmtHub.crt). Use it automatically if mounted and the
+// operator did not point EXCHANGE_CA_CERT somewhere else. Note: the FDO-only cert
+// (horizonMgmtHubFDO.crt) is a different certificate and has no private key — it
+// cannot be used to verify the Exchange, so it is deliberately not considered here.
+const MGMT_HUB_CERT_PATH = '/etc/horizon/keys/horizonMgmtHub.crt';
+const EXCHANGE_CA_CERT_PATH = process.env.EXCHANGE_CA_CERT
+  || (fs.existsSync(MGMT_HUB_CERT_PATH) ? MGMT_HUB_CERT_PATH : '');
+let exchangeCACert;
+if (EXCHANGE_CA_CERT_PATH) {
+  try {
+    exchangeCACert = fs.readFileSync(EXCHANGE_CA_CERT_PATH);
+    console.log('[tls] exchange CA loaded from', EXCHANGE_CA_CERT_PATH);
+  } catch (e) {
+    console.error('[tls] failed to read EXCHANGE_CA_CERT:', e.message);
+    process.exit(1);
+  }
+}
+
+function exchangeRequest(urlStr, { method = 'GET', headers = {}, body, timeoutMs } = {}) {
+  if (!exchangeCACert) {
+    const opts = { method, headers };
+    if (body !== undefined) opts.body = body;
+    if (timeoutMs) opts.signal = AbortSignal.timeout(timeoutMs);
+    return fetch(urlStr, opts).then(async (r) => ({
+      status: r.status,
+      ok: r.ok,
+      text: await r.text(),
+    }));
+  }
+  const u = new URL(urlStr);
+  const lib = u.protocol === 'https:' ? https : http;
+  return new Promise((resolve, reject) => {
+    const opts = {
+      method,
+      hostname: u.hostname,
+      port: u.port || (u.protocol === 'https:' ? 443 : 80),
+      path: u.pathname + u.search,
+      headers,
+    };
+    if (u.protocol === 'https:') opts.ca = [...(tls.rootCertificates || []), exchangeCACert];
+    const req = lib.request(opts, (res) => {
+      let data = '';
+      res.on('data', (c) => { data += c; });
+      res.on('end', () => resolve({ status: res.statusCode, ok: res.statusCode >= 200 && res.statusCode < 300, text: data }));
+    });
+    req.on('error', reject);
+    if (timeoutMs) req.setTimeout(timeoutMs, () => { req.destroy(new Error('timeout')); });
+    if (body !== undefined) req.write(body);
+    req.end();
+  });
+}
 const { generateKeyPair, signDeployment, genAndSign } = require('./sign-utils.cjs');
 const oidc = require('./oidc.cjs');
 const ns = require('./ns.cjs');
+
+// The Exchange base URL is stored WITHOUT the /v1 suffix because every request
+// helper appends /v1 itself. Accept `http://exchange-api:8080/v1` (the form the
+// mgmt-hub docs use) as well as `http://exchange-api:8080` and normalize both to
+// the same stored value, so the UI never calls /v1/v1/... .
+function normalizeExchangeBase(raw) {
+  return String(raw || '').trim().replace(/\/+$/, '').replace(/\/v1$/i, '');
+}
 
 // Test-only escape hatch for internal CAs not trusted by the node. Must be set
 // before the first fetch, hence applied at module load. Applies process-wide.
@@ -527,20 +590,19 @@ async function exch(session, method, path, body) {
     Accept: 'application/json',
   };
   // Set content-type for requests with body
-  if (body && method !== 'GET') headers['Content-Type'] = 'application/json';
+  let reqBody;
+  if (body && method !== 'GET') {
+    headers['Content-Type'] = 'application/json';
+    reqBody = JSON.stringify(body);
+  }
 
   try {
     // Make API call to Exchange
-    const r = await fetch(url, {
-      method,
-      headers,
-      body: body && method !== 'GET' ? JSON.stringify(body) : undefined,
-    });
-    const text = await r.text();
+    const r = await exchangeRequest(url, { method, headers, body: reqBody });
     const ms = Date.now() - start;
     logExchange(method, url, r.status, ms, session.orgId);
-    try { return { status: r.status, data: JSON.parse(text) }; }
-    catch { return { status: r.status, data: text }; }
+    try { return { status: r.status, data: JSON.parse(r.text) }; }
+    catch { return { status: r.status, data: r.text }; }
   } catch (e) {
     const ms = Date.now() - start;
     logExchange(method, url, 0, ms, session.orgId);
@@ -694,21 +756,26 @@ app.post('/api/setup', async (req, res) => {
     const auth = `${user}:${password}`;
     const b64 = Buffer.from(auth).toString('base64');
     const headers = { Authorization: `Basic ${b64}` };
-    const base = baseURL.replace(/\/+$/, '');
-    // 1) Verify the Exchange is reachable
-    const vr = await fetch(`${base}/v1/admin/version`, { headers });
-    if (!vr.ok) return res.status(401).json({ msg: 'Exchange connection failed — check URL and credentials' });
-    // 2) Verify the account has hub-level admin access (can list all orgs)
-    const or = await fetch(`${base}/v1/orgs`, { headers });
-    if (!or.ok) return res.status(403).json({ msg: 'Exchange account lacks hub-level admin privileges — use root/root or equivalent superuser' });
-    let orgData;
-    try { orgData = await or.json(); } catch { orgData = {}; }
-    if (!orgData.orgs || typeof orgData.orgs !== 'object' || Object.keys(orgData.orgs).length === 0) {
-      return res.status(403).json({ msg: 'Exchange account cannot list organizations — not a hub-level superuser' });
+    const base = normalizeExchangeBase(baseURL);
+    let version, orgId, cfg;
+    try {
+      // 1) Verify the Exchange is reachable
+      const vr = await exchangeRequest(`${base}/v1/admin/version`, { headers });
+      if (!vr.ok) return res.status(401).json({ msg: 'Exchange connection failed — check URL and credentials' });
+      // 2) Verify the account has hub-level admin access (can list all orgs)
+      const or = await exchangeRequest(`${base}/v1/orgs`, { headers });
+      if (!or.ok) return res.status(403).json({ msg: 'Exchange account lacks hub-level admin privileges — use root/root or equivalent superuser' });
+      let orgData;
+      try { orgData = JSON.parse(or.text); } catch { orgData = {}; }
+      if (!orgData.orgs || typeof orgData.orgs !== 'object' || Object.keys(orgData.orgs).length === 0) {
+        return res.status(403).json({ msg: 'Exchange account cannot list organizations — not a hub-level superuser' });
+      }
+      version = (vr.text || '').replace(/"/g, '');
+      orgId = user.includes('/') ? user.split('/')[0] : user;
+      cfg = { configured: true, baseURL: base, auth: b64, orgId, version };
+    } catch (e) {
+      return res.status(502).json({ msg: `Exchange unreachable: ${e.message}` });
     }
-    const version = (await vr.text()).replace(/"/g, '');
-    const orgId = user.includes('/') ? user.split('/')[0] : user;
-    const cfg = { configured: true, baseURL: base, auth: b64, orgId, version };
     await db.saveExchangeConfig(cfg, adminUser);
     exchangeConfig = cfg;
     const { hash, salt } = hashPassword(adminPassword);
@@ -716,7 +783,7 @@ app.post('/api/setup', async (req, res) => {
     logEvent('setup', { adminUser, orgId }, orgId);
     res.json({ ok: true });
   } catch (e) {
-    res.status(502).json({ msg: `Exchange unreachable: ${e.message}` });
+    res.status(500).json({ msg: e.message || 'Setup failed' });
   }
 });
 
@@ -1269,12 +1336,12 @@ app.put('/api/exchange-config', requireRole('platform'), async (req, res) => {
     if (!baseURL || !user || !password) return res.status(400).json({ msg: 'Missing required parameters' });
     const auth = `${user}:${password}`;
     const b64 = Buffer.from(auth).toString('base64');
-    const url = `${baseURL.replace(/\/+$/, '')}/v1/admin/version`;
-    const r = await fetch(url, { headers: { Authorization: `Basic ${b64}` } });
+    const url = `${normalizeExchangeBase(baseURL)}/v1/admin/version`;
+    const r = await exchangeRequest(url, { headers: { Authorization: `Basic ${b64}` } });
     if (!r.ok && r.status !== 404) return res.status(401).json({ msg: 'Exchange connection failed' });
-    const version = (await r.text()).replace(/"/g, '');
+    const version = (r.text || '').replace(/"/g, '');
     const orgId = user.includes('/') ? user.split('/')[0] : user;
-    const cfg = { configured: true, baseURL: baseURL.replace(/\/+$/, ''), auth: b64, orgId, version };
+    const cfg = { configured: true, baseURL: normalizeExchangeBase(baseURL), auth: b64, orgId, version };
     await db.saveExchangeConfig(cfg, req.sessionUser.username);
     exchangeConfig = cfg;
     propagateExchangeConfig(); // apply immediately to live sessions
@@ -1291,10 +1358,10 @@ app.post('/api/exchange-config/test', requireRole('platform'), async (req, res) 
     if (!baseURL || !user || !password) return res.status(400).json({ ok: false, msg: 'Missing required parameters' });
     const auth = `${user}:${password}`;
     const b64 = Buffer.from(auth).toString('base64');
-    const url = `${baseURL.replace(/\/+$/, '')}/v1/admin/version`;
-    const r = await fetch(url, { headers: { Authorization: `Basic ${b64}` }, signal: AbortSignal.timeout(10000) });
+    const url = `${normalizeExchangeBase(baseURL)}/v1/admin/version`;
+    const r = await exchangeRequest(url, { headers: { Authorization: `Basic ${b64}` }, timeoutMs: 10000 });
     if (!r.ok && r.status !== 404) return res.json({ ok: false, msg: `Exchange returned ${r.status}` });
-    const version = (await r.text()).replace(/"/g, '');
+    const version = (r.text || '').replace(/"/g, '');
     const orgId = user.includes('/') ? user.split('/')[0] : user;
     res.json({ ok: true, msg: `Connected — org: ${orgId}, version: ${version || 'unknown'}` });
   } catch (e) {
@@ -2499,7 +2566,7 @@ app.get('/api/services', async (req, res) => {
 // exchRaw — sends body as-is (no JSON.stringify), used for binary/text public key upload to Exchange
 async function exchRaw(session, method, path, body, contentType) {
   const url = `${session.baseURL}/v1${path}`;
-  const r = await fetch(url, {
+  const r = await exchangeRequest(url, {
     method,
     headers: {
       Authorization: `Basic ${session.auth}`,
@@ -2507,9 +2574,8 @@ async function exchRaw(session, method, path, body, contentType) {
     },
     body,
   });
-  const text = await r.text();
-  try { return { status: r.status, data: JSON.parse(text) }; }
-  catch { return { status: r.status, data: text }; }
+  try { return { status: r.status, data: JSON.parse(r.text) }; }
+  catch { return { status: r.status, data: r.text }; }
 }
 
 app.post('/api/services', async (req, res) => {
@@ -2964,7 +3030,7 @@ app.post('/api/agbots/admin-login', async (req, res) => {
   try {
     const { user, password } = req.body;
     const auth = Buffer.from(`${user}:${password}`).toString('base64');
-    const r = await fetch(`${s.baseURL}/v1/orgs/${user.split('/')[0]}/agbots`, {
+    const r = await exchangeRequest(`${s.baseURL}/v1/orgs/${user.split('/')[0]}/agbots`, {
       headers: { Authorization: `Basic ${auth}` },
     });
     if (!r.ok && r.status !== 404) return res.status(403).json({ msg: '认证失败' });
@@ -3769,10 +3835,57 @@ async function purgeAuditIfNeeded() {
 }
 setInterval(purgeAuditIfNeeded, 60 * 60 * 1000);
 
+async function bootstrapFromEnv() {
+  const exUrl = process.env.EXCHANGE_URL;
+  const exUser = process.env.EXCHANGE_USER;
+  const exPass = process.env.EXCHANGE_PASSWORD;
+  const admUser = process.env.BOOTSTRAP_ADMIN_USER;
+  const admPass = process.env.BOOTSTRAP_ADMIN_PASSWORD;
+  const vals = [exUrl, exUser, exPass, admUser, admPass];
+  if (vals.every((v) => !v)) return;
+  if (!vals.every((v) => v)) {
+    console.warn('[bootstrap] skipping: set EXCHANGE_URL, EXCHANGE_USER, EXCHANGE_PASSWORD, BOOTSTRAP_ADMIN_USER, BOOTSTRAP_ADMIN_PASSWORD together to auto-configure');
+    return;
+  }
+  const users = await db.loadUsers();
+  if (exchangeConfig.configured && users.length > 0) return;
+
+  if (!exchangeConfig.configured) {
+    try {
+      const base = normalizeExchangeBase(exUrl);
+      const b64 = Buffer.from(`${exUser}:${exPass}`).toString('base64');
+      const headers = { Authorization: `Basic ${b64}` };
+      const vr = await exchangeRequest(`${base}/v1/admin/version`, { headers });
+      if (!vr.ok) throw new Error(`exchange rejected credentials (${vr.status})`);
+      const or = await exchangeRequest(`${base}/v1/orgs`, { headers });
+      if (!or.ok) throw new Error('exchange account lacks hub-level privileges');
+      let orgData = {};
+      try { orgData = JSON.parse(or.text); } catch { orgData = {}; }
+      if (!orgData.orgs || Object.keys(orgData.orgs).length === 0) throw new Error('exchange account cannot list organizations');
+      const version = (vr.text || '').replace(/"/g, '');
+      const orgId = exUser.includes('/') ? exUser.split('/')[0] : exUser;
+      const cfg = { configured: true, baseURL: base, auth: b64, orgId, version };
+      await saveExchangeConfig(cfg, 'bootstrap');
+      console.log('[bootstrap] exchange configured:', base, 'org:', orgId);
+    } catch (e) {
+      console.error('[bootstrap] exchange bootstrap failed:', e.message);
+      return;
+    }
+  }
+
+  if ((await db.loadUsers()).length === 0) {
+    const { hash, salt } = hashPassword(admPass);
+    await db.createUser({ username: admUser, hash, salt, role: 'platform', createdAt: new Date().toISOString(), bootstrap: true });
+    logEvent('bootstrap', { adminUser: admUser }, exchangeConfig.orgId);
+    console.log('[bootstrap] admin user created:', admUser);
+  }
+}
+
 (async () => {
   await db.initSchema();
   await loadExchangeConfigFromDB();
   await loadSettingsFromDB();
+  await bootstrapFromEnv();
   // Warm the OIDC discovery cache; failures are retried at first login.
   if (oidc.cfg.enabled) oidc.getClient().catch(() => {});
   app.listen(PORT, () => {

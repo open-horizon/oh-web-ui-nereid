@@ -1,5 +1,3 @@
-version: "3"
-
 services:
 
   myorg-agbot:
@@ -18,11 +16,11 @@ services:
     environment:
       - ANAX_LOG_LEVEL=3
       - HZN_VAR_BASE=/var/horizon
-    depends_on:
-      - exchange-api
-      - css-api
-      - postgres
-      - bao
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
 volumes:
   myorg-agbot-msgkey:
